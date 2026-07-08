@@ -1,0 +1,15 @@
+{
+  "Items": [
+    {
+      "CatalogItemId": "impact-001",
+      "Name": "Waterproof White Sneaker",
+      "Brand": "Nike",
+      "RetailerName": "Target",
+      "Category": "sneakers",
+      "Url": "https://www.target.com/p/waterproof-white-sneaker",
+      "ImageUrl": "https://target.scene7.com/is/image/Target/sneaker",
+      "CurrentPrice": 64.99,
+      "OriginalPrice": 89.99
+    }
+  ]
+}

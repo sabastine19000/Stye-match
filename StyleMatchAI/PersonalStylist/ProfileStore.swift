@@ -1,0 +1,234 @@
+import Combine
+import Foundation
+
+final class ProfileStore: ObservableObject {
+    @Published var currentProfile: StylistProfile
+
+    private let defaults: UserDefaults
+    private let userID: String
+    private let profileKey: String
+    private let feedbackCountKey: String
+    private let mutationLock = NSRecursiveLock()
+
+    init(defaults: UserDefaults = .standard, userId: String? = nil) {
+        self.defaults = defaults
+        PersonalStylistStorage.migrateLegacyKeysIfNeeded(defaults: defaults)
+        self.userID = PersonalStylistStorage.normalizedUserID(userId ?? PersonalStylistStorage.activeUserID(defaults: defaults))
+        self.profileKey = PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyProfileKey, userID: self.userID)
+        self.feedbackCountKey = PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyFeedbackCountKey, userID: self.userID)
+        currentProfile = Self.loadProfile(from: defaults, key: profileKey, userID: self.userID) ?? Self.makeDefaultProfile(defaults: defaults, userID: self.userID)
+    }
+
+    func save() {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
+        var profile = currentProfile
+        profile.givenName = StyleMatchGreetingBuilder.firstName(from: profile.givenName)
+        profile.lastUpdatedAt = Date()
+        currentProfile = profile
+        saveProfile(profile)
+    }
+
+    func updateGivenName(_ givenName: String?) {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
+        var profile = currentProfile
+        profile.userId = userID
+        profile.givenName = StyleMatchGreetingBuilder.firstName(from: givenName)
+        profile.lastUpdatedAt = Date()
+        currentProfile = profile
+        saveProfile(profile)
+    }
+
+    func updateProfile(from outfitMemory: OutfitMemory) {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
+        var profile = currentProfile
+        profile.userId = userID
+        profile.totalScansCompleted += 1
+
+        let feedbackMultiplier: Double
+        if outfitMemory.wasLiked == true || outfitMemory.wouldWearAgain == true || outfitMemory.isFavorite {
+            feedbackMultiplier = 1.0
+        } else if outfitMemory.wasLiked == false || outfitMemory.wouldWearAgain == false {
+            feedbackMultiplier = -1.0
+        } else {
+            feedbackMultiplier = 0.25
+        }
+
+        for color in outfitMemory.colors {
+            adjustPreference("color:\(color)", by: 0.15 * feedbackMultiplier, in: &profile)
+            if feedbackMultiplier > 0, !profile.favoriteColors.contains(where: { $0.caseInsensitiveCompare(color) == .orderedSame }) {
+                profile.favoriteColors.append(color)
+            }
+            if feedbackMultiplier < 0, !profile.dislikedColors.contains(where: { $0.caseInsensitiveCompare(color) == .orderedSame }) {
+                profile.dislikedColors.append(color)
+            }
+        }
+
+        adjustPreference("style:\(outfitMemory.detectedStyle)", by: 0.20 * feedbackMultiplier, in: &profile)
+
+        if let occasion = outfitMemory.occasion {
+            adjustPreference("occasion:\(occasion.rawValue)", by: 0.10 * feedbackMultiplier, in: &profile)
+        }
+
+        for record in outfitMemory.garmentRecords {
+            adjustPreference("category:\(record.garmentCategory)", by: 0.08 * feedbackMultiplier, in: &profile)
+            for tag in record.styleTags {
+                adjustPreference("tag:\(tag)", by: 0.06 * feedbackMultiplier, in: &profile)
+            }
+        }
+
+        if outfitMemory.receivedCompliments == true {
+            adjustPreference("complimented:\(outfitMemory.detectedStyle)", by: 0.18, in: &profile)
+        }
+
+        if outfitMemory.wasLiked != nil || outfitMemory.wouldWearAgain != nil || outfitMemory.receivedCompliments != nil {
+            defaults.set(defaults.integer(forKey: feedbackCountKey) + 1, forKey: feedbackCountKey)
+        }
+
+        profile.lastUpdatedAt = Date()
+        currentProfile = profile
+        recalculateConfidenceScore()
+        saveProfile(currentProfile)
+    }
+
+    func recalculateConfidenceScore() {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
+        var profile = currentProfile
+        let scanConfidence = min(55.0, Double(profile.totalScansCompleted) * 2.75)
+        let feedbackConfidence = min(25.0, Double(defaults.integer(forKey: feedbackCountKey)) * 2.5)
+        let preferenceConfidence = min(15.0, Double(profile.stylePreferencesLearned.count) * 0.75)
+        let profileDetailConfidence = profileCompletenessScore(profile) * 5.0
+        let total = 20.0 + scanConfidence + feedbackConfidence + preferenceConfidence + profileDetailConfidence
+        profile.profileConfidenceScore = min(95.0, max(20.0, total))
+        profile.lastUpdatedAt = Date()
+        currentProfile = profile
+        saveProfile(profile)
+    }
+
+    private func adjustPreference(_ key: String, by delta: Double, in profile: inout StylistProfile) {
+        let current = profile.stylePreferencesLearned[key, default: 0]
+        profile.stylePreferencesLearned[key] = min(3.0, max(-1.0, current + delta))
+    }
+
+    private func profileCompletenessScore(_ profile: StylistProfile) -> Double {
+        var completed = 0.0
+        var total = 0.0
+
+        func count(_ value: String?) {
+            total += 1
+            if value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                completed += 1
+            }
+        }
+
+        count(profile.clothingSizes.shirtSize)
+        count(profile.clothingSizes.pantSize)
+        count(profile.clothingSizes.shoeSize)
+        count(profile.clothingSizes.jacketSize)
+        count(profile.clothingSizes.dressSize)
+
+        total += 1
+        if !profile.favoriteColors.isEmpty { completed += 1 }
+
+        total += 1
+        if !profile.favoriteBrands.isEmpty { completed += 1 }
+
+        total += 1
+        if !profile.workDressCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { completed += 1 }
+
+        return total == 0 ? 0 : completed / total
+    }
+
+    private func saveProfile(_ profile: StylistProfile) {
+        guard let data = try? JSONEncoder().encode(profile) else {
+            #if DEBUG
+            print("[StyleMatch PersonalStylist] Could not encode StylistProfile.")
+            #endif
+            return
+        }
+        PersonalStylistSnapshotStore.saveData(data, store: "StylistProfile", userID: userID)
+        defaults.set(data, forKey: profileKey)
+    }
+
+    private static func loadProfile(from defaults: UserDefaults, key: String, userID: String) -> StylistProfile? {
+        let decoder = JSONDecoder()
+        func canDecodeProfile(_ data: Data) -> Bool {
+            (try? decoder.decode(StylistProfile.self, from: data)) != nil
+        }
+
+        if let data = PersonalStylistSnapshotStore.loadData(store: "StylistProfile", userID: userID),
+           let profile = try? decoder.decode(StylistProfile.self, from: data) {
+            return profile
+        }
+        if let recoveredData = PersonalStylistSnapshotStore.restoreFromSnapshot(
+            store: "StylistProfile",
+            userID: userID,
+            validator: canDecodeProfile
+        ),
+           let profile = try? decoder.decode(StylistProfile.self, from: recoveredData) {
+            return profile
+        }
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? decoder.decode(StylistProfile.self, from: data)
+    }
+
+    private static func makeDefaultProfile(defaults: UserDefaults, userID: String) -> StylistProfile {
+        let now = Date()
+        return StylistProfile(
+            id: UUID(),
+            userId: userID,
+            givenName: nil,
+            favoriteColors: splitList(defaults.string(forKey: "favoriteColors") ?? "Black, white, navy"),
+            dislikedColors: [],
+            favoriteBrands: splitList(defaults.string(forKey: "favoriteBrands") ?? "Ralph Lauren, Nike, Levi's"),
+            preferredFit: FitPreference(rawValue: (defaults.string(forKey: "fitPreference") ?? "regular").lowercased()) ?? .regular,
+            budgetRange: parseBudget(defaults.string(forKey: "shoppingBudget") ?? "$50 - $200"),
+            climate: defaults.string(forKey: "weatherCondition") ?? "Mild",
+            workDressCode: defaults.string(forKey: "dressCode") ?? "Smart casual",
+            bodyProportions: nil,
+            clothingSizes: ClothingSizes(
+                shirtSize: defaults.string(forKey: "shirtSize"),
+                pantSize: defaults.string(forKey: "pantsSize"),
+                shoeSize: defaults.string(forKey: "shoeSize"),
+                jacketSize: nil,
+                dressSize: defaults.string(forKey: "dressSize")
+            ),
+            stylePreferencesLearned: [:],
+            createdAt: now,
+            lastUpdatedAt: now,
+            totalScansCompleted: 0,
+            profileConfidenceScore: 20
+        )
+    }
+
+    private static func splitList(_ text: String) -> [String] {
+        text.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func parseBudget(_ text: String) -> BudgetRange {
+        let numbers = text
+            .components(separatedBy: CharacterSet(charactersIn: "0123456789.").inverted)
+            .compactMap { Double($0) }
+        let minPrice = numbers.first ?? 50
+        let maxPrice = numbers.dropFirst().first ?? max(minPrice, 200)
+        let tier: String
+        switch maxPrice {
+        case ..<75:
+            tier = "Budget"
+        case 75..<250:
+            tier = "Mid"
+        default:
+            tier = "Premium"
+        }
+        return BudgetRange(minPrice: minPrice, maxPrice: maxPrice, preferredTier: tier)
+    }
+}

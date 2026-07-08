@@ -1,0 +1,15 @@
+{
+  "products": [
+    {
+      "id": "cj-001",
+      "name": "White Oxford Shirt",
+      "advertiserName": "Macy's",
+      "brand": "Calvin Klein",
+      "buyUrl": "https://www.macys.com/shop/product/white-oxford-shirt",
+      "imageLink": "https://slimages.macysassets.com/is/image/white-shirt",
+      "price": 89.50,
+      "salePrice": 59.99,
+      "catalogName": "dress shirt"
+    }
+  ]
+}

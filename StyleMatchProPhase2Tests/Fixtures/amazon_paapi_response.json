@@ -1,0 +1,28 @@
+{
+  "ItemsResult": {
+    "Items": [
+      {
+        "ASIN": "B0STYLE001",
+        "DetailPageURL": "https://www.amazon.com/dp/B0STYLE001",
+        "ItemInfo": {
+          "Title": {"DisplayValue": "Classic Sunglasses"},
+          "ByLineInfo": {"Brand": {"DisplayValue": "Ray-Ban"}}
+        },
+        "Images": {"Primary": {"Medium": {"URL": "https://m.media-amazon.com/images/I/sunglasses.jpg"}}},
+        "Offers": {
+          "Listings": [
+            {
+              "Price": {"Amount": 79.99},
+              "SavingBasis": {"Amount": 99.99}
+            }
+          ]
+        },
+        "BrowseNodeInfo": {
+          "BrowseNodes": [
+            {"DisplayName": "Sunglasses"}
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,635 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 71;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AA0000000000000000000001 /* StyleMatchAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* StyleMatchAIApp.swift */; };
+		AA0000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* ContentView.swift */; };
+		AA0000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000013 /* Models.swift */; };
+		AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */; };
+		AA0000000000000000000004 /* RoadmapData.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* RoadmapData.swift */; };
+		AA0000000000000000000005 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* HomeView.swift */; };
+		AA0000000000000000000006 /* RoadmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* RoadmapView.swift */; };
+		AA0000000000000000000007 /* PromptDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000017 /* PromptDetailView.swift */; };
+		AA0000000000000000000008 /* ChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000018 /* ChecklistView.swift */; };
+		AA0000000000000000000009 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000019 /* ProfileView.swift */; };
+		AA000000000000000000000A /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001A /* ScanView.swift */; };
+		AA000000000000000000000B /* ClosetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001B /* ClosetView.swift */; };
+		AA000000000000000000000C /* ShopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001C /* ShopView.swift */; };
+		AA000000000000000000000D /* FeatureGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001D /* FeatureGate.swift */; };
+		AA000000000000000000000E /* AIAssistantsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001E /* AIAssistantsView.swift */; };
+		AA000000000000000000000F /* BackendFeaturePlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000001F /* BackendFeaturePlan.swift */; };
+		AA0000000000000000000022 /* PrivacyDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000023 /* PrivacyDataManager.swift */; };
+		AA0000000000000000000024 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000025 /* OnboardingView.swift */; };
+		AA0000000000000000000026 /* OpenAIKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000027 /* OpenAIKeychain.swift */; };
+		AA0000000000000000000028 /* OpenAIStylistClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000029 /* OpenAIStylistClient.swift */; };
+		AA000000000000000000002A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000002B /* Assets.xcassets */; };
+		AA0000000000000000000033 /* ShoppingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000039 /* ShoppingView.swift */; };
+		AA0000000000000000000034 /* AffiliateProduct.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003A /* AffiliateProduct.swift */; };
+		AA0000000000000000000035 /* ProductCatalogProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003B /* ProductCatalogProvider.swift */; };
+		AA0000000000000000000036 /* ShoppingRecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003C /* ShoppingRecommendationEngine.swift */; };
+		AA0000000000000000000037 /* ShoppingLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003D /* ShoppingLocalStore.swift */; };
+		AA0000000000000000000100 /* ShoppingSaleAlertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000101 /* ShoppingSaleAlertService.swift */; };
+		AA0000000000000000000102 /* SaleWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* SaleWatcher.swift */; };
+		AA0000000000000000000038 /* ProductCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003E /* ProductCatalog.json */; };
+		AA000000000000000000003F /* RetailerConfig.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F8 /* RetailerConfig.json */; };
+		AA00000000000000000000F3 /* ShoppingSearchEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F4 /* ShoppingSearchEngine.swift */; };
+		AA00000000000000000000FC /* ShoppingSearchProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FB /* ShoppingSearchProviders.swift */; };
+		AA00000000000000000000FE /* StoreSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FD /* StoreSearchView.swift */; };
+		AA00000000000000000000F5 /* SupportedStores.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F6 /* SupportedStores.json */; };
+		AA00000000000000000000F9 /* ShoppingRuntimeConfig.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FA /* ShoppingRuntimeConfig.json */; };
+		AA000000000000000000002C /* AIStyleAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000002D /* AIStyleAdvisor.swift */; };
+		AA00000000000000000000A1 /* FashionKnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000A0 /* FashionKnowledgeBase.swift */; };
+		AA00000000000000000000B1 /* LoginWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B0 /* LoginWelcomeView.swift */; };
+		AA00000000000000000000C1 /* AIProviderAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000C0 /* AIProviderAdapters.swift */; };
+		AA00000000000000000000D1 /* StylistProfileModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000D4 /* StylistProfileModels.swift */; };
+		AA00000000000000000000D2 /* ProfileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000D5 /* ProfileStore.swift */; };
+		AA00000000000000000000D3 /* OutfitMemoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000D6 /* OutfitMemoryStore.swift */; };
+		AA00000000000000000000D7 /* PersonalStylistAIContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000D8 /* PersonalStylistAIContext.swift */; };
+		AA00000000000000000000D9 /* StylistContextBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000DA /* StylistContextBuilder.swift */; };
+		AA00000000000000000000DB /* FeedbackPromptScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000DC /* FeedbackPromptScheduler.swift */; };
+		AA00000000000000000000DD /* PersonalStylistStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000DE /* PersonalStylistStorage.swift */; };
+		AA00000000000000000000DF /* PersonalStylistEngines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E0 /* PersonalStylistEngines.swift */; };
+		AA00000000000000000000E1 /* PersonalStylistPhase2Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E2 /* PersonalStylistPhase2Diagnostics.swift */; };
+		AA00000000000000000000E3 /* PersonalStylistSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E4 /* PersonalStylistSnapshotStore.swift */; };
+		AA00000000000000000000E5 /* WeatherContextEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E6 /* WeatherContextEngine.swift */; };
+		AA00000000000000000000E7 /* PersonalStylistIntelligence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */; };
+		AA00000000000000000000E9 /* StylistMessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EA /* StylistMessageComposer.swift */; };
+		AA00000000000000000000EB /* OutfitRecallService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EC /* OutfitRecallService.swift */; };
+		AA00000000000000000000ED /* SaleMatchingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EE /* SaleMatchingService.swift */; };
+		AA00000000000000000000EF /* WeatherAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F0 /* WeatherAdvisor.swift */; };
+		AA00000000000000000000F1 /* PersonalStylistEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F2 /* PersonalStylistEngine.swift */; };
+		AA0000000000000000000120 /* VoiceScript.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000122 /* VoiceScript.swift */; };
+		AA0000000000000000000123 /* VoiceScriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000124 /* VoiceScriptBuilder.swift */; };
+		AA0000000000000000000125 /* VoiceAssistantService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000126 /* VoiceAssistantService.swift */; };
+		AA0000000000000000000130 /* StylistChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000135 /* StylistChatModels.swift */; };
+		AA0000000000000000000131 /* ChatConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000136 /* ChatConversationStore.swift */; };
+		AA0000000000000000000132 /* StylistChatTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000137 /* StylistChatTransport.swift */; };
+		AA0000000000000000000133 /* StylistChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000138 /* StylistChatService.swift */; };
+		AA0000000000000000000134 /* StylistChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000139 /* StylistChatView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AA0000000000000000000010 /* StyleMatchAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StyleMatchAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000011 /* StyleMatchAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleMatchAIApp.swift; sourceTree = "<group>"; };
+		AA0000000000000000000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarmentColorPaletteEngine.swift; sourceTree = "<group>"; };
+		AA0000000000000000000014 /* RoadmapData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadmapData.swift; sourceTree = "<group>"; };
+		AA0000000000000000000015 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000016 /* RoadmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadmapView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000017 /* PromptDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptDetailView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000018 /* ChecklistView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChecklistView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000019 /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001A /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001B /* ClosetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClosetView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001C /* ShopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001D /* FeatureGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeatureGate.swift; sourceTree = "<group>"; };
+		AA000000000000000000001E /* AIAssistantsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsView.swift; sourceTree = "<group>"; };
+		AA000000000000000000001F /* BackendFeaturePlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackendFeaturePlan.swift; sourceTree = "<group>"; };
+		AA0000000000000000000023 /* PrivacyDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyDataManager.swift; sourceTree = "<group>"; };
+		AA0000000000000000000025 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000027 /* OpenAIKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIKeychain.swift; sourceTree = "<group>"; };
+		AA0000000000000000000029 /* OpenAIStylistClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIStylistClient.swift; sourceTree = "<group>"; };
+		AA000000000000000000002B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA0000000000000000000039 /* ShoppingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingView.swift; sourceTree = "<group>"; };
+		AA000000000000000000003A /* AffiliateProduct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AffiliateProduct.swift; sourceTree = "<group>"; };
+		AA000000000000000000003B /* ProductCatalogProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogProvider.swift; sourceTree = "<group>"; };
+		AA000000000000000000003C /* ShoppingRecommendationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingRecommendationEngine.swift; sourceTree = "<group>"; };
+		AA000000000000000000003D /* ShoppingLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingLocalStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000101 /* ShoppingSaleAlertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSaleAlertService.swift; sourceTree = "<group>"; };
+		AA0000000000000000000103 /* SaleWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaleWatcher.swift; sourceTree = "<group>"; };
+		AA000000000000000000003E /* ProductCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ProductCatalog.json; sourceTree = "<group>"; };
+		AA00000000000000000000F4 /* ShoppingSearchEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSearchEngine.swift; sourceTree = "<group>"; };
+		AA00000000000000000000FB /* ShoppingSearchProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSearchProviders.swift; sourceTree = "<group>"; };
+		AA00000000000000000000FD /* StoreSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreSearchView.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F6 /* SupportedStores.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SupportedStores.json; sourceTree = "<group>"; };
+		AA00000000000000000000F7 /* ShoppingPartnerEnvironment.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = ShoppingPartnerEnvironment.example; sourceTree = "<group>"; };
+		AA00000000000000000000F8 /* RetailerConfig.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RetailerConfig.json; sourceTree = "<group>"; };
+		AA00000000000000000000FA /* ShoppingRuntimeConfig.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ShoppingRuntimeConfig.json; sourceTree = "<group>"; };
+		AA000000000000000000002D /* AIStyleAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStyleAdvisor.swift; sourceTree = "<group>"; };
+		AA00000000000000000000A0 /* FashionKnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FashionKnowledgeBase.swift; sourceTree = "<group>"; };
+		AA00000000000000000000B0 /* LoginWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginWelcomeView.swift; sourceTree = "<group>"; };
+		AA00000000000000000000C0 /* AIProviderAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderAdapters.swift; sourceTree = "<group>"; };
+		AA00000000000000000000D4 /* StylistProfileModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistProfileModels.swift; sourceTree = "<group>"; };
+		AA00000000000000000000D5 /* ProfileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000D6 /* OutfitMemoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitMemoryStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000D8 /* PersonalStylistAIContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistAIContext.swift; sourceTree = "<group>"; };
+		AA00000000000000000000DA /* StylistContextBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistContextBuilder.swift; sourceTree = "<group>"; };
+		AA00000000000000000000DC /* FeedbackPromptScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedbackPromptScheduler.swift; sourceTree = "<group>"; };
+		AA00000000000000000000DE /* PersonalStylistStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistStorage.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E0 /* PersonalStylistEngines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistEngines.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E2 /* PersonalStylistPhase2Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistPhase2Diagnostics.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E4 /* PersonalStylistSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistSnapshotStore.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E6 /* WeatherContextEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherContextEngine.swift; sourceTree = "<group>"; };
+		AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistIntelligence.swift; sourceTree = "<group>"; };
+		AA00000000000000000000EA /* StylistMessageComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistMessageComposer.swift; sourceTree = "<group>"; };
+		AA00000000000000000000EC /* OutfitRecallService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitRecallService.swift; sourceTree = "<group>"; };
+		AA00000000000000000000EE /* SaleMatchingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaleMatchingService.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F0 /* WeatherAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherAdvisor.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F2 /* PersonalStylistEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistEngine.swift; sourceTree = "<group>"; };
+		AA0000000000000000000122 /* VoiceScript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceScript.swift; sourceTree = "<group>"; };
+		AA0000000000000000000124 /* VoiceScriptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceScriptBuilder.swift; sourceTree = "<group>"; };
+		AA0000000000000000000126 /* VoiceAssistantService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAssistantService.swift; sourceTree = "<group>"; };
+		AA0000000000000000000135 /* StylistChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatModels.swift; sourceTree = "<group>"; };
+		AA0000000000000000000136 /* ChatConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatConversationStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000137 /* StylistChatTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatTransport.swift; sourceTree = "<group>"; };
+		AA0000000000000000000138 /* StylistChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatService.swift; sourceTree = "<group>"; };
+		AA0000000000000000000139 /* StylistChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AA0000000000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AA0000000000000000000030 = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000031 /* StyleMatchAI */,
+				AA0000000000000000000032 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000031 /* StyleMatchAI */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000011 /* StyleMatchAIApp.swift */,
+				AA000000000000000000002B /* Assets.xcassets */,
+				AA0000000000000000000025 /* OnboardingView.swift */,
+				AA00000000000000000000B0 /* LoginWelcomeView.swift */,
+				AA0000000000000000000012 /* ContentView.swift */,
+				AA0000000000000000000013 /* Models.swift */,
+				AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */,
+				AA00000000000000000000E6 /* WeatherContextEngine.swift */,
+				AA00000000000000000000D0 /* PersonalStylist */,
+				AA0000000000000000000121 /* VoiceAssistant */,
+				AA000000000000000000013A /* StylistChat */,
+				AA0000000000000000000041 /* Shopping */,
+				AA0000000000000000000014 /* RoadmapData.swift */,
+				AA0000000000000000000015 /* HomeView.swift */,
+				AA000000000000000000001A /* ScanView.swift */,
+				AA000000000000000000001B /* ClosetView.swift */,
+				AA000000000000000000001C /* ShopView.swift */,
+				AA000000000000000000001E /* AIAssistantsView.swift */,
+				AA000000000000000000002D /* AIStyleAdvisor.swift */,
+				AA00000000000000000000A0 /* FashionKnowledgeBase.swift */,
+				AA0000000000000000000027 /* OpenAIKeychain.swift */,
+				AA0000000000000000000029 /* OpenAIStylistClient.swift */,
+				AA00000000000000000000C0 /* AIProviderAdapters.swift */,
+				AA000000000000000000001D /* FeatureGate.swift */,
+				AA000000000000000000001F /* BackendFeaturePlan.swift */,
+				AA0000000000000000000023 /* PrivacyDataManager.swift */,
+				AA0000000000000000000016 /* RoadmapView.swift */,
+				AA0000000000000000000017 /* PromptDetailView.swift */,
+				AA0000000000000000000018 /* ChecklistView.swift */,
+				AA0000000000000000000019 /* ProfileView.swift */,
+			);
+			path = StyleMatchAI;
+			sourceTree = "<group>";
+		};
+		AA00000000000000000000D0 /* PersonalStylist */ = {
+			isa = PBXGroup;
+			children = (
+				AA00000000000000000000D4 /* StylistProfileModels.swift */,
+				AA00000000000000000000D5 /* ProfileStore.swift */,
+				AA00000000000000000000D6 /* OutfitMemoryStore.swift */,
+				AA00000000000000000000D8 /* PersonalStylistAIContext.swift */,
+				AA00000000000000000000DA /* StylistContextBuilder.swift */,
+				AA00000000000000000000DC /* FeedbackPromptScheduler.swift */,
+				AA00000000000000000000DE /* PersonalStylistStorage.swift */,
+				AA00000000000000000000E4 /* PersonalStylistSnapshotStore.swift */,
+				AA00000000000000000000E0 /* PersonalStylistEngines.swift */,
+				AA00000000000000000000EA /* StylistMessageComposer.swift */,
+				AA00000000000000000000EC /* OutfitRecallService.swift */,
+				AA00000000000000000000EE /* SaleMatchingService.swift */,
+				AA00000000000000000000F0 /* WeatherAdvisor.swift */,
+				AA00000000000000000000F2 /* PersonalStylistEngine.swift */,
+				AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */,
+				AA00000000000000000000E2 /* PersonalStylistPhase2Diagnostics.swift */,
+			);
+			path = PersonalStylist;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000121 /* VoiceAssistant */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000122 /* VoiceScript.swift */,
+				AA0000000000000000000124 /* VoiceScriptBuilder.swift */,
+				AA0000000000000000000126 /* VoiceAssistantService.swift */,
+			);
+			path = VoiceAssistant;
+			sourceTree = "<group>";
+		};
+		AA000000000000000000013A /* StylistChat */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000135 /* StylistChatModels.swift */,
+				AA0000000000000000000136 /* ChatConversationStore.swift */,
+				AA0000000000000000000137 /* StylistChatTransport.swift */,
+				AA0000000000000000000138 /* StylistChatService.swift */,
+				AA0000000000000000000139 /* StylistChatView.swift */,
+			);
+			path = StylistChat;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000041 /* Shopping */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000039 /* ShoppingView.swift */,
+				AA000000000000000000003A /* AffiliateProduct.swift */,
+				AA000000000000000000003B /* ProductCatalogProvider.swift */,
+				AA000000000000000000003C /* ShoppingRecommendationEngine.swift */,
+				AA000000000000000000003D /* ShoppingLocalStore.swift */,
+				AA0000000000000000000101 /* ShoppingSaleAlertService.swift */,
+				AA0000000000000000000103 /* SaleWatcher.swift */,
+				AA00000000000000000000F4 /* ShoppingSearchEngine.swift */,
+				AA00000000000000000000FB /* ShoppingSearchProviders.swift */,
+				AA00000000000000000000FD /* StoreSearchView.swift */,
+				AA000000000000000000003E /* ProductCatalog.json */,
+				AA00000000000000000000F6 /* SupportedStores.json */,
+				AA00000000000000000000F8 /* RetailerConfig.json */,
+				AA00000000000000000000FA /* ShoppingRuntimeConfig.json */,
+				AA00000000000000000000F7 /* ShoppingPartnerEnvironment.example */,
+			);
+			path = Shopping;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000032 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000010 /* StyleMatchAI.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AA0000000000000000000040 /* StyleMatchAI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000080 /* Build configuration list for PBXNativeTarget "StyleMatchAI" */;
+			buildPhases = (
+				AA0000000000000000000050 /* Sources */,
+				AA0000000000000000000020 /* Frameworks */,
+				AA0000000000000000000051 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = StyleMatchAI;
+			packageProductDependencies = (
+			);
+			productName = StyleMatchAI;
+			productReference = AA0000000000000000000010 /* StyleMatchAI.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AA0000000000000000000060 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					AA0000000000000000000040 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = AA0000000000000000000070 /* Build configuration list for PBXProject "StyleMatchAI" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AA0000000000000000000030;
+			minimizedProjectReferenceProxies = 1;
+			productRefGroup = AA0000000000000000000032 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AA0000000000000000000040 /* StyleMatchAI */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AA0000000000000000000051 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000000000000000000002A /* Assets.xcassets in Resources */,
+				AA0000000000000000000038 /* ProductCatalog.json in Resources */,
+				AA000000000000000000003F /* RetailerConfig.json in Resources */,
+				AA00000000000000000000F5 /* SupportedStores.json in Resources */,
+				AA00000000000000000000F9 /* ShoppingRuntimeConfig.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AA0000000000000000000050 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000001 /* StyleMatchAIApp.swift in Sources */,
+				AA0000000000000000000002 /* ContentView.swift in Sources */,
+				AA0000000000000000000003 /* Models.swift in Sources */,
+				AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */,
+				AA0000000000000000000004 /* RoadmapData.swift in Sources */,
+				AA0000000000000000000005 /* HomeView.swift in Sources */,
+				AA0000000000000000000006 /* RoadmapView.swift in Sources */,
+				AA0000000000000000000007 /* PromptDetailView.swift in Sources */,
+				AA0000000000000000000008 /* ChecklistView.swift in Sources */,
+				AA0000000000000000000009 /* ProfileView.swift in Sources */,
+				AA000000000000000000000A /* ScanView.swift in Sources */,
+				AA000000000000000000000B /* ClosetView.swift in Sources */,
+				AA000000000000000000000C /* ShopView.swift in Sources */,
+				AA0000000000000000000033 /* ShoppingView.swift in Sources */,
+				AA0000000000000000000034 /* AffiliateProduct.swift in Sources */,
+				AA0000000000000000000035 /* ProductCatalogProvider.swift in Sources */,
+				AA0000000000000000000036 /* ShoppingRecommendationEngine.swift in Sources */,
+				AA0000000000000000000037 /* ShoppingLocalStore.swift in Sources */,
+				AA0000000000000000000100 /* ShoppingSaleAlertService.swift in Sources */,
+				AA0000000000000000000102 /* SaleWatcher.swift in Sources */,
+				AA00000000000000000000F3 /* ShoppingSearchEngine.swift in Sources */,
+				AA00000000000000000000FC /* ShoppingSearchProviders.swift in Sources */,
+				AA00000000000000000000FE /* StoreSearchView.swift in Sources */,
+				AA000000000000000000000D /* FeatureGate.swift in Sources */,
+				AA000000000000000000000E /* AIAssistantsView.swift in Sources */,
+				AA000000000000000000000F /* BackendFeaturePlan.swift in Sources */,
+				AA0000000000000000000022 /* PrivacyDataManager.swift in Sources */,
+				AA0000000000000000000024 /* OnboardingView.swift in Sources */,
+				AA0000000000000000000026 /* OpenAIKeychain.swift in Sources */,
+				AA0000000000000000000028 /* OpenAIStylistClient.swift in Sources */,
+				AA000000000000000000002C /* AIStyleAdvisor.swift in Sources */,
+				AA00000000000000000000A1 /* FashionKnowledgeBase.swift in Sources */,
+				AA00000000000000000000B1 /* LoginWelcomeView.swift in Sources */,
+				AA00000000000000000000C1 /* AIProviderAdapters.swift in Sources */,
+				AA00000000000000000000D1 /* StylistProfileModels.swift in Sources */,
+				AA00000000000000000000D2 /* ProfileStore.swift in Sources */,
+				AA00000000000000000000D3 /* OutfitMemoryStore.swift in Sources */,
+				AA00000000000000000000D7 /* PersonalStylistAIContext.swift in Sources */,
+				AA00000000000000000000D9 /* StylistContextBuilder.swift in Sources */,
+				AA00000000000000000000DB /* FeedbackPromptScheduler.swift in Sources */,
+				AA00000000000000000000DD /* PersonalStylistStorage.swift in Sources */,
+				AA00000000000000000000E3 /* PersonalStylistSnapshotStore.swift in Sources */,
+				AA00000000000000000000DF /* PersonalStylistEngines.swift in Sources */,
+				AA00000000000000000000E9 /* StylistMessageComposer.swift in Sources */,
+				AA00000000000000000000EB /* OutfitRecallService.swift in Sources */,
+				AA00000000000000000000ED /* SaleMatchingService.swift in Sources */,
+				AA00000000000000000000EF /* WeatherAdvisor.swift in Sources */,
+				AA00000000000000000000F1 /* PersonalStylistEngine.swift in Sources */,
+				AA00000000000000000000E7 /* PersonalStylistIntelligence.swift in Sources */,
+				AA00000000000000000000E1 /* PersonalStylistPhase2Diagnostics.swift in Sources */,
+				AA00000000000000000000E5 /* WeatherContextEngine.swift in Sources */,
+				AA0000000000000000000120 /* VoiceScript.swift in Sources */,
+				AA0000000000000000000123 /* VoiceScriptBuilder.swift in Sources */,
+				AA0000000000000000000125 /* VoiceAssistantService.swift in Sources */,
+				AA0000000000000000000130 /* StylistChatModels.swift in Sources */,
+				AA0000000000000000000131 /* ChatConversationStore.swift in Sources */,
+				AA0000000000000000000132 /* StylistChatTransport.swift in Sources */,
+				AA0000000000000000000133 /* StylistChatService.swift in Sources */,
+				AA0000000000000000000134 /* StylistChatView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA0000000000000000000090 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = ZV4P3Z2QLA;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA0000000000000000000091 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = ZV4P3Z2QLA;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA0000000000000000000092 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = StyleMatchAI/StyleMatchAI.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 12;
+				DEVELOPMENT_ASSET_PATHS = "";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro 1";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Style Match Pro uses your camera to scan outfit and clothing photos.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Style Match Pro uses your location to show live weather for outfit recommendations.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Style Match Pro uses outfit photos you choose to show style analysis results.";
+				INFOPLIST_KEY_STYLIST_CHAT_APP_SHARED_SECRET = "$(STYLIST_CHAT_APP_SHARED_SECRET)";
+				INFOPLIST_KEY_STYLIST_CHAT_PROXY_BASE_URL = "$(STYLIST_CHAT_PROXY_BASE_URL)";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sabastine.stylematchai;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				STYLIST_CHAT_APP_SHARED_SECRET = "";
+				STYLIST_CHAT_PROXY_BASE_URL = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA0000000000000000000093 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = StyleMatchAI/StyleMatchAI.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 12;
+				DEVELOPMENT_ASSET_PATHS = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro 1";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Style Match Pro uses your camera to scan outfit and clothing photos.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Style Match Pro uses your location to show live weather for outfit recommendations.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Style Match Pro uses outfit photos you choose to show style analysis results.";
+				INFOPLIST_KEY_STYLIST_CHAT_APP_SHARED_SECRET = "$(STYLIST_CHAT_APP_SHARED_SECRET)";
+				INFOPLIST_KEY_STYLIST_CHAT_PROXY_BASE_URL = "$(STYLIST_CHAT_PROXY_BASE_URL)";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MARKETING_VERSION = 1.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.sabastine.stylematchai;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				STYLIST_CHAT_APP_SHARED_SECRET = "";
+				STYLIST_CHAT_PROXY_BASE_URL = "";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AA0000000000000000000070 /* Build configuration list for PBXProject "StyleMatchAI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000090 /* Debug */,
+				AA0000000000000000000091 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000080 /* Build configuration list for PBXNativeTarget "StyleMatchAI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000092 /* Debug */,
+				AA0000000000000000000093 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AA0000000000000000000060 /* Project object */;
+}

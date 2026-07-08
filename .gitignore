@@ -1,0 +1,9 @@
+Secrets.xcconfig
+*.xcuserstate
+.DS_Store
+.build/
+Build/
+BuildCheck/
+BuildInstallDerivedData/
+DerivedData/
+outputs/

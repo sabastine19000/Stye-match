@@ -1,0 +1,18 @@
+[
+  {"id": "nike", "name": "Nike", "domains": ["nike.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "affiliate-placeholder", "isEnabled": true},
+  {"id": "macys", "name": "Macy's", "domains": ["macys.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "affiliate-placeholder", "isEnabled": true},
+  {"id": "best-buy", "name": "Best Buy", "domains": ["bestbuy.com"], "categories": ["electronics", "styleTools"], "affiliateNetwork": "TBD", "apiStatus": "affiliate-placeholder", "isEnabled": true},
+  {"id": "target", "name": "Target", "domains": ["target.com"], "categories": ["clothing", "shoes", "accessories", "styleTools"], "affiliateNetwork": "TBD", "apiStatus": "affiliate-placeholder", "isEnabled": true},
+  {"id": "walmart", "name": "Walmart", "domains": ["walmart.com"], "categories": ["clothing", "shoes", "accessories", "electronics", "styleTools"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "amazon", "name": "Amazon", "domains": ["amazon.com"], "categories": ["clothing", "shoes", "accessories", "electronics", "styleTools"], "affiliateNetwork": "Amazon Associates", "apiStatus": "affiliate-placeholder", "isEnabled": true},
+  {"id": "adidas", "name": "Adidas", "domains": ["adidas.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "hm", "name": "H&M", "domains": ["hm.com"], "categories": ["clothing", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "zara", "name": "Zara", "domains": ["zara.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "nordstrom", "name": "Nordstrom", "domains": ["nordstrom.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "affiliate-placeholder", "isEnabled": true},
+  {"id": "shein", "name": "SHEIN", "domains": ["shein.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "fashion-nova", "name": "Fashion Nova", "domains": ["fashionnova.com"], "categories": ["clothing", "shoes", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "foot-locker", "name": "Foot Locker", "domains": ["footlocker.com"], "categories": ["shoes", "clothing", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "dicks", "name": "DICK'S Sporting Goods", "domains": ["dickssportinggoods.com"], "categories": ["clothing", "shoes", "accessories", "electronics"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "sephora", "name": "Sephora", "domains": ["sephora.com"], "categories": ["styleTools", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true},
+  {"id": "ulta", "name": "Ulta", "domains": ["ulta.com"], "categories": ["styleTools", "accessories"], "affiliateNetwork": "TBD", "apiStatus": "needs-approved-feed", "isEnabled": true}
+]

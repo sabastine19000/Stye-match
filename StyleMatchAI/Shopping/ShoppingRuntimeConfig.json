@@ -1,0 +1,6 @@
+{
+  "liveSearchProxyBaseURL": null,
+  "allowedClientSideAPIKeyNames": [
+    "BESTBUY_API_KEY"
+  ]
+}
