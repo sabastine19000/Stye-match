@@ -1,5 +1,22 @@
 import Foundation
 
+enum StyleMatchAIGuardrails {
+    static let scoreIntegrityInstruction = "Personalize only; never change StyleMatch Pro scores."
+    static let directOpenAIStylistSystemInstruction = """
+    You are the live AI fashion assistant inside Style Match Pro.
+    Use app-provided facts, style memory, weather, and fashion rules to give accurate outfit advice.
+    \(scoreIntegrityInstruction)
+    Answer the customer's exact message instead of repeating a generic outfit response.
+    For scan follow-up chats, use the previous outfit analysis in app context as screen awareness and answer conversationally, not as JSON.
+    Give specific, actionable recommendations with actual brand names, product types, stores, price ranges, or closet-item ideas when relevant.
+    Only use garment colors and clothing items provided by StyleMatch Pro. Ignore background colors from walls, floors, doors, cabinets, furniture, appliances, or non-worn objects.
+    If the customer greets you, greet them naturally.
+    If the customer asks what you know about them, only use the StyleMatch Pro profile, closet, weather, and saved scans below. Do not invent personal details.
+    If the current request asks for JSON only, return valid JSON only and do not include conversational text.
+    Keep answers helpful, confidence-building, culturally respectful, and shopping-aware. Do not mention technical setup details.
+    """
+}
+
 struct PersonalizationContextBuilder {
     static func promptContext(defaults: UserDefaults = .standard, memoryLimit: Int = 10) -> String {
         let profile = ProfileStore(defaults: defaults).currentProfile
@@ -75,9 +92,15 @@ struct PersonalizationContextBuilder {
         title: String = "PERSONAL STYLIST CONTEXT",
         profile: StylistProfile,
         recentMemories: [OutfitMemory],
-        maxMemories: Int = 10
+        maxMemories: Int = 10,
+        currentOccasion: Occasion? = nil
     ) -> String {
-        let context = buildContext(profile: profile, recentMemories: recentMemories, maxMemories: maxMemories)
+        let context = buildContext(
+            profile: profile,
+            recentMemories: recentMemories,
+            maxMemories: maxMemories,
+            currentOccasion: currentOccasion
+        )
         guard !context.isEmpty else {
             return ""
         }
@@ -91,7 +114,8 @@ struct PersonalizationContextBuilder {
     static func buildContext(
         profile: StylistProfile,
         recentMemories: [OutfitMemory],
-        maxMemories: Int = 10
+        maxMemories: Int = 10,
+        currentOccasion: Occasion? = nil
     ) -> String {
         let topPreferences = StyleFrequencyAnalyzer.topPreferences(from: recentMemories.flatMap(\.garmentRecords))
         let memoryCount = max(0, min(maxMemories, 10))
@@ -122,14 +146,17 @@ struct PersonalizationContextBuilder {
         appendLine("Most worn styles", list(topPreferences.styleTags), to: &lines)
         appendLine("Recently liked", memorySummary(Array(likedMemories)), to: &lines)
         appendLine("Recently disliked", memorySummary(Array(dislikedMemories)), to: &lines)
-        appendLine("Occasion patterns", occasionSignals(Array(recentMemories.prefix(memoryCount))), to: &lines)
+        lines.append(contentsOf: occasionContextLines(
+            recentMemories: Array(recentMemories.prefix(memoryCount)),
+            currentOccasion: currentOccasion
+        ))
 
         guard !lines.isEmpty else {
             return ""
         }
 
         return (["User style context:"] + lines + [
-            "Personalize only; never change StyleMatch Pro scores.",
+            StyleMatchAIGuardrails.scoreIntegrityInstruction,
             StylistMessageComposer.aiPhrasingInstruction
         ])
             .joined(separator: "\n")
@@ -217,7 +244,7 @@ struct PersonalizationContextBuilder {
             if memory.timesWorn > 0 {
                 parts.append("worn \(memory.timesWorn)x")
             }
-            let occasion = memory.occasion.map { " for \($0.displayName.lowercased())" } ?? ""
+            let occasion = memory.occasion?.canonical.map { " for \($0.displayName.lowercased())" } ?? ""
             let reason = clean(memory.dislikeReason?.displayName ?? "", fallback: "")
             let reasonText = reason.isEmpty ? "" : ", reason \(reason)"
             return "\(parts.joined(separator: ", "))\(occasion), \(memory.styleScore)/100\(reasonText)"
@@ -226,25 +253,74 @@ struct PersonalizationContextBuilder {
         return summary.isEmpty ? nil : summary
     }
 
-    private static func occasionSignals(_ memories: [OutfitMemory]) -> String? {
-        let occasionCounts = Dictionary(grouping: memories.compactMap(\.occasion)) { $0 }
+    static func occasionContextLines(
+        recentMemories: [OutfitMemory],
+        currentOccasion: Occasion?,
+        maxCharacters: Int? = nil
+    ) -> [String] {
+        var lines: [(key: String, value: String)] = []
+        if let feedback = feedbackSummary(recentMemories) {
+            lines.append(("Feedback signals", feedback))
+        }
+        if let trend = occasionSignals(recentMemories) {
+            lines.append(("Occasion patterns", trend))
+        }
+        if let occasion = currentOccasion?.canonical {
+            lines.append(("Current scan occasion", "The user tagged this outfit for: \(occasion.displayName)."))
+        }
+
+        func rendered(_ values: [(key: String, value: String)]) -> [String] {
+            values.map { "- \($0.key): \($0.value)" }
+        }
+
+        guard let maxCharacters else {
+            return rendered(lines)
+        }
+
+        var trimmed = lines
+        let dropOrder = ["Occasion patterns", "Feedback signals", "Current scan occasion"]
+        for key in dropOrder {
+            if rendered(trimmed).joined(separator: "\n").count <= maxCharacters {
+                break
+            }
+            if let index = trimmed.firstIndex(where: { $0.key == key }) {
+                trimmed.remove(at: index)
+            }
+        }
+
+        return rendered(trimmed)
+    }
+
+    static func occasionSignals(_ memories: [OutfitMemory]) -> String? {
+        let canonicalMemories = memories.compactMap { memory -> (occasion: Occasion, memory: OutfitMemory)? in
+            guard let occasion = memory.occasion?.canonical else { return nil }
+            return (occasion, memory)
+        }
+
+        let occasionCounts = Dictionary(grouping: canonicalMemories.map(\.occasion)) { $0 }
             .mapValues(\.count)
-            .filter { occasion, _ in occasion != .general && occasion != .other }
             .sorted { first, second in
                 if first.value == second.value {
                     return first.key.displayName < second.key.displayName
                 }
                 return first.value > second.value
             }
+        let countSummary = occasionCounts
             .prefix(3)
             .map { "\($0.key.displayName.lowercased()) \($0.value)x" }
 
-        let dislikedReasons = memories
+        let trendSentence: String?
+        if let top = occasionCounts.first {
+            let summary = countSummary.isEmpty ? "\(top.key.displayName.lowercased()) \(top.value)x" : countSummary.joined(separator: ", ")
+            trendSentence = "Most of the user's recent scans are tagged \(top.key.displayName) (\(summary))."
+        } else {
+            trendSentence = nil
+        }
+
+        let dislikedReasons = canonicalMemories.map(\.memory)
             .filter { $0.wasLiked == false }
             .compactMap { memory -> String? in
-                guard let occasion = memory.occasion,
-                      occasion != .general,
-                      occasion != .other,
+                guard let occasion = memory.occasion?.canonical,
                       let reason = memory.dislikeReason?.displayName else {
                     return nil
                 }
@@ -254,14 +330,125 @@ struct PersonalizationContextBuilder {
             .prefix(3)
 
         var parts: [String] = []
-        if !occasionCounts.isEmpty {
-            parts.append(occasionCounts.joined(separator: ", "))
+        if let trendSentence {
+            parts.append(trendSentence)
+        } else if !countSummary.isEmpty {
+            parts.append(countSummary.joined(separator: ", "))
         }
         if !dislikedReasons.isEmpty {
             parts.append(dislikedReasons.joined(separator: "; "))
         }
 
         return parts.isEmpty ? nil : parts.joined(separator: "; ")
+    }
+
+    static func feedbackSummary(_ memories: [OutfitMemory], maxCharacters: Int = 220) -> String? {
+        let feedbackMemories = memories
+            .filter { $0.feedback != nil }
+            .sorted { $0.scanDate > $1.scanDate }
+
+        guard !feedbackMemories.isEmpty else {
+            return nil
+        }
+
+        let lovedCount = feedbackMemories.filter { $0.feedback?.verdict == .loved }.count
+        let likedCount = feedbackMemories.filter { $0.feedback?.verdict == .liked }.count
+        let notForMeCount = feedbackMemories.filter { $0.feedback?.verdict == .notForMe }.count
+        let wornCount = feedbackMemories.filter { $0.feedback?.woreIt == true }.count
+
+        var parts: [String] = []
+        if lovedCount > 0 {
+            parts.append("loved \(lovedCount)")
+        }
+        if likedCount > 0 {
+            parts.append("liked \(likedCount)")
+        }
+        if notForMeCount > 0 {
+            parts.append("not for me \(notForMeCount)")
+        }
+        if wornCount > 0 {
+            parts.append("wore \(wornCount)")
+        }
+
+        let styleSignals = Dictionary(grouping: feedbackMemories, by: { memory in
+            clean(memory.detectedStyle, fallback: "outfit").lowercased()
+        })
+        .mapValues { memories in
+            memories.compactMap { $0.feedback?.verdict }.reduce(into: [OutfitFeedback.Verdict: Int]()) { counts, verdict in
+                counts[verdict, default: 0] += 1
+            }
+        }
+        .sorted { first, second in
+            let firstTotal = first.value.values.reduce(0, +)
+            let secondTotal = second.value.values.reduce(0, +)
+            if firstTotal == secondTotal {
+                return first.key < second.key
+            }
+            return firstTotal > secondTotal
+        }
+        .prefix(2)
+        .compactMap { style, counts -> String? in
+            guard !style.isEmpty else { return nil }
+            if let count = counts[.notForMe], count > 0 {
+                return "\(style) not for me \(count)x"
+            }
+            if let count = counts[.loved], count > 0 {
+                return "\(style) loved \(count)x"
+            }
+            if let count = counts[.liked], count > 0 {
+                return "\(style) liked \(count)x"
+            }
+            return nil
+        }
+
+        let occasionSignals = Dictionary(grouping: feedbackMemories.compactMap { memory -> (Occasion, OutfitFeedback.Verdict)? in
+            guard let occasion = memory.occasion?.canonical,
+                  let verdict = memory.feedback?.verdict else {
+                return nil
+            }
+            return (occasion, verdict)
+        }, by: { $0.0 })
+            .mapValues { values in
+                values.reduce(into: [OutfitFeedback.Verdict: Int]()) { counts, value in
+                    counts[value.1, default: 0] += 1
+                }
+            }
+            .sorted { first, second in
+                let firstTotal = first.value.values.reduce(0, +)
+                let secondTotal = second.value.values.reduce(0, +)
+                if firstTotal == secondTotal {
+                    return first.key.displayName < second.key.displayName
+                }
+                return firstTotal > secondTotal
+            }
+            .prefix(2)
+            .compactMap { occasion, counts -> String? in
+                if let count = counts[.notForMe], count > 0 {
+                    return "\(occasion.displayName.lowercased()) not for me \(count)x"
+                }
+                if let count = counts[.loved], count > 0 {
+                    return "\(occasion.displayName.lowercased()) loved \(count)x"
+                }
+                if let count = counts[.liked], count > 0 {
+                    return "\(occasion.displayName.lowercased()) liked \(count)x"
+                }
+                return nil
+            }
+
+        let summary = ([parts.joined(separator: ", ")] + styleSignals + occasionSignals)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "; ")
+
+        guard !summary.isEmpty else {
+            return nil
+        }
+
+        if summary.count <= maxCharacters {
+            return summary
+        }
+
+        let end = summary.index(summary.startIndex, offsetBy: max(0, maxCharacters - 1))
+        return String(summary[..<end]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
     private static func sizeSummary(_ sizes: ClothingSizes) -> String? {

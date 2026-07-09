@@ -249,12 +249,74 @@ struct GarmentRecord: Codable, Identifiable, Equatable {
 enum Occasion: String, Codable, CaseIterable {
     case general
     case work
+    case businessFormal
+    case weddingGuest
+    case party
+    case casualDay
+    case gym
+    case loungewear
+    case specialEvent
+
+    // Legacy values kept so existing saved scans decode without data loss.
     case casual
     case dateNight
     case wedding
     case formalEvent
     case travel
     case other
+
+    static var allCases: [Occasion] {
+        [
+            .general,
+            .work,
+            .businessFormal,
+            .dateNight,
+            .weddingGuest,
+            .party,
+            .casualDay,
+            .gym,
+            .travel,
+            .loungewear,
+            .specialEvent
+        ]
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        if let occasion = Occasion(rawValue: rawValue)?.canonical ?? Occasion(label: rawValue)?.canonical {
+            self = occasion
+            return
+        }
+        throw DecodingError.dataCorruptedError(
+            in: container,
+            debugDescription: "Unknown occasion value: \(rawValue)"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode((canonical ?? self).rawValue)
+    }
+
+    var canonical: Occasion? {
+        switch self {
+        case .general, .other:
+            return nil
+        case .casual:
+            return .casualDay
+        case .wedding:
+            return .weddingGuest
+        case .formalEvent:
+            return .specialEvent
+        default:
+            return self
+        }
+    }
+
+    var isSpecified: Bool {
+        canonical != nil
+    }
 
     init?(label: String?) {
         guard let label else {
@@ -266,20 +328,32 @@ enum Occasion: String, Codable, CaseIterable {
             return nil
         }
 
-        if cleaned.contains("general") || cleaned.contains("everyday") || cleaned.contains("default") {
+        if cleaned.contains("general") || cleaned.contains("default") {
             self = .general
-        } else if cleaned.contains("work") || cleaned.contains("office") || cleaned.contains("interview") {
+        } else if cleaned.contains("business formal") || cleaned.contains("interview") || cleaned.contains("business professional") {
+            self = .businessFormal
+        } else if cleaned.contains("work") || cleaned.contains("office") {
             self = .work
         } else if cleaned.contains("date") || cleaned.contains("dinner") {
             self = .dateNight
+        } else if cleaned.contains("wedding guest") || cleaned.contains("wedding") {
+            self = .weddingGuest
+        } else if cleaned.contains("party") {
+            self = .party
+        } else if cleaned.contains("gym") || cleaned.contains("workout") || cleaned.contains("fitness") {
+            self = .gym
+        } else if cleaned.contains("lounge") || cleaned.contains("sleep") || cleaned.contains("home") {
+            self = .loungewear
+        } else if cleaned.contains("special") {
+            self = .specialEvent
+        } else if cleaned.contains("casual") || cleaned.contains("everyday") || cleaned.contains("weekend") {
+            self = .casualDay
         } else if cleaned.contains("wedding") {
             self = .wedding
         } else if cleaned.contains("formal") || cleaned.contains("ceremony") || cleaned.contains("event") {
             self = .formalEvent
         } else if cleaned.contains("travel") || cleaned.contains("airport") || cleaned.contains("vacation") {
             self = .travel
-        } else if cleaned.contains("casual") || cleaned.contains("everyday") || cleaned.contains("weekend") {
-            self = .casual
         } else if cleaned == "other" {
             self = .other
         } else {
@@ -293,6 +367,20 @@ enum Occasion: String, Codable, CaseIterable {
             return "General"
         case .work:
             return "Work"
+        case .businessFormal:
+            return "Business Formal"
+        case .weddingGuest:
+            return "Wedding Guest"
+        case .party:
+            return "Party"
+        case .casualDay:
+            return "Casual Day"
+        case .gym:
+            return "Gym"
+        case .loungewear:
+            return "Loungewear"
+        case .specialEvent:
+            return "Special Event"
         case .casual:
             return "Casual"
         case .dateNight:
@@ -351,19 +439,37 @@ struct FormalityMismatch: Equatable {
 }
 
 struct FormalityMismatchEvaluator {
+    struct ConflictPair: Hashable {
+        let formality: FormalityLevel
+        let occasion: Occasion
+    }
+
+    static let explicitConflictPairs: Set<ConflictPair> = [
+        ConflictPair(formality: .sleepwear, occasion: .work),
+        ConflictPair(formality: .sleepwear, occasion: .businessFormal),
+        ConflictPair(formality: .sleepwear, occasion: .weddingGuest)
+    ]
+
     static let acceptableFormalityBands: [Occasion: Set<FormalityLevel>] = [
         .general: Set(FormalityLevel.allCases),
         .casual: [.casual, .smartCasual, .businessCasual, .business, .semiFormal, .formal, .ceremonial],
+        .casualDay: [.casual, .smartCasual, .businessCasual],
         .work: [.smartCasual, .businessCasual, .business, .semiFormal],
+        .businessFormal: [.business, .semiFormal, .formal],
         .dateNight: [.smartCasual, .businessCasual, .business, .semiFormal, .formal],
         .wedding: [.semiFormal, .formal, .ceremonial],
+        .weddingGuest: [.semiFormal, .formal, .ceremonial],
+        .party: [.smartCasual, .businessCasual, .semiFormal, .formal],
         .formalEvent: [.semiFormal, .formal, .ceremonial],
+        .specialEvent: [.semiFormal, .formal, .ceremonial],
+        .gym: [.casual],
+        .loungewear: [.sleepwear, .casual],
         .travel: [.casual, .smartCasual, .businessCasual],
         .other: Set(FormalityLevel.allCases)
     ]
 
     static func evaluate(detectedStyle: String, occasion: Occasion?) -> FormalityMismatch? {
-        guard let occasion, occasion != .general, occasion != .other else {
+        guard let occasion = occasion?.canonical else {
             return nil
         }
 
@@ -376,6 +482,14 @@ struct FormalityMismatchEvaluator {
             )
         }
 
+        if hasExplicitConflict(formality: formality, occasion: occasion) {
+            return FormalityMismatch(
+                occasion: occasion,
+                detectedFormality: formality,
+                message: "Occasion check: this reads as \(formality.displayName), but you selected \(occasion.displayName.lowercased()). The score is unchanged; address the mismatch honestly instead of praising the fit for that occasion."
+            )
+        }
+
         guard acceptableFormalityBands[occasion, default: Set(FormalityLevel.allCases)].contains(formality) else {
             return FormalityMismatch(
                 occasion: occasion,
@@ -385,6 +499,13 @@ struct FormalityMismatchEvaluator {
         }
 
         return nil
+    }
+
+    static func hasExplicitConflict(formality: FormalityLevel, occasion: Occasion?) -> Bool {
+        guard let occasion = occasion?.canonical else {
+            return false
+        }
+        return explicitConflictPairs.contains(ConflictPair(formality: formality, occasion: occasion))
     }
 
     static func formalityLevel(from detectedStyle: String) -> FormalityLevel {
@@ -491,6 +612,18 @@ enum DislikeReason: String, Codable, CaseIterable {
     }
 }
 
+struct OutfitFeedback: Codable, Equatable {
+    enum Verdict: String, Codable {
+        case loved
+        case liked
+        case notForMe
+    }
+
+    let verdict: Verdict
+    let woreIt: Bool?
+    let recordedAt: Date
+}
+
 struct OutfitMemory: Codable, Identifiable {
     let id: UUID
     var userId: String
@@ -507,6 +640,7 @@ struct OutfitMemory: Codable, Identifiable {
     var feedbackPromptCount: Int
     var feedbackDismissedAt: Date?
     var feedbackCompletedAt: Date?
+    var feedback: OutfitFeedback?
     var wouldWearAgain: Bool?
     var receivedCompliments: Bool?
     var isFavorite: Bool
@@ -529,6 +663,7 @@ struct OutfitMemory: Codable, Identifiable {
         feedbackPromptCount: Int = 0,
         feedbackDismissedAt: Date? = nil,
         feedbackCompletedAt: Date? = nil,
+        feedback: OutfitFeedback? = nil,
         wouldWearAgain: Bool?,
         receivedCompliments: Bool?,
         isFavorite: Bool,
@@ -550,6 +685,7 @@ struct OutfitMemory: Codable, Identifiable {
         self.feedbackPromptCount = max(0, feedbackPromptCount)
         self.feedbackDismissedAt = feedbackDismissedAt
         self.feedbackCompletedAt = feedbackCompletedAt
+        self.feedback = feedback
         self.wouldWearAgain = wouldWearAgain
         self.receivedCompliments = receivedCompliments
         self.isFavorite = isFavorite
@@ -567,9 +703,9 @@ struct OutfitMemory: Codable, Identifiable {
         detectedStyle = try container.decodeIfPresent(String.self, forKey: .detectedStyle) ?? "Casual"
         styleScore = min(100, max(0, try container.decodeIfPresent(Int.self, forKey: .styleScore) ?? 0))
         if let decodedOccasion = try? container.decodeIfPresent(Occasion.self, forKey: .occasion) {
-            occasion = decodedOccasion
+            occasion = decodedOccasion.canonical
         } else {
-            occasion = Occasion(label: try? container.decodeIfPresent(String.self, forKey: .occasion))
+            occasion = Occasion(label: try? container.decodeIfPresent(String.self, forKey: .occasion))?.canonical
         }
         wasWorn = try container.decodeIfPresent(Bool.self, forKey: .wasWorn)
         wasLiked = try container.decodeIfPresent(Bool.self, forKey: .wasLiked)
@@ -582,6 +718,7 @@ struct OutfitMemory: Codable, Identifiable {
         feedbackPromptCount = max(0, try container.decodeIfPresent(Int.self, forKey: .feedbackPromptCount) ?? 0)
         feedbackDismissedAt = try container.decodeIfPresent(Date.self, forKey: .feedbackDismissedAt)
         feedbackCompletedAt = try container.decodeIfPresent(Date.self, forKey: .feedbackCompletedAt)
+        feedback = try container.decodeIfPresent(OutfitFeedback.self, forKey: .feedback)
         wouldWearAgain = try container.decodeIfPresent(Bool.self, forKey: .wouldWearAgain)
         receivedCompliments = try container.decodeIfPresent(Bool.self, forKey: .receivedCompliments)
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
