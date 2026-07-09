@@ -207,6 +207,52 @@ final class OutfitMemoryStore: ObservableObject {
         save()
     }
 
+    func recordOutfitFeedback(for outfitMemoryId: UUID, feedback: OutfitFeedback) {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
+        guard let index = memories.firstIndex(where: { $0.id == outfitMemoryId }) else {
+            return
+        }
+
+        memories[index].feedback = feedback
+        memories[index].feedbackTimestamp = feedback.recordedAt
+        memories[index].feedbackCompletedAt = feedback.recordedAt
+
+        if let woreIt = feedback.woreIt {
+            applyWornAnswer(at: index, wasWorn: woreIt, now: feedback.recordedAt)
+        }
+
+        switch feedback.verdict {
+        case .loved:
+            memories[index].wasLiked = true
+            memories[index].wouldWearAgain = true
+            memories[index].isFavorite = true
+            memories[index].dislikeReason = nil
+        case .liked:
+            memories[index].wasLiked = true
+            memories[index].wouldWearAgain = true
+            memories[index].dislikeReason = nil
+        case .notForMe:
+            memories[index].wasLiked = false
+            memories[index].wouldWearAgain = false
+        }
+
+        save()
+    }
+
+    func updateOccasion(for outfitMemoryId: UUID, occasion: Occasion?) {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+
+        guard let index = memories.firstIndex(where: { $0.id == outfitMemoryId }) else {
+            return
+        }
+
+        memories[index].occasion = occasion?.canonical
+        save()
+    }
+
     private func applyFeedbackFields(
         at index: Int,
         wasWorn: Bool,
@@ -347,6 +393,8 @@ final class OutfitMemoryStore: ObservableObject {
         merged.feedbackPromptCount = max(existing.feedbackPromptCount, incoming.feedbackPromptCount)
         merged.feedbackDismissedAt = incoming.feedbackDismissedAt ?? existing.feedbackDismissedAt
         merged.feedbackCompletedAt = incoming.feedbackCompletedAt ?? existing.feedbackCompletedAt
+        merged.feedback = incoming.feedback ?? existing.feedback
+        merged.occasion = incoming.occasion?.canonical ?? existing.occasion?.canonical
         merged.wouldWearAgain = incoming.wouldWearAgain ?? existing.wouldWearAgain
         merged.receivedCompliments = incoming.receivedCompliments ?? existing.receivedCompliments
         merged.isFavorite = existing.isFavorite || incoming.isFavorite
