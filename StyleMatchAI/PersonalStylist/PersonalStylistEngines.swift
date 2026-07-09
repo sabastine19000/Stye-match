@@ -4,12 +4,13 @@ struct FeatureFlags {
     static var saleMatchingEnabled = false
     static var weatherAdviceEnabled = true
     static var shoppingTabEnabled = true
-    static var remoteCatalogEnabled = false
+    static var remoteCatalogEnabled = true
     static var liveSearchEnabled = false
     static var saleNotificationsEnabled = false
     static var pushNotificationsEnabled = false
     static var remoteSyncEnabled = false
     static var conversationalStylist = false
+    static var alternateAIProvidersEnabled = false
 }
 
 extension StylistProfile {

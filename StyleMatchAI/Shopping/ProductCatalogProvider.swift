@@ -110,10 +110,20 @@ struct BundledCatalogProvider: ProductCatalogProvider {
             throw ProductCatalogProviderError.missingCatalog
         }
         let configURL = bundle.url(forResource: retailerConfigResourceName, withExtension: "json")
-        return try Self.decodeProducts(
+        let decodedProducts = try Self.decodeProducts(
             catalogData: Data(contentsOf: catalogURL),
             retailerConfigData: configURL.flatMap { try? Data(contentsOf: $0) }
         )
+        let customerSafeProducts = decodedProducts.filter { product in
+            let outboundURL = AffiliateLinkBuilder.outboundURL(for: product)
+            return !AffiliateLinkBuilder.isPlaceholderURL(outboundURL)
+        }
+
+        guard !customerSafeProducts.isEmpty else {
+            throw ProductCatalogProviderError.missingCatalog
+        }
+
+        return customerSafeProducts
     }
 
     static func decodeProducts(catalogData: Data, retailerConfigData: Data? = nil) throws -> [AffiliateProduct] {
@@ -147,6 +157,12 @@ struct BundledCatalogProvider: ProductCatalogProvider {
                         price: decoded.price,
                         salePrice: decoded.salePrice,
                         saleEndsAt: decoded.saleEndsAt,
+                        currencyCode: decoded.currencyCode,
+                        availableCountries: decoded.availableCountries,
+                        availableColors: decoded.availableColors,
+                        customerRating: decoded.customerRating,
+                        reviewCount: decoded.reviewCount,
+                        estimatedShippingText: decoded.estimatedShippingText,
                         tags: decoded.tags,
                         genderPresentation: decoded.genderPresentation
                     )
@@ -165,68 +181,197 @@ struct BundledCatalogProvider: ProductCatalogProvider {
 typealias CatalogProductSearchProvider = CatalogSearchProvider
 
 struct RemoteCatalogProvider: ProductCatalogProvider {
-    let catalogURL: URL
+    let baseURL: URL
     let cacheDirectory: URL
     let fallbackProvider: ProductCatalogProvider
     var urlSession: URLSession = .shared
+    var refreshInterval: TimeInterval = 3600
 
     func products() async throws -> [AffiliateProduct] {
         do {
-            let response = try await fetchRemoteData()
-            try cache(response.data, etag: response.etag)
-            if response.notModified, let cached = try? Data(contentsOf: cacheFileURL()) {
-                return try BundledCatalogProvider.decodeProducts(catalogData: cached)
+            let data = try await fetchRemoteData()
+            let decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)
+            guard !decoded.isEmpty else {
+                throw ProductCatalogProviderError.missingCatalog
             }
-            let data = response.data
-            return try BundledCatalogProvider.decodeProducts(catalogData: data)
+            try cache(data)
+            return decoded
         } catch {
-            if let cached = try? Data(contentsOf: cacheFileURL()) {
-                return try BundledCatalogProvider.decodeProducts(catalogData: cached)
+            if let cached = try? cachedProducts(), !cached.isEmpty {
+                return cached
             }
-            return try await fallbackProvider.products()
+            throw ProductCatalogProviderError.missingCatalog
         }
     }
 
-    private func fetchRemoteData() async throws -> (data: Data, etag: String?, notModified: Bool) {
-        var request = URLRequest(url: catalogURL)
-        if let etag = try? String(contentsOf: etagFileURL(), encoding: .utf8),
-           !etag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+    static func decodeRemoteProducts(_ data: Data, baseURL: URL, regionCode: String = Self.currentRegionCode) throws -> [AffiliateProduct] {
+        let response = try JSONDecoder.catalog.decode(RemoteProductsResponse.self, from: data)
+        let normalizedRegion = regionCode.uppercased()
+        return response.products.compactMap { remote in
+            if let availableCountries = remote.availableCountries,
+               !Self.countryList(availableCountries, contains: normalizedRegion) {
+                return nil
+            }
+            guard let buyURL = URL(string: remote.buyURL, relativeTo: baseURL)?.absoluteURL else {
+                #if DEBUG
+                print("[StyleMatch Remote Catalog] Skipping product with invalid buy_url: \(remote.id)")
+                #endif
+                return nil
+            }
+            let imageURL = remote.imageURL.flatMap(URL.init(string:))
+            return AffiliateProduct(
+                id: remote.id,
+                name: remote.name,
+                category: remote.productCategory,
+                subcategory: remote.category,
+                colors: remote.tags.filter(Self.isLikelyColor),
+                sizes: nil,
+                priceRange: nil,
+                occasionTags: remote.tags,
+                brand: remote.brand,
+                imageURL: imageURL ?? Self.placeholderImageURL,
+                retailer: Retailer(
+                    name: remote.storeName,
+                    trackingID: AffiliateLinkBuilder.pendingApprovalTrackingID,
+                    trackingParamName: "stylematch",
+                    disclosureName: remote.storeName
+                ),
+                affiliateURL: buyURL,
+                price: remote.priceCents.map(Self.decimalFromCents),
+                salePrice: remote.salePriceCents.map(Self.decimalFromCents),
+                saleEndsAt: remote.saleEndsAt,
+                currencyCode: remote.currency,
+                availableCountries: remote.availableCountries,
+                availableColors: nil,
+                customerRating: nil,
+                reviewCount: nil,
+                estimatedShippingText: nil,
+                tags: remote.tags,
+                genderPresentation: nil
+            )
         }
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: cacheFileURL().path),
-           let modified = attrs[.modificationDate] as? Date {
-            request.setValue(Self.httpDateFormatter.string(from: modified), forHTTPHeaderField: "If-Modified-Since")
+    }
+
+    private func fetchRemoteData() async throws -> Data {
+        var components = URLComponents(url: baseURL.appendingPathComponent("v1/products"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "country", value: Self.currentRegionCode)
+        ]
+        guard let url = components?.url else {
+            throw ProductCatalogProviderError.missingCatalog
         }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        #if DEBUG
+        print("[StyleMatch Remote Catalog] Fetching catalog from \(url.absoluteString)")
+        #endif
         let (data, response) = try await urlSession.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode == 304 {
-            return (Data(), nil, true)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ProductCatalogProviderError.missingCatalog
         }
-        return (data, (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag"), false)
+        return data
     }
 
-    private func cache(_ data: Data, etag: String?) throws {
+    private func cachedProducts() throws -> [AffiliateProduct] {
+        let data = try Data(contentsOf: cacheFileURL())
+        return try Self.decodeRemoteProducts(data, baseURL: baseURL)
+    }
+
+    private func shouldRefreshCache(now: Date = Date()) -> Bool {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: cacheFileURL().path),
+              let modified = attrs[.modificationDate] as? Date else {
+            return true
+        }
+        return now.timeIntervalSince(modified) >= refreshInterval
+    }
+
+    private func cache(_ data: Data) throws {
         try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         try data.write(to: cacheFileURL(), options: .atomic)
-        if let etag, !etag.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            try etag.write(to: etagFileURL(), atomically: true, encoding: .utf8)
-        }
     }
 
     private func cacheFileURL() -> URL {
-        cacheDirectory.appendingPathComponent("ProductCatalog.remote.json")
+        cacheDirectory.appendingPathComponent("ProductCatalog.worker.remote.json")
     }
 
-    private func etagFileURL() -> URL {
-        cacheDirectory.appendingPathComponent("ProductCatalog.remote.etag")
+    private static func decimalFromCents(_ cents: Int) -> Decimal {
+        Decimal(cents) / Decimal(100)
     }
 
-    private static let httpDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
-        return formatter
-    }()
+    private static func isLikelyColor(_ value: String) -> Bool {
+        let colors = Set(["black", "white", "gray", "grey", "navy", "blue", "brown", "tan", "beige", "green", "red", "pink", "purple", "yellow", "orange", "cream", "charcoal"])
+        return colors.contains(value.lowercased())
+    }
+
+    private static func countryList(_ countries: [String], contains regionCode: String) -> Bool {
+        countries.contains("*") || countries.map { $0.uppercased() }.contains(regionCode.uppercased())
+    }
+
+    private static var currentRegionCode: String {
+        #if os(iOS) || os(macOS) || os(tvOS) || os(watchOS)
+        if #available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *) {
+            return Locale.current.region?.identifier.uppercased() ?? "US"
+        } else {
+            return Locale.current.regionCode?.uppercased() ?? "US"
+        }
+        #else
+        return "US"
+        #endif
+    }
+
+    private static let placeholderImageURL = URL(string: "https://stylematch.local/product-placeholder.png")!
+}
+
+private struct RemoteProductsResponse: Decodable {
+    let products: [RemoteProduct]
+}
+
+private struct RemoteProduct: Decodable {
+    let id: String
+    let storeID: String
+    let storeName: String
+    let name: String
+    let imageURL: String?
+    let category: String
+    let brand: String?
+    let priceCents: Int?
+    let salePriceCents: Int?
+    let saleEndsAt: Date?
+    let currency: String?
+    let countryCode: String?
+    let availableCountries: [String]?
+    let availability: String
+    let tags: [String]
+    let buyURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case storeID = "store_id"
+        case storeName = "store_name"
+        case name
+        case imageURL = "image_url"
+        case category
+        case brand
+        case priceCents = "price_cents"
+        case salePriceCents = "sale_price_cents"
+        case saleEndsAt = "sale_ends_at"
+        case currency
+        case countryCode = "country_code"
+        case availableCountries = "available_countries"
+        case availability
+        case tags
+        case buyURL = "buy_url"
+    }
+
+    var productCategory: ProductCategory {
+        switch category {
+        case "shoes": return .shoes
+        case "accessories": return .accessories
+        default: return .clothing
+        }
+    }
 }
 
 struct ProxyLiveRetailerSearchProvider: LiveRetailerSearchProvider {
