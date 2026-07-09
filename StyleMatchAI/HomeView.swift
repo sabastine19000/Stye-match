@@ -22,6 +22,13 @@ private let styleMatchNavigationTargets: [StyleMatchNavigationTarget] = [
 
 struct HomeView: View {
     @Binding var selectedTab: AppTab
+    var feedbackPrompt: ScheduledFeedbackPrompt?
+    var onHomeAppear: () -> Void = {}
+    var onFeedbackWornAnswer: (ScheduledFeedbackPrompt, Bool) -> Void = { _, _ in }
+    var onFeedbackLikedAnswer: (ScheduledFeedbackPrompt, Bool) -> Void = { _, _ in }
+    var onFeedbackDislikeReason: (ScheduledFeedbackPrompt, DislikeReason) -> Void = { _, _ in }
+    var onFeedbackDismiss: () -> Void = {}
+    var onFeedbackComplete: () -> Void = {}
     @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.siri.rawValue
     @AppStorage("profileName") private var profileName = ""
     @AppStorage("weather") private var weather = "82°"
@@ -37,6 +44,7 @@ struct HomeView: View {
     @AppStorage("closetItemsData") private var closetItemsData = Data()
     @AppStorage("wishlistProductNamesData") private var wishlistProductNamesData = Data()
     @State private var navigationQuery = ""
+    @State private var outfitHistoryQuery = ""
 
     private var selectedAssistant: PreferredAIAssistant {
         PreferredAIAssistant(rawValue: preferredAIAssistant) ?? .siri
@@ -48,28 +56,32 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     premiumHeader
 
-                    smartNavigationCard
+                    topStyleScoreCard
 
-                    quickActionsSection
+                    homeSnapshotChipRow
+
+                    if let feedbackPrompt {
+                        HomeOutfitFeedbackCard(
+                            prompt: feedbackPrompt,
+                            onWornAnswer: onFeedbackWornAnswer,
+                            onLikedAnswer: onFeedbackLikedAnswer,
+                            onDislikeReason: onFeedbackDislikeReason,
+                            onDismissPrompt: onFeedbackDismiss,
+                            onComplete: onFeedbackComplete
+                        )
+                    }
 
                     styleBriefCard
 
-                    continueCard
+                    quickActionsSection
 
-                    AIStyleInsightCard(
-                        tab: .home,
-                        screen: "Home",
-                        title: "Personal AI Stylist",
-                        prompt: "Give me one warm, respectful style move I should make today using my closet, profile, weather, sizes, and recent scans.",
-                        fallbackAdvice: "Your AI Stylist learns your wardrobe, favorite colors, sizes, budget, and style preferences to give personalized outfit recommendations every day.",
-                        extraContext: "The customer is deciding where to start."
-                    )
-
-                    aiMemoryStatusCard
+                    personalStylistDashboard
 
                     styleProgressCard
 
-                    motivationCard
+                    continueCard
+
+                    outfitHistorySection
 
                     if FeatureGate.shared.isCustomerVisible(.aiAssistantChoice) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -98,6 +110,7 @@ struct HomeView: View {
                     }
                 }
                 .padding()
+                .padding(.bottom, 120)
             }
             .scrollContentBackground(.hidden)
             .appScreenBackground(.home)
@@ -113,19 +126,21 @@ struct HomeView: View {
                     .accessibilityLabel("Open Profile")
                 }
             }
+            .onAppear(perform: onHomeAppear)
         }
     }
 
     private var smartNavigationCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Quick Jump", systemImage: "magnifyingglass")
-                .font(.headline)
-
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
+                    .foregroundColor(.primary.opacity(0.62))
 
-                TextField("Search StyleMatch Pro", text: $navigationQuery)
+                TextField(
+                    "",
+                    text: $navigationQuery,
+                    prompt: Text("Search StyleMatch Pro").foregroundColor(.primary.opacity(0.58))
+                )
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
@@ -140,51 +155,51 @@ struct HomeView: View {
                 }
             }
             .padding(12)
-            .background(Color(.secondarySystemBackground).opacity(0.78))
+            .background(Color(.secondarySystemBackground).opacity(0.9))
             .clipShape(RoundedRectangle(cornerRadius: 14))
 
-            VStack(spacing: 8) {
-                ForEach(navigationMatches.prefix(navigationQuery.isEmpty ? 4 : 6)) { target in
-                    Button {
-                        navigate(to: target)
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: target.icon)
-                                .font(.headline)
-                                .foregroundStyle(target.tab.palette.accent)
-                                .frame(width: 34, height: 34)
-                                .background(target.tab.palette.accent.opacity(0.14))
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
+            if !navigationQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                VStack(spacing: 8) {
+                    ForEach(navigationMatches.prefix(5)) { target in
+                        Button {
+                            navigate(to: target)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: target.icon)
+                                    .font(.headline)
+                                    .foregroundStyle(target.tab.palette.accent)
+                                    .frame(width: 34, height: 34)
+                                    .background(target.tab.palette.accent.opacity(0.14))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(target.title)
-                                    .font(.subheadline)
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(.primary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(target.title)
+                                        .font(.subheadline)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.primary)
 
-                                Text(target.subtitle)
+                                    Text(target.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
                                     .font(.caption)
+                                    .fontWeight(.bold)
                                     .foregroundStyle(.secondary)
-                                    .lineLimit(1)
                             }
-
-                            Spacer()
-
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.secondary)
+                            .padding(10)
+                            .background(Color(.secondarySystemBackground).opacity(0.72))
+                            .clipShape(RoundedRectangle(cornerRadius: 13))
                         }
-                        .padding(10)
-                        .background(Color(.systemBackground).opacity(0.72))
-                        .clipShape(RoundedRectangle(cornerRadius: 13))
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
-        .padding()
-        .appCard(.home, radius: 16)
     }
 
     private var navigationMatches: [StyleMatchNavigationTarget] {
@@ -213,7 +228,7 @@ struct HomeView: View {
     }
 
     private var premiumHeader: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(homeGreeting) 👋")
                     .font(.system(size: 32, weight: .bold, design: .rounded))
@@ -227,41 +242,12 @@ struct HomeView: View {
                     .lineLimit(2)
             }
 
-            topStyleScoreCard
-
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                homeSignal(icon: "cloud.sun.fill", text: "\(weatherTemperatureText) Today", tint: Color(hex: 0xF5B84B))
-                homeSignal(icon: "person.fill.checkmark", text: outfitMoodText, tint: AppTab.closet.palette.accent)
-                homeSignal(icon: "tshirt.fill", text: "\(closetItemCountText) Closet Items", tint: AppTab.scan.palette.accent)
-                homeSignal(icon: "sparkles", text: "AI Confidence: High", tint: AppTab.ai.palette.accent)
-            }
+            smartNavigationCard
         }
-        .padding(18)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 26)
-                    .fill(.regularMaterial)
-                LinearGradient(
-                    colors: [
-                        Color(.systemBackground).opacity(0.82),
-                        AppTab.home.palette.accent.opacity(0.13),
-                        Color(hex: 0xF5B84B).opacity(0.10)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            }
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 26))
-        .overlay(
-            RoundedRectangle(cornerRadius: 26)
-                .stroke(Color.white.opacity(0.42), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.08), radius: 18, x: 0, y: 10)
     }
 
     private var topStyleScoreCard: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Today's Style")
                     .font(.caption)
@@ -287,13 +273,19 @@ struct HomeView: View {
 
             Spacer()
 
-            VStack(alignment: .trailing, spacing: 6) {
-                Image(systemName: "star.fill")
-                    .font(.title2)
-                    .foregroundStyle(AppTab.ai.palette.accent)
-                    .frame(width: 44, height: 44)
-                    .background(AppTab.ai.palette.accent.opacity(0.14))
-                    .clipShape(Circle())
+            VStack(alignment: .center, spacing: 8) {
+                ZStack {
+                    Circle()
+                        .stroke(AppTab.ai.palette.accent.opacity(0.14), lineWidth: 8)
+                    Circle()
+                        .trim(from: 0, to: CGFloat(min(100, max(0, latestScoreValue))) / 100)
+                        .stroke(AppTab.ai.palette.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Text(latestScoreText)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                }
+                .frame(width: 64, height: 64)
 
                 Text("AI Confidence: High")
                     .font(.caption)
@@ -303,8 +295,22 @@ struct HomeView: View {
             }
         }
         .padding(14)
-        .background(Color(.secondarySystemBackground).opacity(0.78))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .appCard(.home, radius: 16)
+    }
+
+    private var homeSnapshotChipRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                Button {
+                    selectedTab = .ai
+                } label: {
+                    homeSignal(icon: "cloud.sun.fill", text: homeWeatherSnapshot.chipText, tint: Color(hex: 0xF5B84B))
+                }
+                .buttonStyle(.plain)
+                homeSignal(icon: "person.fill.checkmark", text: outfitMoodText, tint: AppTab.closet.palette.accent)
+                homeSignal(icon: "tshirt.fill", text: StyleMatchHomeDisplay.closetItemLabel(closetItemCount), tint: AppTab.scan.palette.accent)
+            }
+        }
     }
 
     private var styleBriefCard: some View {
@@ -318,7 +324,7 @@ struct HomeView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Today's Style Brief")
+                    Text("Today's Recommendation")
                         .font(.title2)
                         .fontWeight(.bold)
 
@@ -331,11 +337,12 @@ struct HomeView: View {
                 Spacer()
             }
 
+            recommendedOutfitHero
+
             VStack(alignment: .leading, spacing: 10) {
-                styleBriefRow(icon: "cloud.sun.fill", title: "Weather", detail: "\(weatherConditionText), \(weatherTemperatureText)")
+                styleBriefRow(icon: "cloud.sun.fill", title: "Weather", detail: homeWeatherSnapshot.briefText)
                 styleBriefRow(icon: "calendar", title: "Calendar", detail: calendarBriefText)
-                styleBriefRow(icon: "sparkles", title: "Outfit", detail: "Navy polo, beige chinos, and white sneakers")
-                styleBriefRow(icon: "tshirt.fill", title: "Closet items", detail: closetItemsToWearText)
+                styleBriefRow(icon: "checklist", title: "Outfit checklist", detail: closetItemsToWearText)
                 styleBriefRow(icon: "washer.fill", title: "Laundry", detail: laundryBriefText)
                 styleBriefRow(icon: "plus.circle.fill", title: "Missing pieces", detail: missingPieceText)
                 if shouldShowShoppingBrief {
@@ -345,6 +352,62 @@ struct HomeView: View {
         }
         .padding()
         .appCard(.home, radius: 16)
+    }
+
+    private var recommendedOutfitHero: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Wear this first")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+
+                    Text(recommendedOutfitTitle)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                Text("Projected: 95")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.green.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+
+            HStack(spacing: 10) {
+                ForEach(recommendedOutfitPieces, id: \.title) { piece in
+                    VStack(spacing: 8) {
+                        Image(systemName: piece.icon)
+                            .font(.title3)
+                            .foregroundStyle(AppTab.home.palette.accent)
+                            .frame(width: 42, height: 42)
+                            .background(AppTab.home.palette.accent.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                        Text(piece.title)
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.72)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 92)
+                    .padding(10)
+                    .background(Color(.secondarySystemBackground).opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground).opacity(0.52))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private func styleBriefRow(icon: String, title: String, detail: String) -> some View {
@@ -374,41 +437,167 @@ struct HomeView: View {
         }
     }
 
-    private var motivationCard: some View {
-        Button {
-            selectedTab = .ai
-        } label: {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: "lightbulb.fill")
+    private var personalStylistDashboard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
                     .font(.title2)
-                    .foregroundStyle(Color(hex: 0xF5B84B))
-                    .frame(width: 48, height: 48)
-                    .background(Color(hex: 0xF5B84B).opacity(0.14))
+                    .foregroundStyle(AppTab.ai.palette.accent)
+                    .frame(width: 44, height: 44)
+                    .background(AppTab.ai.palette.accent.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Today's Style Tip")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AI Personal Stylist")
+                        .font(.title3)
+                        .fontWeight(.bold)
 
-                    Text("Neutral colors pair well with bold accessories.")
+                    Text(aiDailySummary)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
-                    Text("Learn More →")
-                        .font(.subheadline)
+            AIStyleInsightCard(
+                tab: .home,
+                screen: "Home",
+                title: "Morning Brief",
+                prompt: "Give me one warm, respectful style move I should make today using my closet, profile, weather, sizes, and recent scans.",
+                fallbackAdvice: "Build around your saved closet first, then shop only for pieces that complete multiple outfits.",
+                extraContext: "The customer is deciding where to start."
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Learning Progress")
+                        .font(.headline)
+
+                    Spacer()
+
+                    Text("\(learningProgressPercent)%")
+                        .font(.headline)
                         .fontWeight(.bold)
-                        .foregroundStyle(AppTab.ai.palette.accent)
                 }
 
-                Spacer(minLength: 0)
+                ProgressView(value: Double(learningProgressPercent), total: 100)
+                    .tint(AppTab.ai.palette.accent)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    aiMemoryItem(title: "Favorite Fit", value: favoriteFitText)
+                    aiMemoryItem(title: "Budget", value: budgetLevelText)
+                    aiMemoryItem(title: "Brands", value: favoriteBrandListText)
+                }
             }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                selectedTab = .ai
+            } label: {
+                Label("Chat with Stylist", systemImage: "bubble.left.and.bubble.right.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppTab.ai.palette.accent)
+        }
+        .padding()
+        .appCard(.home, radius: 16)
+    }
+
+    private var outfitHistorySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Outfit History", systemImage: "clock.arrow.circlepath")
+                    .font(.title2)
+                    .fontWeight(.bold)
+
+                Spacer()
+
+                Button("See All") {
+                    selectedTab = .scan
+                }
+                .font(.subheadline)
+                .fontWeight(.bold)
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField(
+                    "",
+                    text: $outfitHistoryQuery,
+                    prompt: Text("Search outfit history").foregroundColor(.secondary)
+                )
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+            .padding(12)
+            .background(Color(.secondarySystemBackground).opacity(0.78))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+
+            if filteredHomeScans.isEmpty {
+                Text(homeScans.isEmpty ? "Scan your first outfit to start building history." : "No matching outfits yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemBackground).opacity(0.55))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(filteredHomeScans.prefix(3)) { scan in
+                        homeHistoryRow(scan)
+                    }
+                }
+            }
+        }
+    }
+
+    private func homeHistoryRow(_ scan: HomeStoredScan) -> some View {
+        Button {
+            selectedTab = .scan
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(AppTab.scan.palette.accent.opacity(0.14))
+                    Image(systemName: "photo")
+                        .font(.title3)
+                        .foregroundStyle(AppTab.scan.palette.accent)
+                }
+                .frame(width: 54, height: 54)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(scan.displayTitle)
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text("\(scan.dateText) • \(scan.styleContextText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(scan.score)")
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(AppTab.ai.palette.accent)
+                    Text(StyleMatchHomeDisplay.scoreBand(for: scan.score).title)
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color(.systemBackground).opacity(0.86))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
-        .appCard(.home, radius: 16)
     }
 
     private var styleProgressCard: some View {
@@ -419,7 +608,7 @@ struct HomeView: View {
 
                 Spacer()
 
-                Text("+6 this month")
+                Text("Score +6 this month")
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundStyle(.green)
@@ -431,8 +620,6 @@ struct HomeView: View {
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 progressMetric(title: "Current Score", value: latestScoreText, icon: "star.fill", tint: AppTab.ai.palette.accent)
-                progressMetric(title: "Closet", value: "\(progressClosetCountText) items", icon: "tshirt.fill", tint: AppTab.closet.palette.accent)
-                progressMetric(title: "Favorite Color", value: favoriteColorText, icon: "paintpalette.fill", tint: .blue)
                 progressMetric(title: "Most Worn", value: mostWornText, icon: "shoe.2.fill", tint: Color(hex: 0x5B57D6))
             }
         }
@@ -464,33 +651,13 @@ struct HomeView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    private var aiMemoryStatusCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Image(systemName: "brain.head.profile")
-                    .font(.title3)
-                    .foregroundStyle(AppTab.ai.palette.accent)
+    private var aiDailySummary: String {
+        let outfit = closetItemsToWearText.hasPrefix("Add closet pieces") ? "a clean casual base" : closetItemsToWearText
+        return "\(homeWeatherSnapshot.chipText) and \(outfitMoodText.lowercased()) today. Start with \(outfit)."
+    }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("AI has learned")
-                        .font(.headline)
-
-                    Text("Style Match Pro gets smarter as you scan, save, and shop.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                aiMemoryItem(title: "Favorite Color", value: favoriteColorText)
-                aiMemoryItem(title: "Favorite Fit", value: favoriteFitText)
-                aiMemoryItem(title: "Budget", value: budgetLevelText)
-                aiMemoryItem(title: "Closet Items", value: memoryClosetCountText)
-                aiMemoryItem(title: "Favorite Brands", value: favoriteBrandListText)
-            }
-        }
-        .padding()
-        .appCard(.ai, radius: 16)
+    private var learningProgressPercent: Int {
+        min(98, 45 + min(closetItemCount * 8, 24) + min(homeScans.count * 5, 24) + (favoriteBrandListText == "Add brands" ? 0 : 5))
     }
 
     private func aiMemoryItem(title: String, value: String) -> some View {
@@ -559,23 +726,7 @@ struct HomeView: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 22)
-                        .fill(Color(.systemBackground).opacity(0.92))
-                    LinearGradient(
-                        colors: [task.tint.opacity(0.14), Color(.systemBackground).opacity(0.08)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                }
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 22))
-            .overlay(
-                RoundedRectangle(cornerRadius: 22)
-                    .stroke(task.tint.opacity(0.30), lineWidth: 1)
-            )
-            .shadow(color: task.tint.opacity(0.12), radius: 14, x: 0, y: 7)
+            .appCard(.home, radius: 16)
         }
         .buttonStyle(.plain)
     }
@@ -599,7 +750,7 @@ struct HomeView: View {
 
             Spacer()
         }
-        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .frame(width: 190, height: 58, alignment: .leading)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(.secondarySystemBackground).opacity(0.78))
@@ -615,8 +766,10 @@ struct HomeView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 quickAction(icon: "camera.viewfinder", title: "Analyze", tab: .scan, tint: AppTab.scan.palette.accent)
                 quickAction(icon: "tshirt.fill", title: "Closet", tab: .closet, tint: AppTab.closet.palette.accent)
-                quickAction(icon: "bag.fill", title: "Shop", tab: .shop, tint: AppTab.shop.palette.accent)
                 quickAction(icon: "sparkles", title: "Ask AI", tab: .ai, tint: AppTab.ai.palette.accent)
+                quickAction(icon: "bag.fill", title: "Shop", tab: .shop, tint: AppTab.shop.palette.accent)
+                quickAction(icon: "heart.fill", title: "Favorites", tab: .scan, tint: .pink)
+                quickAction(icon: "clock.fill", title: "History", tab: .scan, tint: Color(hex: 0x5B57D6))
             }
         }
     }
@@ -651,13 +804,7 @@ struct HomeView: View {
         .buttonStyle(.plain)
         .frame(minHeight: 74)
         .padding(.horizontal, 14)
-        .background(Color(.systemBackground).opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(tint.opacity(0.28), lineWidth: 1)
-        )
-        .shadow(color: tint.opacity(0.10), radius: 10, x: 0, y: 5)
+        .appCard(.home, radius: 16)
     }
 
     private var greeting: String {
@@ -696,38 +843,15 @@ struct HomeView: View {
     }
 
     private func scoreRatingTitle(for score: Int) -> String {
-        switch score {
-        case 92...100:
-            return "Excellent Match"
-        case 86...91:
-            return "Strong Match"
-        case 78...85:
-            return "Good Match"
-        case 65...77:
-            return "Style Tune-Up"
-        default:
-            return "Needs Styling"
-        }
+        StyleMatchHomeDisplay.scoreBand(for: score).title
     }
 
     private func scoreStars(for score: Int) -> some View {
-        let filledStars: Int
-        switch score {
-        case 92...100:
-            filledStars = 5
-        case 84...91:
-            filledStars = 4
-        case 72...83:
-            filledStars = 3
-        case 60...71:
-            filledStars = 2
-        default:
-            filledStars = 1
-        }
+        let filledStars = StyleMatchHomeDisplay.scoreBand(for: score).stars
 
         return HStack(spacing: 2) {
             ForEach(1...5, id: \.self) { index in
-                Image(systemName: index <= filledStars ? "star.fill" : "star")
+                Image(systemName: StyleMatchHomeDisplay.starSystemName(index: index, for: score))
             }
         }
         .font(.caption)
@@ -749,6 +873,10 @@ struct HomeView: View {
         return trimmed.isEmpty || trimmed == "Mild" ? "Sunny" : trimmed
     }
 
+    private var homeWeatherSnapshot: HomeWeatherSnapshot {
+        HomeWeatherSnapshot(condition: weatherConditionText, temperature: weatherTemperatureText)
+    }
+
     private var calendarBriefText: String {
         let event = plannedOccasion.trimmingCharacters(in: .whitespacesAndNewlines)
         let code = dressCode.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -760,14 +888,47 @@ struct HomeView: View {
     private var closetItemsToWearText: String {
         let names = closetItems
             .prefix(3)
-            .map { item in
-                let color = item.color.trimmingCharacters(in: .whitespacesAndNewlines)
-                let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                return [color, name].filter { !$0.isEmpty }.joined(separator: " ")
+            .compactMap { item in
+                StyleMatchHomeDisplay.sanitizedClosetItemLabel(
+                    name: item.name,
+                    color: item.color,
+                    userName: profileName
+                )
             }
             .filter { !$0.isEmpty }
 
-        return names.isEmpty ? "Navy polo, beige chinos, white sneakers" : names.joined(separator: ", ")
+        return names.isEmpty ? "Add closet pieces to personalize today's outfit." : names.joined(separator: ", ")
+    }
+
+    private var recommendedOutfitBriefText: String {
+        let recommendation = closetItemsToWearText.hasPrefix("Add closet pieces")
+            ? "Smart casual starter look"
+            : closetItemsToWearText
+        return "\(recommendation) • Projected: 95"
+    }
+
+    private var recommendedOutfitTitle: String {
+        closetItemsToWearText.hasPrefix("Add closet pieces")
+            ? "Smart casual starter look"
+            : closetItemsToWearText
+    }
+
+    private var recommendedOutfitPieces: [RecommendedOutfitPiece] {
+        let closetPieces = closetItems.prefix(3).map { item in
+            RecommendedOutfitPiece(title: item.shortHomeTitle, icon: item.homeIconName)
+        }
+
+        if closetPieces.count >= 3 {
+            return Array(closetPieces)
+        }
+
+        let fallback = [
+            RecommendedOutfitPiece(title: "Navy Polo", icon: "tshirt.fill"),
+            RecommendedOutfitPiece(title: "Chinos", icon: "figure.stand"),
+            RecommendedOutfitPiece(title: "White Sneakers", icon: "shoe.2.fill")
+        ]
+
+        return Array((closetPieces + fallback).prefix(3))
     }
 
     private var laundryBriefText: String {
@@ -778,7 +939,7 @@ struct HomeView: View {
         let count = whiteItems + gymItems
 
         if count > 0 {
-            return "Check \(count) light or gym item\(count == 1 ? "" : "s") before wearing."
+            return "Check \(StyleMatchHomeDisplay.countText(count, singular: "light or gym item")) before wearing."
         }
 
         return "White sneakers and gym pieces may need a quick refresh."
@@ -808,7 +969,7 @@ struct HomeView: View {
 
     private var shoppingBriefText: String {
         if wishlistCount > 0 {
-            return "Review \(wishlistCount) saved item\(wishlistCount == 1 ? "" : "s") before buying anything new."
+            return "Review \(StyleMatchHomeDisplay.countText(wishlistCount, singular: "saved item")) before buying anything new."
         }
 
         return missingPieceText == "No urgent gap today." ? "No shopping needed today." : "Shop only if the missing piece fits at least three outfits."
@@ -838,26 +999,6 @@ struct HomeView: View {
         }
 
         return savedDressCode.isEmpty ? "Casual Friday" : savedDressCode
-    }
-
-    private var closetItemCountText: String {
-        guard !closetItemsData.isEmpty,
-              let items = try? JSONDecoder().decode([ClosetItem].self, from: closetItemsData),
-              !items.isEmpty else {
-            return "147"
-        }
-
-        return "\(items.count)"
-    }
-
-    private var memoryClosetCountText: String {
-        let count = closetItemCount
-        return count > 0 ? "\(count)" : "150"
-    }
-
-    private var progressClosetCountText: String {
-        let count = closetItemCount
-        return count > 0 ? "\(count)" : "148"
     }
 
     private var favoriteColorText: String {
@@ -911,7 +1052,7 @@ struct HomeView: View {
             seenBrands.insert(brand.lowercased()).inserted
         }.prefix(2)
 
-        return brands.isEmpty ? "Nike\nLevi's" : brands.joined(separator: "\n")
+        return brands.isEmpty ? "Add brands" : brands.joined(separator: "\n")
     }
 
     private var mostWornText: String {
@@ -925,7 +1066,25 @@ struct HomeView: View {
             return name.isEmpty ? "Sneakers" : name
         }
 
-        return "Sneakers"
+        return favoriteColorText
+    }
+
+    private var homeScans: [HomeStoredScan] {
+        guard !outfitScanHistoryData.isEmpty,
+              let history = try? JSONDecoder().decode([String: HomeStoredScan].self, from: outfitScanHistoryData) else {
+            return []
+        }
+
+        return history.values.sorted { $0.firstScannedAt > $1.firstScannedAt }
+    }
+
+    private var filteredHomeScans: [HomeStoredScan] {
+        let query = outfitHistoryQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return homeScans }
+        return homeScans.filter { scan in
+            scan.displayTitle.lowercased().contains(query)
+            || scan.styleContextText.lowercased().contains(query)
+        }
     }
 
     private var closetItemCount: Int {
@@ -974,7 +1133,7 @@ struct HomeView: View {
         if wishlistCount > 0 {
             return HomeContinueTask(
                 title: "Continue shopping",
-                detail: "You have \(wishlistCount) saved item\(wishlistCount == 1 ? "" : "s") waiting in Smart Shopping.",
+                detail: "You have \(StyleMatchHomeDisplay.countText(wishlistCount, singular: "saved item")) waiting in Smart Shopping.",
                 icon: "bag.fill",
                 tint: AppTab.shop.palette.accent,
                 tab: .shop
@@ -1013,7 +1172,96 @@ struct HomeView: View {
 
 private struct HomeStoredScan: Codable {
     let score: Int
+    let analysis: OutfitAnalysisResult?
     let firstScannedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case score
+        case analysis
+        case firstScannedAt
+    }
+
+    var id: String {
+        "\(Int(firstScannedAt.timeIntervalSince1970))-\(score)-\(displayTitle)"
+    }
+
+    var displayTitle: String {
+        if let analysis {
+            let text = searchableText(for: analysis)
+            let color = analysis.colorPalette
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).capitalized }
+                .first { !$0.isEmpty && !["Neutral", "Dark", "Light", "Color", "Colors"].contains($0) }
+
+            if text.contains("polo") {
+                return [color, "Polo Outfit"].compactMap { $0 }.joined(separator: " ")
+            }
+            if text.contains("dress") {
+                return [color, "Dress Outfit"].compactMap { $0 }.joined(separator: " ")
+            }
+            if text.contains("jacket") || text.contains("blazer") {
+                return [color, "Layered Outfit"].compactMap { $0 }.joined(separator: " ")
+            }
+            if text.contains("pajama") || text.contains("robe") || text.contains("sleepwear") {
+                return "Cozy Sleepwear"
+            }
+            if text.contains("business") || text.contains("office") || text.contains("work") {
+                return [color, "Work Outfit"].compactMap { $0 }.joined(separator: " ")
+            }
+            if let color {
+                return "\(color) Outfit"
+            }
+        }
+
+        return "Saved Outfit"
+    }
+
+    var styleContextText: String {
+        guard let analysis else { return "Style scan" }
+        let text = searchableText(for: analysis)
+        if text.contains("sleepwear") || text.contains("pajama") || text.contains("robe") {
+            return "Loungewear"
+        }
+        if text.contains("business") || text.contains("office") || text.contains("work") {
+            return "Business Casual"
+        }
+        if text.contains("date") || text.contains("dinner") {
+            return "Date Night"
+        }
+        if text.contains("gym") || text.contains("workout") {
+            return "Gym"
+        }
+        if text.contains("formal") || text.contains("wedding") {
+            return "Formal"
+        }
+        if text.contains("casual") || text.contains("jeans") || text.contains("sneaker") {
+            return "Casual"
+        }
+
+        let occasion = analysis.occasionFit.trimmingCharacters(in: .whitespacesAndNewlines)
+        return occasion.isEmpty ? "Style scan" : occasion
+    }
+
+    var dateText: String {
+        Self.dateFormatter.string(from: firstScannedAt)
+    }
+
+    private func searchableText(for analysis: OutfitAnalysisResult) -> String {
+        (
+            analysis.outfitDescription + " " +
+            analysis.detectedClothingItems.joined(separator: " ") + " " +
+            analysis.environment + " " +
+            analysis.occasionFit + " " +
+            analysis.formality + " " +
+            analysis.seasonalMatch + " " +
+            analysis.summary
+        ).lowercased()
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
 }
 
 private struct HomeContinueTask {
@@ -1023,3 +1271,206 @@ private struct HomeContinueTask {
     let tint: Color
     let tab: AppTab
 }
+
+private struct RecommendedOutfitPiece {
+    let title: String
+    let icon: String
+}
+
+private extension ClosetItem {
+    var shortHomeTitle: String {
+        let nameText = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let categoryText = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        let colorText = color.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = nameText.isEmpty ? categoryText : nameText
+
+        if !colorText.isEmpty,
+           !base.localizedCaseInsensitiveContains(colorText) {
+            return "\(colorText) \(base)"
+        }
+
+        return base.isEmpty ? "Closet Piece" : base
+    }
+
+    var homeIconName: String {
+        let text = "\(category) \(name)".lowercased()
+        if text.contains("shoe") || text.contains("sneaker") || text.contains("boot") {
+            return "shoe.2.fill"
+        }
+        if text.contains("pant") || text.contains("jean") || text.contains("chino") {
+            return "figure.stand"
+        }
+        if text.contains("jacket") || text.contains("coat") || text.contains("blazer") {
+            return "jacket.fill"
+        }
+        if text.contains("dress") {
+            return "figure.dress.line.vertical.figure"
+        }
+        return "tshirt.fill"
+    }
+}
+
+private struct HomeWeatherSnapshot {
+    let condition: String
+    let temperature: String
+
+    var chipText: String {
+        "\(temperature) \(condition)"
+    }
+
+    var briefText: String {
+        "\(condition), \(temperature)"
+    }
+}
+
+private struct HomeOutfitFeedbackCard: View {
+    let prompt: ScheduledFeedbackPrompt
+    let onWornAnswer: (ScheduledFeedbackPrompt, Bool) -> Void
+    let onLikedAnswer: (ScheduledFeedbackPrompt, Bool) -> Void
+    let onDislikeReason: (ScheduledFeedbackPrompt, DislikeReason) -> Void
+    let onDismissPrompt: () -> Void
+    let onComplete: () -> Void
+
+    @State private var step: Step = .worn
+    @State private var isComplete = false
+
+    private enum Step {
+        case worn
+        case liked
+        case reason
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checkmark.bubble.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(AppTab.home.palette.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Quick style check")
+                        .font(.headline)
+                        .fontWeight(.bold)
+
+                    Text(isComplete ? "Thanks - this improves your recommendations." : "Saved outfit: \(prompt.scoreSummary)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer()
+
+                Button(action: onDismissPrompt) {
+                    Image(systemName: "xmark")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, height: 30)
+                        .background(Color.primary.opacity(0.08))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss feedback prompt")
+            }
+
+            if isComplete {
+                Label("Feedback saved", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.green)
+                    .padding(.vertical, 6)
+            } else {
+                switch step {
+                case .worn:
+                    Text("Did you end up wearing this outfit?")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    HStack(spacing: 10) {
+                        feedbackButton("Yes", icon: "checkmark.circle.fill") {
+                            onWornAnswer(prompt, true)
+                            withAnimation(.snappy) {
+                                step = .liked
+                            }
+                        }
+                        feedbackButton("No", icon: "xmark.circle.fill") {
+                            onWornAnswer(prompt, false)
+                            complete()
+                        }
+                    }
+
+                case .liked:
+                    Text("How did it work out?")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    HStack(spacing: 10) {
+                        feedbackButton("Loved it", icon: "hand.thumbsup.fill") {
+                            onLikedAnswer(prompt, true)
+                            complete()
+                        }
+                        feedbackButton("Not for me", icon: "hand.thumbsdown.fill") {
+                            onLikedAnswer(prompt, false)
+                            withAnimation(.snappy) {
+                                step = .reason
+                            }
+                        }
+                    }
+
+                case .reason:
+                    Text("What was off?")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], spacing: 8) {
+                        ForEach(DislikeReason.allCases, id: \.self) { reason in
+                            Button(reason.displayName) {
+                                onDislikeReason(prompt, reason)
+                                complete()
+                            }
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 12)
+                            .foregroundStyle(AppTab.home.palette.accent)
+                            .background(AppTab.home.palette.accent.opacity(0.12))
+                            .clipShape(Capsule())
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .appCard(.home, radius: 20)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private func feedbackButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .foregroundStyle(.white)
+                .background(AppTab.home.palette.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func complete() {
+        withAnimation(.snappy) {
+            isComplete = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            onComplete()
+        }
+    }
+}
+
+extension HomeStoredScan: Identifiable {}

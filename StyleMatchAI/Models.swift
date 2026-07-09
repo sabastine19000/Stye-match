@@ -339,6 +339,42 @@ struct ClosetItem: Identifiable, Codable {
     }
 }
 
+enum ClosetItemDisplay {
+    static func displayName(for item: ClosetItem, profileName: String = UserDefaults.standard.string(forKey: "profileName") ?? "") -> String {
+        displayName(name: item.name, category: item.category, color: item.color, profileName: profileName)
+    }
+
+    static func displayName(name: String, category: String, color: String, profileName: String = UserDefaults.standard.string(forKey: "profileName") ?? "") -> String {
+        let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedCategory = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedColor = color.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedProfileName = profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profileTokens = cleanedProfileName
+            .split(whereSeparator: { !$0.isLetter })
+            .map(String.init)
+            .filter { $0.count >= 2 }
+        let nameMatchesProfile = !cleanedProfileName.isEmpty
+            && (
+                cleanedName.range(of: cleanedProfileName, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+                || profileTokens.contains { cleanedName.compare($0, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
+            )
+
+        if !cleanedName.isEmpty, !nameMatchesProfile {
+            return cleanedName
+        }
+
+        if !cleanedColor.isEmpty, !cleanedCategory.isEmpty {
+            return "\(cleanedColor) \(cleanedCategory)"
+        }
+
+        if !cleanedCategory.isEmpty {
+            return cleanedCategory
+        }
+
+        return cleanedColor.isEmpty ? "Closet Item" : cleanedColor
+    }
+}
+
 enum StyleMatchSearchSection: String, CaseIterable, Codable {
     case closet
     case outfitHistory
@@ -553,6 +589,82 @@ struct DefaultSearchIndexService: SearchIndexService {
         }
         parts.append("\(memory.styleScore)/100")
         return parts.joined(separator: " • ")
+    }
+}
+
+struct StyleMatchHomeScoreBand: Equatable {
+    let stars: Int
+    let title: String
+}
+
+enum StyleMatchHomeDisplay {
+    static func scoreBand(for score: Int) -> StyleMatchHomeScoreBand {
+        switch min(100, max(0, score)) {
+        case 90...100:
+            return StyleMatchHomeScoreBand(stars: 5, title: "Excellent Match")
+        case 75...89:
+            return StyleMatchHomeScoreBand(stars: 4, title: "Good Match")
+        case 60...74:
+            return StyleMatchHomeScoreBand(stars: 3, title: "Fair Match")
+        case 40...59:
+            return StyleMatchHomeScoreBand(stars: 2, title: "Needs Styling")
+        default:
+            return StyleMatchHomeScoreBand(stars: 1, title: "Low Match")
+        }
+    }
+
+    static func itemCountText(_ count: Int) -> String {
+        countText(count, singular: "item")
+    }
+
+    static func closetItemLabel(_ count: Int) -> String {
+        countText(count, singular: "Closet Item")
+    }
+
+    static func countText(_ count: Int, singular: String, plural: String? = nil) -> String {
+        "\(count) \(count == 1 ? singular : (plural ?? "\(singular)s"))"
+    }
+
+    static func starSystemName(index: Int, for score: Int) -> String {
+        index <= scoreBand(for: score).stars ? "star.fill" : "star"
+    }
+
+    static func sanitizedClosetItemLabel(name: String, color: String, userName: String?) -> String? {
+        let sanitizedName = removeUserName(from: name, userName: userName)
+        let sanitizedColor = removeUserName(from: color, userName: userName)
+
+        let parts = [sanitizedColor, sanitizedName]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: " ")
+    }
+
+    static func removeUserName(from value: String, userName: String?) -> String {
+        var cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let rawName = userName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawName.isEmpty else {
+            return cleaned
+        }
+
+        let nameTokens = rawName
+            .components(separatedBy: CharacterSet.whitespacesAndNewlines)
+            .map { $0.trimmingCharacters(in: CharacterSet.alphanumerics.inverted) }
+            .filter { $0.count >= 2 }
+
+        for token in Set(nameTokens + [rawName]) {
+            let escaped = NSRegularExpression.escapedPattern(for: token)
+            cleaned = cleaned.replacingOccurrences(
+                of: "\\b\(escaped)\\b",
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        return cleaned
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "-_,•")))
     }
 }
 

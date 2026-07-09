@@ -4,6 +4,8 @@ struct OpenAIStylistClient {
     var apiKey: String
     var model: String
 
+    static let systemInstruction = StyleMatchAIGuardrails.directOpenAIStylistSystemInstruction
+
     func askStylist(profile: StyleMatchStylistProfile, question: String) async throws -> String {
         try await askStylist(profile: profile, messages: [], question: question)
     }
@@ -66,6 +68,10 @@ struct OpenAIStylistClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
+        // Approved live AI dispatch point:
+        // ContentView chat/founder verification, ScanView score explanation/design assist,
+        // AIAssistantsView main stylist chat, AIStyleAdvisor quick advice, and ShopView sale ranking.
+        // Every request receives PersonalizationContextBuilder context plus the canonical score guard here.
         let body = OpenAIChatCompletionRequest(
             model: selectedModel,
             maxTokens: 1_800,
@@ -108,19 +114,7 @@ struct OpenAIStylistClient {
         var apiMessages: [OpenAIChatCompletionRequest.Message] = [
             .init(
                 role: "system",
-                content: """
-                You are the live AI fashion assistant inside Style Match Pro.
-                Use app-provided facts, style memory, weather, and fashion rules to give accurate outfit advice.
-                StyleMatch AI owns any numeric style score; explain it, improve it, and personalize it without changing it.
-                Answer the customer's exact message instead of repeating a generic outfit response.
-                For scan follow-up chats, use the previous outfit analysis in app context as screen awareness and answer conversationally, not as JSON.
-                Give specific, actionable recommendations with actual brand names, product types, stores, price ranges, or closet-item ideas when relevant.
-                Only use garment colors and clothing items provided by StyleMatch Pro. Ignore background colors from walls, floors, doors, cabinets, furniture, appliances, or non-worn objects.
-                If the customer greets you, greet them naturally.
-                If the customer asks what you know about them, only use the StyleMatch Pro profile, closet, weather, and saved scans below. Do not invent personal details.
-                If the current request asks for JSON only, return valid JSON only and do not include conversational text.
-                Keep answers helpful, confidence-building, culturally respectful, and shopping-aware. Do not mention technical setup details.
-                """
+                content: Self.systemInstruction
             ),
             .init(
                 role: "user",
@@ -161,13 +155,15 @@ struct OpenAIStylistClient {
         appendContextLine("Favorite outfits", profile.favoriteOutfits, to: &lines)
         appendContextLine("Closet inventory", profile.closetInventory, to: &lines)
 
+        let existingContextText = ([question] + lines + [profile.appContext]).joined(separator: "\n")
+        let alreadyHasPersonalization = existingContextText.contains("User style context:")
+            || existingContextText.contains(StyleMatchAIGuardrails.scoreIntegrityInstruction)
+        if !alreadyHasPersonalization {
+            appendContextLine("Personalization context", PersonalizationContextBuilder.promptContext(), to: &lines)
+        }
+
         if profile.appContextSharingEnabled {
             appendContextLine("App context", profile.appContext, to: &lines)
-            let alreadyHasPersonalization = profile.appContext.contains("User style context:")
-                || question.contains("User style context:")
-            if !alreadyHasPersonalization {
-                appendContextLine("Personalization context", PersonalizationContextBuilder.promptContext(), to: &lines)
-            }
         }
 
         return lines.joined(separator: "\n")

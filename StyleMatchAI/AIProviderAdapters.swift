@@ -7,18 +7,22 @@ enum StyleMatchAIProvider: String, Codable {
     case perplexity
 
     static func named(_ rawValue: String) -> StyleMatchAIProvider? {
+        let provider: StyleMatchAIProvider?
         switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "chatgpt", "chat_gpt", "openai":
-            return .chatGPT
+            provider = .chatGPT
         case "claude", "anthropic":
-            return .claude
+            provider = .claude
         case "gemini", "google":
-            return .gemini
+            provider = .gemini
         case "perplexity":
-            return .perplexity
+            provider = .perplexity
         default:
-            return nil
+            provider = nil
         }
+
+        guard let provider else { return nil }
+        return StyleMatchAIProviderAdapters.isProviderReachable(provider) ? provider : nil
     }
 
     var displayName: String {
@@ -133,12 +137,25 @@ struct ProviderAnalysisResult: Codable {
 struct StyleMatchAIProviderAdapters {
     static let imageAnalysisProviders: [StyleMatchAIProvider] = []
 
+    static func isProviderReachable(_ provider: StyleMatchAIProvider) -> Bool {
+        switch provider {
+        case .chatGPT:
+            return true
+        case .claude, .gemini, .perplexity:
+            return FeatureFlags.alternateAIProvidersEnabled
+        }
+    }
+
     static func runOutfitScan(
         imageBase64: String,
         context: StyleMatchAIContext,
         preferredProvider: StyleMatchAIProvider = .claude,
         apiKeys: StyleMatchProviderAPIKeys
     ) async -> ProviderAdapterOutcome {
+        guard isProviderReachable(preferredProvider) else {
+            return .failure("Selected AI provider is disabled for this build.", attemptedProviders: [])
+        }
+
         return .failure(
             "StyleMatch Pro uses its own local outfit detection and scoring engine. AI providers can explain completed scan results, but they do not analyze images or create scores.",
             attemptedProviders: [preferredProvider]
@@ -266,6 +283,10 @@ struct StyleMatchAIProviderAdapters {
     }
 
     static func askPerplexity(question: String, apiKey: String, model: String = "sonar-pro") async throws -> String {
+        guard isProviderReachable(.perplexity) else {
+            throw AIProviderAdapterError.providerDisabled(provider: StyleMatchAIProvider.perplexity.rawValue)
+        }
+
         let requestBody = PerplexityChatRequest(
             model: model,
             messages: [.init(role: "user", content: question)]
@@ -386,6 +407,10 @@ struct StyleMatchAIProviderAdapters {
     }
 
     private static func analyze(imageBase64: String, context: StyleMatchAIContext, provider: StyleMatchAIProvider, apiKey: String) async throws -> ProviderAnalysisResult {
+        guard isProviderReachable(provider) else {
+            throw AIProviderAdapterError.providerDisabled(provider: provider.rawValue)
+        }
+
         switch provider {
         case .chatGPT:
             return try await analyzeWithChatGPT(imageBase64: imageBase64, context: context, apiKey: apiKey)
@@ -404,6 +429,7 @@ enum AIProviderAdapterError: LocalizedError {
     case api(provider: String, statusCode: Int)
     case parse(provider: String)
     case imageAnalysisUnavailable(provider: String)
+    case providerDisabled(provider: String)
 
     var errorDescription: String? {
         switch self {
@@ -415,6 +441,8 @@ enum AIProviderAdapterError: LocalizedError {
             return "\(provider) response could not be parsed into StyleMatch Pro analysis JSON."
         case .imageAnalysisUnavailable(let provider):
             return "\(provider) is not available for image outfit scans."
+        case .providerDisabled(let provider):
+            return "\(provider) is disabled for this build."
         }
     }
 }

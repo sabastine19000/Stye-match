@@ -38,10 +38,18 @@ enum StyleMatchReleaseChannel {
 enum StyleMatchBuildSettings {
     // Internal/TestFlight founder build exposes private beta setup tools.
     // Switch back to .customerPublic before wide release.
+    #if DEBUG
     static let releaseChannel: StyleMatchReleaseChannel = .founderBeta
+    #else
+    static let releaseChannel: StyleMatchReleaseChannel = .customerPublic
+    #endif
 
     static var allowsLocalFounderAPIKey: Bool {
+        #if DEBUG
         releaseChannel == .founderBeta
+        #else
+        false
+        #endif
     }
 
     static var requiresBackendAIProxy: Bool {
