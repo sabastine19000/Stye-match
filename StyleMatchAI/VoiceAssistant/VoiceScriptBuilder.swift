@@ -1,7 +1,7 @@
 import Foundation
 
 struct VoiceScriptBuilder {
-    static let maximumSpokenCharacters = 320
+    static let maximumSpokenCharacters = SpokenScriptBuilder.maximumSpokenCharacters
 
     static func scanStarted() -> VoiceScript {
         VoiceScript(
@@ -15,28 +15,17 @@ struct VoiceScriptBuilder {
         let score = min(max(analysis.score, 0), 100)
         let style = spokenStyleName(from: analysis.styleBalance)
         let rating = scoreRating(for: score).lowercased()
-        let primaryFeedback = strongestPlainLanguageSignal(from: analysis)
-        let nextAction = nextActionSuggestion(from: analysis)
-
-        var sentences: [String] = []
-        if style == "unrecognized" {
-            sentences.append("I could not identify this outfit clearly enough to give confident style guidance.")
-        } else {
-            sentences.append("Your outfit score is \(score). This is a \(rating) \(style) look.")
-        }
-
-        if let primaryFeedback {
-            sentences.append(primaryFeedback)
-        }
-
-        if let nextAction {
-            sentences.append(nextAction)
-        }
+        let explanation = scanExplanationSource(from: analysis, score: score, style: style, rating: rating)
+        let scanIdentifier = scanIdentifier(from: analysis, score: score, style: style)
 
         return VoiceScript(
-            id: "scan-result-\(score)-\(style)",
+            id: "scan-result-\(scanIdentifier)",
             kind: .scanResult,
-            text: sentences.joined(separator: " ")
+            text: SpokenScriptBuilder.scanScript(
+                explanation: explanation,
+                scanIdentifier: scanIdentifier,
+                includeOutro: false
+            )
         )
     }
 
@@ -88,27 +77,7 @@ struct VoiceScriptBuilder {
     }
 
     static func trimmedScript(_ text: String) -> String {
-        var cleaned = text
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "  ", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        while cleaned.contains("  ") {
-            cleaned = cleaned.replacingOccurrences(of: "  ", with: " ")
-        }
-
-        guard cleaned.count > maximumSpokenCharacters else { return cleaned }
-        return String(cleaned.prefix(maximumSpokenCharacters - 3)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
-    }
-
-    private static func strongestPlainLanguageSignal(from analysis: OutfitAnalysisResult) -> String? {
-        for candidate in [analysis.summary, analysis.colorHarmony, analysis.occasionFit] {
-            let cleaned = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !cleaned.isEmpty {
-                return shortSentence(cleaned)
-            }
-        }
-        return nil
+        SpokenScriptBuilder.speechFriendlyText(from: text)
     }
 
     private static func nextActionSuggestion(from analysis: OutfitAnalysisResult) -> String? {
@@ -121,6 +90,50 @@ struct VoiceScriptBuilder {
         }
 
         return "Would you like better matching item ideas?"
+    }
+
+    private static func scanExplanationSource(from analysis: OutfitAnalysisResult, score: Int, style: String, rating: String) -> String {
+        if style == "unrecognized" {
+            return "I could not identify this outfit clearly enough to give confident style guidance. Try a clearer, fuller photo with the clothing visible."
+        }
+
+        var parts = [
+            "Your outfit score is \(score)/100, which is a \(rating) \(style) look."
+        ]
+
+        if let whyScore = analysis.chatGPTStylistSections.first(where: { section in
+            let title = section.title.lowercased()
+            return title.contains("why") || title.contains("score")
+        }) {
+            parts.append(whyScore.body)
+        } else {
+            parts.append(analysis.summary)
+        }
+
+        if let nextAction = nextActionSuggestion(from: analysis) {
+            parts.append(nextAction)
+        }
+
+        if analysis.chatGPTStylistSections.isEmpty {
+            parts.append(analysis.colorHarmony)
+            parts.append(analysis.occasionFit)
+        }
+
+        return parts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+
+    private static func scanIdentifier(from analysis: OutfitAnalysisResult, score: Int, style: String) -> String {
+        [
+            "\(score)",
+            style,
+            analysis.summary,
+            analysis.colorPalette.joined(separator: "-"),
+            analysis.safeDetectedClothingItems.joined(separator: "-")
+        ]
+        .joined(separator: "|")
     }
 
     private static func spokenStyleName(from rawStyle: String) -> String {
@@ -167,4 +180,3 @@ struct VoiceScriptBuilder {
         return cleaned
     }
 }
-

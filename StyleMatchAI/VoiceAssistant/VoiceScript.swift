@@ -5,7 +5,15 @@ struct VoiceAssistantSettings {
     static let selectedVoiceIdentifierKey = "voiceAssistantVoiceIdentifier"
     static let speechRateKey = "voiceAssistantSpeechRate"
 
-    static let defaultSpeechRate = 0.95
+    static let defaultEnabled = false
+    static let defaultSpeechRate = 0.92
+
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        guard defaults.object(forKey: enabledKey) != nil else {
+            return defaultEnabled
+        }
+        return defaults.bool(forKey: enabledKey)
+    }
 }
 
 struct VoiceScript: Equatable, Identifiable {
@@ -28,4 +36,3 @@ struct VoiceScript: Equatable, Identifiable {
         self.text = VoiceScriptBuilder.trimmedScript(text)
     }
 }
-

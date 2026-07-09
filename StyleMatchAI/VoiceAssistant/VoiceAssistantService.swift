@@ -135,7 +135,7 @@ final class VoiceAssistantService: NSObject, ObservableObject, AVSpeechSynthesiz
         #if os(iOS)
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+            try session.setCategory(.ambient, mode: .default, options: [])
             try session.setActive(true)
         } catch {
             #if DEBUG
