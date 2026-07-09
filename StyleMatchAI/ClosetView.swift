@@ -43,6 +43,7 @@ struct ClosetView: View {
     @State private var isManualEntryExpanded = false
     @State private var sizeSaveConfirmation = ""
     @State private var isShowingAddItemSheet = false
+    @StateObject private var outfitMemoryStore = OutfitMemoryStore()
 
     private let categories = ["Shirt", "Pants", "Jeans", "Dress", "Jacket", "Shoes", "Accessory", "Bag", "Hat", "Traditional Wear", "Formal Wear", "Casual Wear", "Sportswear"]
     private let colors = ["Black", "White", "Navy", "Gray", "Blue", "Brown", "Tan", "Red", "Green", "Neutral"]
@@ -85,6 +86,7 @@ struct ClosetView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     itemList
+                    scannedClothingSections
                     if needsClosetFoundation {
                         closetOnboardingCard
                     } else {
@@ -95,7 +97,7 @@ struct ClosetView: View {
                     sizeSummaryNavigationRow
                 }
                 .padding()
-                .padding(.bottom, 170)
+                .padding(.bottom, 240)
             }
             .scrollContentBackground(.hidden)
             .appScreenBackground(.closet)
@@ -593,7 +595,7 @@ struct ClosetView: View {
                         clothingThumbnail(item)
                             .frame(width: 46, height: 50)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(item.name)
+                            Text(displayName(for: item))
                                 .font(.subheadline)
                                 .fontWeight(.bold)
                             Text("\(item.category) • \(item.color)")
@@ -770,18 +772,21 @@ struct ClosetView: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 8)], spacing: 8) {
                 ForEach(categories, id: \.self) { option in
                     Button {
                         category = option
                         updateDefaultSize(for: option)
                     } label: {
-                        Label(option, systemImage: iconName(for: option))
+                        HStack(spacing: 6) {
+                            Image(systemName: iconName(for: option))
+                            Text(closetShortCategoryLabel(option))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.75)
+                        }
                             .font(.caption)
                             .fontWeight(.semibold)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .buttonStyle(.bordered)
                     .tint(category == option ? AppTab.closet.palette.accent : .secondary)
@@ -1095,7 +1100,7 @@ struct ClosetView: View {
             clothingThumbnail(item)
                 .frame(width: 104, height: 104)
 
-            Text(item.name)
+            Text(displayName(for: item))
                 .font(.caption)
                 .fontWeight(.bold)
                 .lineLimit(2)
@@ -1428,6 +1433,96 @@ struct ClosetView: View {
         }
     }
 
+    private var scannedClothingSections: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .lastTextBaseline) {
+                Text("Scanned Clothing")
+                    .font(.title2)
+                    .fontWeight(.bold)
+
+                Spacer()
+
+                if !scannedGarmentRecords.isEmpty {
+                    Text("\(scannedGarmentRecords.count) detected")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if scannedGarmentGroups.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("No scan categories yet", systemImage: "camera.viewfinder")
+                        .font(.headline)
+
+                    Text("Scan outfits to organize detected garments by category. Saved closet items above still work normally.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineSpacing(3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .appCard(.closet)
+            } else {
+                ForEach(scannedGarmentGroups, id: \.category) { group in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label(group.category, systemImage: iconName(for: group.category))
+                                .font(.headline)
+                            Spacer()
+                            Text("\(group.records.count)")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundStyle(AppTab.closet.palette.accent)
+                        }
+
+                        ForEach(group.records.prefix(4)) { record in
+                            scannedGarmentRow(record)
+                        }
+
+                        if group.records.count > 4 {
+                            Text("+\(group.records.count - 4) more from scan history")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding()
+                    .appCard(.closet)
+                }
+            }
+        }
+    }
+
+    private func scannedGarmentRow(_ record: GarmentRecord) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: iconName(for: record.garmentCategory))
+                .font(.headline)
+                .foregroundStyle(AppTab.closet.palette.accent)
+                .frame(width: 34, height: 34)
+                .background(AppTab.closet.palette.accent.opacity(0.14))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(scannedGarmentTitle(record))
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+
+                Text(scannedGarmentSubtitle(record))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text("Seen \(record.timesSeen)")
+                .font(.caption2)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     private func wardrobeItemCard(_ item: ClosetItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
@@ -1448,7 +1543,7 @@ struct ClosetView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.name)
+                Text(displayName(for: item))
                     .font(.headline)
                     .lineLimit(1)
 
@@ -1668,7 +1763,7 @@ struct ClosetView: View {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text(item.name)
+                        Text(displayName(for: item))
                             .font(.headline)
                         if isFavoriteItem(item) {
                             Image(systemName: "heart.fill")
@@ -1747,6 +1842,35 @@ struct ClosetView: View {
 
     private var categoryCounts: [(name: String, count: Int)] {
         rankedCounts(items.map(\.category))
+    }
+
+    private var scannedGarmentRecords: [GarmentRecord] {
+        outfitMemoryStore.garmentRecords
+            .filter { !$0.garmentCategory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.lastSeenAt > $1.lastSeenAt }
+    }
+
+    private var scannedGarmentGroups: [(category: String, records: [GarmentRecord])] {
+        Dictionary(grouping: scannedGarmentRecords) { record in
+            normalizedGarmentCategory(record.garmentCategory)
+        }
+        .map { category, records in
+            (
+                category: category,
+                records: records.sorted {
+                    if $0.lastSeenAt == $1.lastSeenAt {
+                        return $0.timesSeen > $1.timesSeen
+                    }
+                    return $0.lastSeenAt > $1.lastSeenAt
+                }
+            )
+        }
+        .sorted {
+            if $0.records.count == $1.records.count {
+                return $0.category < $1.category
+            }
+            return $0.records.count > $1.records.count
+        }
     }
 
     private var shoeSummaryRows: [(name: String, count: Int)] {
@@ -1828,7 +1952,7 @@ struct ClosetView: View {
         let query = closetSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         var results = items.filter { item in
             let matchesQuery = query.isEmpty
-                || item.name.localizedCaseInsensitiveContains(query)
+                || displayName(for: item).localizedCaseInsensitiveContains(query)
                 || item.brand.localizedCaseInsensitiveContains(query)
                 || item.category.localizedCaseInsensitiveContains(query)
                 || item.color.localizedCaseInsensitiveContains(query)
@@ -2182,7 +2306,7 @@ struct ClosetView: View {
         let metadata = "Season: \(season); Weather: \(weatherUse)"
         let savedNotes = cleanNotes.isEmpty ? metadata : "\(cleanNotes)\n\(metadata)"
         let item = ClosetItem(
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            name: ClosetItemDisplay.displayName(name: name, category: category, color: color),
             category: category,
             color: color,
             brand: brand.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2237,8 +2361,68 @@ struct ClosetView: View {
 
         closetInventory = items
             .prefix(12)
-            .map { "\($0.color) \($0.name)" }
+            .map { itemInventoryLabel(for: $0) }
             .joined(separator: ", ")
+    }
+
+    private func displayName(for item: ClosetItem) -> String {
+        ClosetItemDisplay.displayName(for: item)
+    }
+
+    private func normalizedGarmentCategory(_ category: String) -> String {
+        let cleaned = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "Other" }
+
+        switch cleaned.lowercased() {
+        case "top", "tops", "shirt", "shirts", "tee", "t-shirt", "polo":
+            return "Shirt"
+        case "bottom", "bottoms", "pant", "pants", "jean", "jeans", "shorts":
+            return "Pants"
+        case "shoe", "shoes", "sneaker", "sneakers", "loafer", "loafers":
+            return "Shoes"
+        case "outerwear", "jacket", "coat", "blazer":
+            return "Jacket"
+        case "accessory", "accessories", "belt", "watch", "bag", "hat":
+            return "Accessory"
+        default:
+            return cleaned
+        }
+    }
+
+    private func scannedGarmentTitle(_ record: GarmentRecord) -> String {
+        let category = normalizedGarmentCategory(record.garmentCategory)
+        guard let color = record.colors.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !color.isEmpty else {
+            return category
+        }
+        return color.range(of: category, options: [.caseInsensitive, .diacriticInsensitive]) == nil ? "\(color) \(category)" : color
+    }
+
+    private func scannedGarmentSubtitle(_ record: GarmentRecord) -> String {
+        var parts: [String] = []
+        if let brand = record.brand?.trimmingCharacters(in: .whitespacesAndNewlines), !brand.isEmpty {
+            parts.append(brand)
+        }
+        if let fit = record.fit?.trimmingCharacters(in: .whitespacesAndNewlines), !fit.isEmpty {
+            parts.append(fit)
+        }
+        if let pattern = record.pattern?.trimmingCharacters(in: .whitespacesAndNewlines), !pattern.isEmpty {
+            parts.append(pattern)
+        }
+        if parts.isEmpty, !record.styleTags.isEmpty {
+            parts.append(record.styleTags.prefix(2).joined(separator: ", "))
+        }
+        if parts.isEmpty {
+            parts.append("From scan history")
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    private func itemInventoryLabel(for item: ClosetItem) -> String {
+        let name = displayName(for: item)
+        let color = item.color.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !color.isEmpty else { return name }
+        return name.range(of: color, options: [.caseInsensitive, .diacriticInsensitive]) == nil ? "\(color) \(name)" : name
     }
 
     private func resetForm() {
@@ -2429,11 +2613,11 @@ struct ClosetView: View {
                     onDelete: { deleteItem(item); activeSheet = nil },
                     onFavorite: { favorite in setFavorite(item, favorite: favorite) },
                     onAskAI: {
-                        closetActionMessage = "Ask AI how to style \(item.name): \(structuredClosetContext)"
+                        closetActionMessage = "Ask AI how to style \(displayName(for: item)): \(structuredClosetContext)"
                         activeSheet = .closetDesigner
                     },
                     onBuildOutfit: {
-                        closetActionMessage = "Build outfit with \(item.name): \(structuredClosetContext)"
+                        closetActionMessage = "Build outfit with \(displayName(for: item)): \(structuredClosetContext)"
                         activeSheet = .closetDesigner
                     }
                 )
@@ -2466,7 +2650,7 @@ struct ClosetView: View {
                                     clothingThumbnail(item)
                                         .frame(width: 48, height: 56)
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(item.name)
+                                        Text(displayName(for: item))
                                             .font(.headline)
                                         Text("\(item.category) • \(item.color) • \(displaySize(for: item))")
                                             .font(.caption)
@@ -2591,7 +2775,7 @@ struct ClosetView: View {
                     } else {
                         ForEach(sheetItems) { item in
                             Button { activeSheet = .itemDetail(item.id) } label: {
-                                Label("\(item.color) \(item.name)", systemImage: iconName(for: item.category))
+                                Label(itemInventoryLabel(for: item), systemImage: iconName(for: item.category))
                             }
                         }
                     }
@@ -2623,10 +2807,10 @@ struct ClosetView: View {
                 Section("Quick Tracking") {
                     ForEach(items.prefix(12)) { item in
                         HStack {
-                            Label(item.name, systemImage: iconName(for: item.category))
+                            Label(displayName(for: item), systemImage: iconName(for: item.category))
                             Spacer()
-                            Button("Worn") { closetActionMessage = "\(item.name) marked worn for laundry planning." }
-                            Button("Clean") { closetActionMessage = "\(item.name) marked clean." }
+                            Button("Worn") { closetActionMessage = "\(displayName(for: item)) marked worn for laundry planning." }
+                            Button("Clean") { closetActionMessage = "\(displayName(for: item)) marked clean." }
                         }
                     }
                 }
@@ -2976,18 +3160,21 @@ private struct AddClothingItemView: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
 
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 8)], spacing: 8) {
                 ForEach(categories, id: \.self) { option in
                     Button {
                         category = option
                         onCategoryChange(option)
                     } label: {
-                        Label(option, systemImage: iconName(for: option))
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .frame(maxWidth: .infinity, minHeight: 40)
+                        HStack(spacing: 6) {
+                            Image(systemName: iconName(for: option))
+                            Text(closetShortCategoryLabel(option))
+                        }
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .frame(maxWidth: .infinity, minHeight: 46)
                     }
                     .buttonStyle(.bordered)
                     .tint(category == option ? AppTab.closet.palette.accent : .secondary)
@@ -3182,7 +3369,7 @@ private struct ClosetItemDetailSheet: View {
         self.onFavorite = onFavorite
         self.onAskAI = onAskAI
         self.onBuildOutfit = onBuildOutfit
-        _name = State(initialValue: item.name)
+        _name = State(initialValue: ClosetItemDisplay.displayName(for: item))
         _category = State(initialValue: item.category)
         _color = State(initialValue: item.color)
         _brand = State(initialValue: item.brand)
@@ -3230,7 +3417,7 @@ private struct ClosetItemDetailSheet: View {
                     }
                 }
             }
-            .navigationTitle(item.name)
+            .navigationTitle(ClosetItemDisplay.displayName(for: item))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") { dismiss() }
@@ -3239,7 +3426,7 @@ private struct ClosetItemDetailSheet: View {
                     Button("Save") {
                         let updated = ClosetItem(
                             id: item.id,
-                            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            name: ClosetItemDisplay.displayName(name: name, category: category, color: color),
                             category: category.trimmingCharacters(in: .whitespacesAndNewlines),
                             color: color.trimmingCharacters(in: .whitespacesAndNewlines),
                             brand: brand.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -3255,5 +3442,15 @@ private struct ClosetItemDetailSheet: View {
                 }
             }
         }
+    }
+}
+
+private func closetShortCategoryLabel(_ category: String) -> String {
+    switch category {
+    case "Traditional Wear": return "Traditional"
+    case "Formal Wear": return "Formal"
+    case "Casual Wear": return "Casual"
+    case "Sportswear": return "Sport"
+    default: return category
     }
 }

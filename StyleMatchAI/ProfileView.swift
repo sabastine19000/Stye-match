@@ -45,7 +45,8 @@ struct ProfileView: View {
     @AppStorage("closetItemsData") private var closetItemsData = Data()
     @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.siri.rawValue
     @AppStorage("shareAppContextWithChatGPT") private var shareAppContextWithChatGPT = true
-    @AppStorage(VoiceAssistantSettings.enabledKey) private var voiceAssistantEnabled = false
+    @AppStorage(VoiceAssistantSettings.enabledKey) private var voiceAssistantEnabled = VoiceAssistantSettings.defaultEnabled
+    @AppStorage("voiceStylistDefaultVoiceHintDismissed") private var voiceStylistDefaultVoiceHintDismissed = false
     @AppStorage(VoiceAssistantSettings.speechRateKey) private var voiceAssistantSpeechRate = VoiceAssistantSettings.defaultSpeechRate
     @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
     @AppStorage("profileLastSavedAt") private var profileLastSavedAt = ""
@@ -61,7 +62,7 @@ struct ProfileView: View {
     @State private var hasUnsavedProfileChanges = false
     @State private var hasLoadedProfileDraft = false
     @State private var dataDeletionMessage: String?
-    @StateObject private var voiceAssistant = VoiceAssistantService()
+    @StateObject private var voiceAssistant = VoiceStylistService()
 
     private var selectedAssistant: PreferredAIAssistant {
         PreferredAIAssistant(rawValue: preferredAIAssistant) ?? .siri
@@ -209,6 +210,20 @@ struct ProfileView: View {
 
                 Section("Voice Assistant") {
                     Toggle("Speak outfit guidance", isOn: $voiceAssistantEnabled)
+
+                    if voiceAssistantEnabled,
+                       voiceAssistant.isUsingDefaultQualityVoice,
+                       !voiceStylistDefaultVoiceHintDismissed {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("For a smoother voice, download an enhanced voice in iPhone Settings > Accessibility > Spoken Content > Voices.", systemImage: "speaker.wave.2.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Got it") {
+                                voiceStylistDefaultVoiceHintDismissed = true
+                            }
+                            .font(.caption)
+                        }
+                    }
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Voice pace")

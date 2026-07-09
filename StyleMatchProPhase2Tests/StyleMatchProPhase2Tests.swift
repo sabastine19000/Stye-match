@@ -1,6 +1,14 @@
 import XCTest
 @testable import StyleMatchPro
 
+private func projectSource(_ relativePath: String, filePath: String = #filePath) throws -> String {
+    let root = URL(fileURLWithPath: filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let url = root.appendingPathComponent(relativePath)
+    return try String(contentsOf: url, encoding: .utf8)
+}
+
 final class StyleMatchProPhase2Tests: XCTestCase {
     let userA = "test-user-A"
     let userB = "test-user-B"
@@ -78,6 +86,27 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(freshScheduler.nextPromptCandidate(now: now.addingTimeInterval(60 * 60)), "Global cap should block prompts for 24 hours.")
     }
 
+    func testFeedbackSchedulerSkipBackoffSurvivesFreshSchedulerInstance() {
+        let now = Date(timeIntervalSince1970: 2_700_000)
+        let store = OutfitMemoryStore(defaults: defaults, userId: userA)
+        markFeedbackFirstSessionSeen(for: userA)
+
+        var eligible = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "skip-backoff"))
+        eligible.scanDate = now.addingTimeInterval(-20 * 60 * 60)
+        store.addScan(eligible)
+
+        let scheduler = FeedbackPromptScheduler(store: store, defaults: defaults, userId: userA)
+        scheduler.recordPromptSkipped(now: now.addingTimeInterval(-60 * 60))
+        scheduler.recordPromptSkipped(now: now.addingTimeInterval(-30 * 60))
+
+        let relaunchedStore = OutfitMemoryStore(defaults: defaults, userId: userA)
+        let relaunchedScheduler = FeedbackPromptScheduler(store: relaunchedStore, defaults: defaults, userId: userA)
+        XCTAssertNil(
+            relaunchedScheduler.nextPromptCandidate(now: now),
+            "Persisted skip fatigue state should survive a fresh scheduler instance."
+        )
+    }
+
     func testFeedbackSchedulerPicksMostRecentEligibleOutfit() {
         let now = Date(timeIntervalSince1970: 3_000_000)
         let store = OutfitMemoryStore(defaults: defaults, userId: userA)
@@ -135,6 +164,37 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(decoded.feedbackPromptCount, 0)
         XCTAssertNil(decoded.feedbackDismissedAt)
         XCTAssertNil(decoded.feedbackCompletedAt)
+        XCTAssertNil(decoded.feedback)
+    }
+
+    func testPrePhase3OutfitMemoryJSONFixtureDecodesCleanlyWithoutFeedbackField() throws {
+        let id = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        let json = """
+        {
+          "id": "\(id.uuidString)",
+          "userId": "\(userA)",
+          "scanDate": 1720310400,
+          "detectedGarments": ["shirt", "pants"],
+          "colors": ["white", "gray"],
+          "detectedStyle": "Casual",
+          "styleScore": 84,
+          "isFavorite": true,
+          "timesWorn": 0
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(OutfitMemory.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.id, id)
+        XCTAssertEqual(decoded.detectedGarments, ["shirt", "pants"])
+        XCTAssertEqual(decoded.colors, ["white", "gray"])
+        XCTAssertNil(decoded.feedback)
+        XCTAssertNil(decoded.wasWorn)
+        XCTAssertNil(decoded.wasLiked)
+        XCTAssertNil(decoded.feedbackTimestamp)
+        XCTAssertNil(decoded.dislikeReason)
+        XCTAssertEqual(decoded.feedbackPromptCount, 0)
+        XCTAssertNil(decoded.feedbackDismissedAt)
+        XCTAssertNil(decoded.feedbackCompletedAt)
     }
 
     func testFeedbackNoAnswerCompletesWithoutLikeOrReason() {
@@ -150,6 +210,117 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(saved?.wasLiked)
         XCTAssertNil(saved?.dislikeReason)
         XCTAssertNotNil(saved?.feedbackCompletedAt)
+    }
+
+    func testFeedbackDecisionPolicyCoversSuppressionCooldownBackoffAndHistory() {
+        let now = Date(timeIntervalSince1970: 4_200_000)
+        var memory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "decision"))
+        memory.scanDate = now.addingTimeInterval(-2 * 24 * 60 * 60)
+
+        let firstScan = SchedulerContext(
+            now: now,
+            isFirstScanEver: true,
+            hasShownPromptThisSession: false,
+            lastPromptedAt: nil,
+            consecutiveSkips: 0,
+            lastSkipAt: nil,
+            surface: .scanResult
+        )
+        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: firstScan).shouldPrompt)
+
+        let shownThisSession = SchedulerContext(
+            now: now,
+            isFirstScanEver: false,
+            hasShownPromptThisSession: true,
+            lastPromptedAt: nil,
+            consecutiveSkips: 0,
+            lastSkipAt: nil,
+            surface: .scanResult
+        )
+        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: shownThisSession).shouldPrompt)
+
+        let dailyCooldown = SchedulerContext(
+            now: now,
+            isFirstScanEver: false,
+            hasShownPromptThisSession: false,
+            lastPromptedAt: now.addingTimeInterval(-23 * 60 * 60),
+            consecutiveSkips: 0,
+            lastSkipAt: nil,
+            surface: .scanResult
+        )
+        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: dailyCooldown).shouldPrompt)
+
+        let skipBackoff = SchedulerContext(
+            now: now,
+            isFirstScanEver: false,
+            hasShownPromptThisSession: false,
+            lastPromptedAt: nil,
+            consecutiveSkips: 2,
+            lastSkipAt: now.addingTimeInterval(-6 * 24 * 60 * 60),
+            surface: .scanResult
+        )
+        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: skipBackoff).shouldPrompt)
+
+        let historyReengagement = SchedulerContext(
+            now: now,
+            isFirstScanEver: false,
+            hasShownPromptThisSession: false,
+            lastPromptedAt: nil,
+            consecutiveSkips: 0,
+            lastSkipAt: nil,
+            surface: .scanHistoryDetail
+        )
+        XCTAssertTrue(FeedbackPromptScheduler.decision(for: memory, context: historyReengagement).shouldPrompt)
+    }
+
+    func testRecordOutfitFeedbackPersistsAndIncrementsTimesWornOnce() {
+        let now = Date(timeIntervalSince1970: 4_300_000)
+        let store = OutfitMemoryStore(defaults: defaults, userId: userA)
+        let memory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "verdict"))
+        store.addScan(memory)
+
+        let feedback = OutfitFeedback(verdict: .loved, woreIt: true, recordedAt: now)
+        store.recordOutfitFeedback(for: memory.id, feedback: feedback)
+        store.recordOutfitFeedback(for: memory.id, feedback: feedback)
+
+        let saved = OutfitMemoryStore(defaults: defaults, userId: userA).memories.first { $0.id == memory.id }
+        XCTAssertEqual(saved?.feedback, feedback)
+        XCTAssertEqual(saved?.wasWorn, true)
+        XCTAssertEqual(saved?.wasLiked, true)
+        XCTAssertEqual(saved?.timesWorn, 1)
+        XCTAssertNotNil(saved?.feedbackCompletedAt)
+    }
+
+    func testPersonalizationContextOmitsFeedbackWhenEmptyAndSummarizesWhenPresent() {
+        let profile = makeStylistProfile(userId: userA)
+        var noFeedback = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "no-feedback"))
+        noFeedback.detectedStyle = "Casual"
+        let emptyContext = PersonalizationContextBuilder.promptContext(
+            profile: profile,
+            outfitMemories: [noFeedback],
+            memoryLimit: 5
+        )
+        XCTAssertFalse(emptyContext.contains("Feedback signals"))
+
+        var loved = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "loved-feedback"))
+        loved.detectedStyle = "Casual"
+        loved.feedback = OutfitFeedback(verdict: .loved, woreIt: true, recordedAt: Date(timeIntervalSince1970: 4_400_000))
+        var notForMe = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "not-feedback"))
+        notForMe.detectedStyle = "Formal"
+        notForMe.feedback = OutfitFeedback(verdict: .notForMe, woreIt: true, recordedAt: Date(timeIntervalSince1970: 4_400_100))
+
+        let summary = PersonalizationContextBuilder.feedbackSummary([loved, notForMe])
+        XCTAssertNotNil(summary)
+        XCTAssertLessThanOrEqual(summary?.count ?? 0, 220)
+
+        let feedbackContext = PersonalizationContextBuilder.promptContext(
+            profile: profile,
+            outfitMemories: [loved, notForMe],
+            memoryLimit: 5
+        )
+        XCTAssertTrue(feedbackContext.contains("Feedback signals"))
+        XCTAssertTrue(feedbackContext.contains("loved"))
+        XCTAssertTrue(feedbackContext.contains("not for me"))
     }
 
     // MARK: - Weather & Context Engine regression tests
@@ -580,6 +751,32 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         }
     }
 
+    func testMatchingHomePajamaSetDoesNotFallThroughToCasual() {
+        let rankings = StyleClassificationGuardrails.rankedStyles(
+            for: "girl wearing matching red and white striped two-piece shirt and pants set in a bedroom at home",
+            baseScore: 82
+        )
+
+        XCTAssertEqual(rankings.first?.name, "Sleepwear")
+        XCTAssertLessThan(
+            rankings.first(where: { $0.name == "Casual" })?.confidence ?? 100,
+            rankings.first?.confidence ?? 0
+        )
+        XCTAssertLessThanOrEqual(
+            rankings.first(where: { $0.name == "Business Casual" })?.confidence ?? 100,
+            12
+        )
+    }
+
+    func testStripedPoloWithoutHomeSetContextDoesNotTriggerSleepwear() {
+        let rankings = StyleClassificationGuardrails.rankedStyles(
+            for: "red and white striped polo shirt with chinos and clean sneakers outdoors",
+            baseScore: 82
+        )
+
+        XCTAssertNotEqual(rankings.first?.name, "Sleepwear")
+    }
+
     // MARK: - 6. Phase 2 personalization context
 
     func testEmptyProfileOmitsPersonalizationContext() {
@@ -645,6 +842,70 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(context.contains(userA), "Prompt context must not expose user IDs")
     }
 
+    func testChatContextOmitsColorInfoWhenPaletteIsMissing() {
+        let profile = makeStylistProfile(userId: userA)
+        var record = makeGarmentRecord(fingerprint: "missing-palette")
+        record.colors = []
+        var memory = makeOutfitMemory(userId: userA, record: record)
+        memory.detectedGarments = ["shirt", "pants"]
+        memory.detectedStyle = "Casual"
+        memory.colors = []
+
+        let context = PersonalizationContextBuilder.chatContext(
+            profile: profile,
+            outfitMemories: [memory],
+            memoryLimit: 1
+        )
+
+        XCTAssertTrue(context.recentOutfits.contains("shirt, pants"))
+        XCTAssertTrue(context.recentOutfits.contains("Casual"))
+        XCTAssertFalse(context.profileSummary.localizedCaseInsensitiveContains("Most worn colors"))
+        XCTAssertFalse(context.recentOutfits.localizedCaseInsensitiveContains("colors"))
+    }
+
+    func testDirectOpenAIStylistClientUsesCanonicalScoreGuard() {
+        XCTAssertTrue(StyleMatchAIGuardrails.directOpenAIStylistSystemInstruction.contains(StyleMatchAIGuardrails.scoreIntegrityInstruction))
+        XCTAssertFalse(StyleMatchAIGuardrails.directOpenAIStylistSystemInstruction.contains("explain it, improve it, and personalize it without changing it"))
+    }
+
+    func testDirectOpenAIStylistClientAlwaysAttachesBuilderContext() throws {
+        let source = try projectSource("StyleMatchAI/OpenAIStylistClient.swift")
+
+        XCTAssertTrue(source.contains("Approved live AI dispatch point"))
+        XCTAssertTrue(source.contains("PersonalizationContextBuilder.promptContext()"))
+        XCTAssertTrue(source.contains("StyleMatchAIGuardrails.scoreIntegrityInstruction"))
+    }
+
+    func testApprovedLiveAICallSitesAreEnumerated() throws {
+        let approvedFiles = [
+            "StyleMatchAI/ContentView.swift": 2,
+            "StyleMatchAI/ShopView.swift": 1,
+            "StyleMatchAI/ScanView.swift": 3,
+            "StyleMatchAI/AIAssistantsView.swift": 1,
+            "StyleMatchAI/AIStyleAdvisor.swift": 1
+        ]
+
+        for (path, expectedCount) in approvedFiles {
+            let source = try projectSource(path)
+            XCTAssertEqual(
+                source.components(separatedBy: "OpenAIStylistClient(apiKey:").count - 1,
+                expectedCount,
+                "Unexpected live AI client construction count in \(path)."
+            )
+        }
+    }
+
+    func testAlternateAIProviderAdaptersAreDormantByDefault() throws {
+        let source = try projectSource("StyleMatchAI/AIProviderAdapters.swift")
+
+        XCTAssertFalse(FeatureFlags.alternateAIProvidersEnabled)
+        XCTAssertTrue(source.contains("static func isProviderReachable(_ provider: StyleMatchAIProvider) -> Bool"))
+        XCTAssertTrue(source.contains("return FeatureFlags.alternateAIProvidersEnabled"))
+        XCTAssertTrue(source.contains("guard isProviderReachable(preferredProvider)"))
+        XCTAssertTrue(source.contains("guard isProviderReachable(.perplexity)"))
+        XCTAssertTrue(source.contains("guard isProviderReachable(provider)"))
+    }
+
     func testPersonalizationContextCapsMemoryDigest() {
         var profile = makeStylistProfile(userId: userA)
         profile.favoriteColors = ["black"]
@@ -674,13 +935,21 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     // MARK: - Phase 4 occasion awareness
 
     func testOccasionCodableAndLegacyLabelDecoding() throws {
-        let encoded = try JSONEncoder().encode(Occasion.wedding)
+        let encoded = try JSONEncoder().encode(Occasion.weddingGuest)
         let decoded = try JSONDecoder().decode(Occasion.self, from: encoded)
-        XCTAssertEqual(decoded, .wedding)
+        XCTAssertEqual(decoded, .weddingGuest)
+
+        let legacyWedding = try JSONDecoder().decode(Occasion.self, from: Data("\"wedding\"".utf8))
+        XCTAssertEqual(legacyWedding, .weddingGuest)
 
         XCTAssertEqual(Occasion(label: "General"), .general)
-        XCTAssertEqual(Occasion(label: "Everyday"), .general)
+        XCTAssertEqual(Occasion(label: "Everyday"), .casualDay)
         XCTAssertEqual(Occasion(label: "Date Night"), .dateNight)
+        XCTAssertEqual(Occasion(label: "Business Formal"), .businessFormal)
+        XCTAssertEqual(Occasion(label: "Wedding Guest"), .weddingGuest)
+        XCTAssertEqual(Occasion(label: "Gym"), .gym)
+        XCTAssertEqual(Occasion(label: "Loungewear"), .loungewear)
+        XCTAssertTrue(Occasion.allCases.contains(.specialEvent))
 
         let legacyJSON = """
         {
@@ -699,6 +968,35 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(memory.occasion)
     }
 
+    func testPrePhase4OutfitMemoryWithPhase3FeedbackDecodesAndCanonicalizesOccasion() throws {
+        let id = UUID(uuidString: "22222222-3333-4444-5555-666666666666")!
+        let json = """
+        {
+          "id": "\(id.uuidString)",
+          "userId": "\(userA)",
+          "scanDate": 1720310400,
+          "detectedGarments": ["robe", "slippers"],
+          "colors": ["navy"],
+          "detectedStyle": "Loungewear",
+          "styleScore": 78,
+          "occasion": "wedding",
+          "feedback": {
+            "verdict": "notForMe",
+            "woreIt": true,
+            "recordedAt": 1720396800
+          },
+          "isFavorite": false,
+          "timesWorn": 1
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(OutfitMemory.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.id, id)
+        XCTAssertEqual(decoded.occasion, .weddingGuest)
+        XCTAssertEqual(decoded.feedback?.verdict, .notForMe)
+        XCTAssertEqual(decoded.feedback?.woreIt, true)
+    }
+
     func testOutfitMemoryStoresSelectedOccasion() {
         let store = OutfitMemoryStore(defaults: defaults, userId: userA)
         var memory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "occasion-work"))
@@ -710,31 +1008,64 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(saved?.occasion, .work)
     }
 
+    func testOutfitMemoryStoreUpdatesOccasionThroughExistingSavePath() {
+        let store = OutfitMemoryStore(defaults: defaults, userId: userA)
+        let memory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "occasion-update"))
+        store.addScan(memory)
+
+        store.updateOccasion(for: memory.id, occasion: .dateNight)
+
+        let saved = OutfitMemoryStore(defaults: defaults, userId: userA).memories.first { $0.id == memory.id }
+        XCTAssertEqual(saved?.occasion, .dateNight)
+    }
+
+    func testSavedScanHistoryHasEditableOccasionRowUsingExistingUpdatePath() throws {
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertTrue(scanSource.contains("savedScanOccasionRow"))
+        XCTAssertTrue(scanSource.contains("updateSavedScanOccasion"))
+        XCTAssertTrue(scanSource.contains("updateOccasion(occasion, for: scan.analysis)"))
+        XCTAssertTrue(scanSource.contains("store.updateOccasion(for: memory.id, occasion: occasion)"))
+    }
+
     func testFormalityMismatchEvaluatorRules() {
         XCTAssertNil(FormalityMismatchEvaluator.evaluate(detectedStyle: "Smart Casual", occasion: .work))
-        XCTAssertNil(FormalityMismatchEvaluator.evaluate(detectedStyle: "Formal", occasion: .wedding))
-        XCTAssertNil(FormalityMismatchEvaluator.evaluate(detectedStyle: "Casual", occasion: .general))
+        XCTAssertNil(FormalityMismatchEvaluator.evaluate(detectedStyle: "Formal", occasion: .weddingGuest))
+        XCTAssertNil(FormalityMismatchEvaluator.evaluate(detectedStyle: "Casual", occasion: nil))
 
         let workMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Casual", occasion: .work)
         XCTAssertEqual(workMismatch?.detectedFormality, .casual)
         XCTAssertEqual(workMismatch?.occasion, .work)
 
-        let weddingMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Business Casual", occasion: .wedding)
+        let weddingMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Business Casual", occasion: .weddingGuest)
         XCTAssertEqual(weddingMismatch?.detectedFormality, .businessCasual)
-        XCTAssertEqual(weddingMismatch?.occasion, .wedding)
+        XCTAssertEqual(weddingMismatch?.occasion, .weddingGuest)
     }
 
     func testFormalityMismatchFlagsSleepwearForDressierOccasions() {
         let workMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Loungewear", occasion: .work)
         XCTAssertEqual(workMismatch?.detectedFormality, .sleepwear)
 
-        let weddingMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Sleepwear", occasion: .wedding)
+        let weddingMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Sleepwear", occasion: .weddingGuest)
         XCTAssertEqual(weddingMismatch?.detectedFormality, .sleepwear)
+
+        let businessFormalMismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Sleepwear", occasion: .businessFormal)
+        XCTAssertEqual(businessFormalMismatch?.occasion, .businessFormal)
+
+        XCTAssertNil(FormalityMismatchEvaluator.evaluate(detectedStyle: "Casual", occasion: .casualDay))
+    }
+
+    func testOccasionConflictTableIsExactAndDeterministic() {
+        XCTAssertTrue(FormalityMismatchEvaluator.hasExplicitConflict(formality: .sleepwear, occasion: .work))
+        XCTAssertTrue(FormalityMismatchEvaluator.hasExplicitConflict(formality: .sleepwear, occasion: .businessFormal))
+        XCTAssertTrue(FormalityMismatchEvaluator.hasExplicitConflict(formality: .sleepwear, occasion: .weddingGuest))
+        XCTAssertFalse(FormalityMismatchEvaluator.hasExplicitConflict(formality: .casual, occasion: .casualDay))
+        XCTAssertFalse(FormalityMismatchEvaluator.hasExplicitConflict(formality: .sleepwear, occasion: .casualDay))
     }
 
     func testOccasionWarningDoesNotChangeScoreData() {
         let fixedScore = 82
-        let mismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Casual", occasion: .wedding)
+        let mismatch = FormalityMismatchEvaluator.evaluate(detectedStyle: "Casual", occasion: .weddingGuest)
 
         XCTAssertNotNil(mismatch)
         XCTAssertEqual(fixedScore, 82, "Occasion mismatch is a parallel warning and must not mutate score data.")
@@ -750,7 +1081,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         workMemory.scanDate = Date(timeIntervalSince1970: 0)
 
         var weddingMemory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "wedding-occasion"))
-        weddingMemory.occasion = .wedding
+        weddingMemory.occasion = .weddingGuest
         weddingMemory.wasLiked = false
         weddingMemory.dislikeReason = .tooCasual
         weddingMemory.scanDate = Date(timeIntervalSince1970: 86_400)
@@ -762,11 +1093,79 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         )
 
         XCTAssertTrue(context.contains("Occasion patterns"))
-        XCTAssertTrue(context.contains("work 1x"))
-        XCTAssertTrue(context.contains("wedding disliked for too casual"))
+        XCTAssertTrue(context.contains("work 1x"), context)
+        XCTAssertTrue(context.contains("wedding guest disliked for too casual"))
         XCTAssertFalse(context.contains(userA), "Occasion context must not expose user IDs")
         XCTAssertFalse(context.contains(workMemory.id.uuidString), "Occasion context must not expose scan IDs")
         XCTAssertFalse(context.contains("1970"), "Occasion context must not expose scan dates")
+    }
+
+    func testOccasionContextDropOrderUnderTokenPressure() {
+        var loved = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "occasion-loved"))
+        loved.occasion = .dateNight
+        loved.feedback = OutfitFeedback(verdict: .loved, woreIt: true, recordedAt: Date(timeIntervalSince1970: 4_500_000))
+
+        var disliked = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "occasion-disliked"))
+        disliked.occasion = .work
+        disliked.feedback = OutfitFeedback(verdict: .notForMe, woreIt: true, recordedAt: Date(timeIntervalSince1970: 4_500_100))
+
+        let full = PersonalizationContextBuilder.occasionContextLines(
+            recentMemories: [loved, disliked],
+            currentOccasion: .weddingGuest
+        )
+        XCTAssertTrue(full.contains { $0.contains("Feedback signals") })
+        XCTAssertTrue(full.contains { $0.contains("Occasion patterns") })
+        XCTAssertTrue(full.contains { $0.contains("Current scan occasion") })
+
+        let constrained = PersonalizationContextBuilder.occasionContextLines(
+            recentMemories: [loved, disliked],
+            currentOccasion: .weddingGuest,
+            maxCharacters: 95
+        )
+        XCTAssertFalse(constrained.contains { $0.contains("Occasion patterns") }, "Trend should drop first.")
+        XCTAssertFalse(constrained.contains { $0.contains("Feedback signals") }, "Feedback should drop second when needed.")
+        XCTAssertTrue(constrained.contains { $0.contains("Current scan occasion") }, "Per-scan occasion should drop last.")
+    }
+
+    func testPersonalizationContextAddsCurrentScanOccasionOnlyWhenTagged() {
+        var profile = makeStylistProfile(userId: userA)
+        profile.favoriteColors = ["black"]
+        let memory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "untagged-context"))
+
+        let untagged = PersonalizationContextBuilder.buildContext(
+            profile: profile,
+            recentMemories: [memory],
+            maxMemories: 10
+        )
+        let explicitNil = PersonalizationContextBuilder.buildContext(
+            profile: profile,
+            recentMemories: [memory],
+            maxMemories: 10,
+            currentOccasion: nil
+        )
+        let tagged = PersonalizationContextBuilder.buildContext(
+            profile: profile,
+            recentMemories: [memory],
+            maxMemories: 10,
+            currentOccasion: .dateNight
+        )
+
+        XCTAssertEqual(untagged, explicitNil, "Untagged scans should preserve the existing context output exactly.")
+        XCTAssertTrue(tagged.contains("Current scan occasion"))
+        XCTAssertTrue(tagged.contains("The user tagged this outfit for: Date Night."))
+    }
+
+    func testOccasionCannotEnterNumericScorePath() throws {
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertFalse(scanSource.contains("scoreOccasion("))
+        XCTAssertFalse(scanSource.contains("context.occasion"))
+        XCTAssertFalse(scanSource.contains("occasionFit: plannedOccasionSummary"))
+        XCTAssertTrue(scanSource.contains("Occasion is explanation-only; never a score input."))
+        XCTAssertTrue(
+            scanSource.contains("Double(rawTotal) / 80.0 * 100.0"),
+            "Removing the 20-point occasion component should use only the mechanical 80-to-100 normalization."
+        )
     }
 
     // MARK: - 7. Personal Stylist Intelligence
@@ -965,6 +1364,32 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(viewModel.originalPriceText)
     }
 
+    func testProductViewModelOmitsBrandWhenItDuplicatesRetailer() {
+        let product = makeAffiliateProduct(
+            id: "macys-brand-duplicate",
+            retailer: Retailer(name: "Macy's", trackingID: "PENDING-APPROVAL", trackingParamName: "aff", disclosureName: "Macy's"),
+            brand: "Macy's"
+        )
+
+        let viewModel = AffiliateProductViewModel(product: product)
+
+        XCTAssertNil(viewModel.brandText)
+        XCTAssertEqual(viewModel.retailerName, "Macy's")
+        XCTAssertEqual(viewModel.soldAndShippedText, "Sold and shipped by Macy's")
+    }
+
+    func testProductViewModelOmitsEmptyBrandAndKeepsDistinctBrand() {
+        let noBrand = makeAffiliateProduct(id: "no-brand", brand: nil)
+        let nikeAtFootLocker = makeAffiliateProduct(
+            id: "nike-footlocker",
+            retailer: Retailer(name: "Foot Locker", trackingID: "PENDING-APPROVAL", trackingParamName: "aff", disclosureName: "Foot Locker"),
+            brand: "Nike"
+        )
+
+        XCTAssertNil(AffiliateProductViewModel(product: noBrand).brandText)
+        XCTAssertEqual(AffiliateProductViewModel(product: nikeAtFootLocker).brandText, "Nike")
+    }
+
     func testAffiliateTrackingParamAppendsWithURLComponentsAndSkipsPendingApproval() {
         let approved = makeAffiliateProduct(
             id: "approved",
@@ -1008,7 +1433,124 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(recommendations.first?.product.id, "white-shirt")
         XCTAssertEqual(recommendations.first?.reasonFacts.rule, "complement")
         XCTAssertTrue(recommendations.first?.reasonFacts.oneLineReason.contains("black pants and black shirt") == true)
+        XCTAssertTrue(recommendations.first?.reasonFacts.oneLineReason.contains("Recommended because") == true)
         XCTAssertTrue(recommendations.first?.reasonFacts.oneLineReason.contains("last Thursday") == true)
+    }
+
+    func testShoppingRecommendationReasonSanitizesInternalVisionLabels() {
+        let facts = ProductRecommendationReasonFacts(
+            rule: "complement",
+            productName: "Brown Leather Loafer",
+            productCategory: "Shoes",
+            productColors: ["brown"],
+            referencedOutfit: "gray Person Wearing Outfit and white Textile",
+            referencedDate: "yesterday",
+            referencedScore: 82,
+            weatherFact: nil,
+            saleFact: nil
+        )
+        let reason = facts.oneLineReason
+
+        XCTAssertFalse(reason.localizedCaseInsensitiveContains("Person Wearing"))
+        XCTAssertFalse(reason.localizedCaseInsensitiveContains("Textile"))
+        XCTAssertTrue(reason.localizedCaseInsensitiveContains("outfit"))
+        XCTAssertFalse(reason.localizedCaseInsensitiveContains("gray"))
+        XCTAssertFalse(reason.localizedCaseInsensitiveContains("white Textile"))
+    }
+
+    func testDisplayLabelSanitizerBlocksInternalVisionLabels() {
+        XCTAssertNil(DisplayLabelSanitizer.displayName(for: "Person Wearing Outfit"))
+        XCTAssertNil(DisplayLabelSanitizer.displayName(for: "Textile"))
+        XCTAssertEqual(DisplayLabelSanitizer.displayName(for: "Loafer"), "loafers")
+
+        let phrase = DisplayLabelSanitizer.wornItemPhrase(
+            rawLabel: "Person Wearing Outfit",
+            colorName: "gray",
+            colorProvenance: .fullImage,
+            recency: .yesterday
+        )
+        XCTAssertFalse(phrase.localizedCaseInsensitiveContains("gray"))
+        XCTAssertFalse(phrase.localizedCaseInsensitiveContains("Person Wearing"))
+        XCTAssertEqual(phrase, "what you wore yesterday")
+    }
+
+    func testRecommendationRationaleUsesTrendingFallbackForColdStart() {
+        let product = makeAffiliateProduct(id: "trend", name: "White Shirt", subcategory: "shirt", colors: ["white"])
+        let rationale = RecommendationRationaleBuilder.build(
+            for: product,
+            reasonFacts: nil,
+            profile: nil,
+            memories: [],
+            savedFavorites: [],
+            favoriteProductIDs: []
+        )
+
+        XCTAssertTrue(rationale.reasons.isEmpty)
+        XCTAssertEqual(rationale.headline, "Popular with shoppers this week.")
+    }
+
+    func testShoppingRecommendationPreferencesIncludeCustomerControls() {
+        let preferences = ShoppingRecommendationPreferences.default
+        XCTAssertTrue(preferences.usesWardrobeHistory)
+        XCTAssertTrue(preferences.usesFavoriteBrands)
+        XCTAssertTrue(preferences.usesFavoriteColors)
+        XCTAssertTrue(preferences.usesBudgetRange)
+        XCTAssertTrue(preferences.usesCurrentTrends)
+        XCTAssertFalse(preferences.usesWeather)
+        XCTAssertFalse(preferences.usesCalendarEvents)
+
+        var profile = makeStylistProfile(userId: userA)
+        RecommendationRationaleBuilder.apply(
+            ShoppingRecommendationPreferences(
+                usesWardrobeHistory: false,
+                usesFavoriteBrands: false,
+                usesFavoriteColors: true,
+                usesBudgetRange: true,
+                usesCurrentTrends: true,
+                usesWeather: true,
+                usesCalendarEvents: true
+            ),
+            to: &profile
+        )
+
+        let restored = RecommendationRationaleBuilder.preferences(from: profile)
+        XCTAssertFalse(restored.usesWardrobeHistory)
+        XCTAssertFalse(restored.usesFavoriteBrands)
+        XCTAssertTrue(restored.usesFavoriteColors)
+        XCTAssertTrue(restored.usesBudgetRange)
+        XCTAssertTrue(restored.usesCurrentTrends)
+        XCTAssertTrue(restored.usesWeather)
+        XCTAssertTrue(restored.usesCalendarEvents)
+    }
+
+    func testShoppingDisclosureDoesNotExposeTrackingIds() throws {
+        let shopView = try projectSource("StyleMatchAI/ShopView.swift")
+        let shoppingView = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let storeSearchView = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+
+        for source in [shopView, shoppingView, storeSearchView] {
+            XCTAssertFalse(source.contains("Tracking ID"))
+            XCTAssertFalse(source.contains("affiliateTrackingID)."))
+            XCTAssertTrue(source.contains("We may earn a small commission from qualifying purchases at no extra cost to you"))
+        }
+    }
+
+    func testRecommendationRationaleUsesDominantProfileColor() {
+        var profile = makeStylistProfile(userId: userA)
+        profile.favoriteColors = ["white"]
+        let product = makeAffiliateProduct(id: "white-shirt", name: "White Shirt", subcategory: "shirt", colors: ["white"])
+        let rationale = RecommendationRationaleBuilder.build(
+            for: product,
+            reasonFacts: nil,
+            profile: profile,
+            memories: [],
+            savedFavorites: [],
+            favoriteProductIDs: []
+        )
+
+        XCTAssertTrue(rationale.reasons.contains(.matchesColors))
+        XCTAssertFalse(rationale.headline.localizedCaseInsensitiveContains("Person Wearing"))
+        XCTAssertFalse(rationale.headline.localizedCaseInsensitiveContains("Textile"))
     }
 
     func testShoppingRecommendationSaleAloneNeverProducesRecommendation() {
@@ -1868,6 +2410,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(ranked.first?.product.id, "white-shirt")
         XCTAssertEqual(ranked.first?.reasonFacts?.rule, "complement")
         XCTAssertTrue(ranked.first?.reasonFacts?.oneLineReason.contains("black pants and black shirt") == true)
+        XCTAssertTrue(ranked.first?.reasonFacts?.explanationBullets.contains("Matches your wardrobe") == true)
         XCTAssertEqual(ranked.last?.product.id, "dismissed")
         XCTAssertLessThan(ranked.first(where: { $0.product.id == "coat" })?.rank ?? 0, ranked.first?.rank ?? 0)
     }
@@ -1926,8 +2469,20 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         ))
     }
 
+    func testFounderToolingIsDebugOnlyInSource() throws {
+        let featureGate = try projectSource("StyleMatchAI/FeatureGate.swift")
+        let contentView = try projectSource("StyleMatchAI/ContentView.swift")
+
+        XCTAssertTrue(featureGate.contains("#if DEBUG"))
+        XCTAssertTrue(featureGate.contains("static let releaseChannel: StyleMatchReleaseChannel = .customerPublic"))
+        XCTAssertTrue(featureGate.contains("static var allowsLocalFounderAPIKey: Bool"))
+        XCTAssertTrue(featureGate.contains("#else\n        false\n        #endif"))
+        XCTAssertTrue(contentView.contains("StyleMatchBuildSettings.allowsLocalFounderAPIKey"))
+    }
+
     func testProxyLiveSearchSendsOnlyAllowedSearchFilters() async throws {
         CapturingURLProtocol.lastURL = nil
+        CapturingURLProtocol.responseData = Data("[]".utf8)
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [CapturingURLProtocol.self]
         let session = URLSession(configuration: config)
@@ -1959,6 +2514,124 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(queryNames.contains("scanPhoto"))
         XCTAssertFalse(queryNames.contains("userID"))
         XCTAssertFalse(queryNames.contains("coordinates"))
+    }
+
+    func testRemoteCatalogProviderSendsOnlyCatalogFiltersAndMapsWorkerProducts() async throws {
+        CapturingURLProtocol.lastURL = nil
+        CapturingURLProtocol.responseData = Data("""
+        {
+          "products": [
+            {
+              "id": "macys-white-oxford",
+              "store_id": "macys",
+              "store_name": "Macy's",
+              "name": "White Oxford Shirt",
+              "image_url": "https://example.com/products/white-oxford.jpg",
+              "category": "tops",
+              "brand": "Macy's",
+              "price_cents": 7950,
+              "sale_price_cents": 4999,
+              "sale_ends_at": "2027-01-01T00:00:00Z",
+              "currency": "USD",
+              "country_code": "US",
+              "available_countries": ["US", "CA"],
+              "availability": "in_stock",
+              "tags": ["business", "white", "shirt"],
+              "buy_url": "https://proxy.example.com/v1/go/macys-white-oxford"
+            }
+          ],
+          "next_cursor": null,
+          "disclosure": "As an affiliate, StyleMatch Pro may earn a commission from qualifying purchases at no extra cost to you."
+        }
+        """.utf8)
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CapturingURLProtocol.self]
+        let session = URLSession(configuration: config)
+        let cacheDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let provider = RemoteCatalogProvider(
+            baseURL: URL(string: "https://proxy.example.com")!,
+            cacheDirectory: cacheDirectory,
+            fallbackProvider: StaticProductCatalogProvider(products: []),
+            urlSession: session,
+            refreshInterval: 3600
+        )
+
+        let products = try await provider.products()
+
+        XCTAssertEqual(products.map(\.id), ["macys-white-oxford"])
+        XCTAssertEqual(products.first?.affiliateURL.absoluteString, "https://proxy.example.com/v1/go/macys-white-oxford")
+        XCTAssertEqual(products.first?.retailer.trackingID, AffiliateLinkBuilder.pendingApprovalTrackingID)
+        XCTAssertEqual(products.first?.currencyCode, "USD")
+        XCTAssertEqual(products.first?.availableCountries, ["US", "CA"])
+
+        let url = try XCTUnwrap(CapturingURLProtocol.lastURL)
+        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(components.path, "/v1/products")
+        let queryNames = Set((components.queryItems ?? []).map(\.name))
+        XCTAssertEqual(queryNames, ["limit", "country"])
+        XCTAssertFalse(url.absoluteString.contains("profile"))
+        XCTAssertFalse(url.absoluteString.contains("outfit"))
+        XCTAssertFalse(url.absoluteString.contains("user"))
+        XCTAssertFalse(url.absoluteString.contains("wardrobe"))
+    }
+
+    func testRemoteCatalogProviderFiltersByCountryAndFormatsGBPPrices() throws {
+        let data = Data("""
+        {
+          "products": [
+            {
+              "id": "gb-only-blazer",
+              "store_id": "stylehub",
+              "store_name": "StyleHub",
+              "name": "Navy Blazer",
+              "image_url": "https://example.com/products/navy-blazer.jpg",
+              "category": "outerwear",
+              "brand": "StyleHub",
+              "price_cents": 8900,
+              "sale_price_cents": null,
+              "sale_ends_at": null,
+              "currency": "GBP",
+              "country_code": "GB",
+              "available_countries": ["GB"],
+              "availability": "in_stock",
+              "tags": ["business", "navy", "jacket"],
+              "buy_url": "https://proxy.example.com/v1/go/gb-only-blazer"
+            },
+            {
+              "id": "us-only-shirt",
+              "store_id": "macys",
+              "store_name": "Macy's",
+              "name": "White Oxford Shirt",
+              "image_url": "https://example.com/products/white-oxford.jpg",
+              "category": "tops",
+              "brand": "Macy's",
+              "price_cents": 7950,
+              "sale_price_cents": null,
+              "sale_ends_at": null,
+              "currency": "USD",
+              "country_code": "US",
+              "available_countries": ["US"],
+              "availability": "in_stock",
+              "tags": ["business", "white", "shirt"],
+              "buy_url": "https://proxy.example.com/v1/go/us-only-shirt"
+            }
+          ]
+        }
+        """.utf8)
+
+        let products = try RemoteCatalogProvider.decodeRemoteProducts(
+            data,
+            baseURL: URL(string: "https://proxy.example.com")!,
+            regionCode: "GB"
+        )
+
+        XCTAssertEqual(products.map(\.id), ["gb-only-blazer"])
+        let product = try XCTUnwrap(products.first)
+        XCTAssertEqual(product.currencyCode, "GBP")
+        let viewModel = AffiliateProductViewModel(product: product)
+        XCTAssertTrue(viewModel.priceText.contains("£"), "Expected GBP price, got \(viewModel.priceText)")
     }
 
     func testPersonalStylistEngineFinalMessageOmitsDealsWhenSaleMatchingFlagIsFalse() {
@@ -2647,6 +3320,10 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             price: price,
             salePrice: salePrice,
             saleEndsAt: saleEndsAt,
+            availableColors: nil,
+            customerRating: nil,
+            reviewCount: nil,
+            estimatedShippingText: nil,
             tags: tags,
             genderPresentation: nil
         )
@@ -3076,6 +3753,7 @@ extension StyleMatchProPhase2Tests {
 
 private final class CapturingURLProtocol: URLProtocol {
     static var lastURL: URL?
+    static var responseData = Data("[]".utf8)
 
     override class func canInit(with request: URLRequest) -> Bool {
         true
@@ -3087,7 +3765,7 @@ private final class CapturingURLProtocol: URLProtocol {
 
     override func startLoading() {
         Self.lastURL = request.url
-        let data = Data("[]".utf8)
+        let data = Self.responseData
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "https://proxy.example.com")!,
             statusCode: 200,
@@ -3127,10 +3805,6 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
             saliencyCrop: {
                 attempted.append(.saliencyCrop)
                 return nil
-            },
-            fullImageFallback: {
-                attempted.append(.fullImageFallback)
-                return .fullImage(width: 2, height: 2)
             }
         )
 
@@ -3139,7 +3813,7 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertEqual(attempted, [.foregroundSubject, .personSegmentation])
     }
 
-    func testGarmentRegionMaskerFallsThroughToFullImageFallback() {
+    func testGarmentRegionMaskerAllTierFailureReturnsTypedFailureWithoutPalette() {
         var attempted: [GarmentMaskTier] = []
 
         let mask = GarmentRegionMasker.tieredMask(
@@ -3157,17 +3831,14 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
             saliencyCrop: {
                 attempted.append(.saliencyCrop)
                 return nil
-            },
-            fullImageFallback: {
-                attempted.append(.fullImageFallback)
-                return .fullImage(width: 2, height: 2)
             }
         )
 
-        XCTAssertEqual(mask.tier, .fullImageFallback)
-        XCTAssertEqual(mask.includedCount, 4)
+        XCTAssertEqual(mask.tier, .couldNotIsolateGarment)
+        XCTAssertEqual(mask.includedCount, 0)
         XCTAssertFalse(mask.maskingApplied)
-        XCTAssertEqual(attempted, [.foregroundSubject, .personSegmentation, .saliencyCrop, .fullImageFallback])
+        XCTAssertTrue(mask.included.allSatisfy { !$0 })
+        XCTAssertEqual(attempted, [.foregroundSubject, .personSegmentation, .saliencyCrop])
     }
 
     func testPaletteExtractionSamplesOnlyIncludedGarmentPixels() {
@@ -3271,7 +3942,7 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
 
         let message = VoiceScriptBuilder.scanResult(from: analysis).text
 
-        XCTAssertTrue(message.hasPrefix("Your outfit score is 86. This is a strong casual look."))
+        XCTAssertTrue(message.contains("Your outfit score is 86 out of 100, which is a strong casual look."))
         XCTAssertTrue(message.contains("The colors work well together"))
         XCTAssertTrue(message.contains("Next, consider clean white sneakers."))
         XCTAssertLessThanOrEqual(message.count, VoiceScriptBuilder.maximumSpokenCharacters)
@@ -3310,6 +3981,123 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(VoiceScriptBuilder.profileSaved().text.contains("Profile saved"))
         XCTAssertTrue(VoiceScriptBuilder.scanFailed(title: "No outfit detected", description: "No visible clothing.").text.contains("clearer"))
         XCTAssertLessThanOrEqual(VoiceScriptBuilder.preview().text.count, VoiceScriptBuilder.maximumSpokenCharacters)
+    }
+
+    func testVoiceAssistantDefaultsOffForFreshInstallAndPreservesPersistedOn() {
+        let suiteName = "VoiceAssistantSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertFalse(VoiceAssistantSettings.defaultEnabled)
+        XCTAssertFalse(VoiceAssistantSettings.isEnabled(defaults: defaults))
+
+        defaults.set(true, forKey: VoiceAssistantSettings.enabledKey)
+
+        XCTAssertTrue(VoiceAssistantSettings.isEnabled(defaults: defaults))
+    }
+
+    func testHomeScoreBandingKeepsStarsAndLabelsConsistent() {
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 82), StyleMatchHomeScoreBand(stars: 4, title: "Good Match"))
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 39).stars, 1)
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 40).stars, 2)
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 60).stars, 3)
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 75).stars, 4)
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 89).stars, 4)
+        XCTAssertEqual(StyleMatchHomeDisplay.scoreBand(for: 90).stars, 5)
+    }
+
+    func testHomeCountPluralization() {
+        XCTAssertEqual(StyleMatchHomeDisplay.itemCountText(0), "0 items")
+        XCTAssertEqual(StyleMatchHomeDisplay.itemCountText(1), "1 item")
+        XCTAssertEqual(StyleMatchHomeDisplay.itemCountText(2), "2 items")
+        XCTAssertEqual(StyleMatchHomeDisplay.closetItemLabel(0), "0 Closet Items")
+        XCTAssertEqual(StyleMatchHomeDisplay.closetItemLabel(1), "1 Closet Item")
+        XCTAssertEqual(StyleMatchHomeDisplay.closetItemLabel(3), "3 Closet Items")
+        XCTAssertEqual(StyleMatchHomeDisplay.countText(1, singular: "saved item"), "1 saved item")
+        XCTAssertEqual(StyleMatchHomeDisplay.countText(2, singular: "saved item"), "2 saved items")
+        XCTAssertEqual(StyleMatchHomeDisplay.countText(2, singular: "person", plural: "people"), "2 people")
+        XCTAssertEqual(StyleMatchHomeDisplay.starSystemName(index: 4, for: 82), "star.fill")
+        XCTAssertEqual(StyleMatchHomeDisplay.starSystemName(index: 5, for: 82), "star")
+    }
+
+    func testHomeClosetItemLabelRemovesProfileName() {
+        let label = StyleMatchHomeDisplay.sanitizedClosetItemLabel(
+            name: "Sabastine",
+            color: "White",
+            userName: "Sabastine"
+        )
+
+        XCTAssertEqual(label, "White")
+        XCTAssertFalse(label?.localizedCaseInsensitiveContains("Sabastine") == true)
+    }
+
+    func testClosetItemDisplayFallsBackFromProfileNameToGarmentDescription() {
+        let item = ClosetItem(
+            name: "Sabastine",
+            category: "Shirt",
+            color: "White",
+            brand: "",
+            size: "M",
+            occasion: "Everyday",
+            notes: ""
+        )
+
+        XCTAssertEqual(
+            ClosetItemDisplay.displayName(for: item, profileName: "Sabastine Esisorigho"),
+            "White Shirt"
+        )
+        XCTAssertEqual(
+            ClosetItemDisplay.displayName(name: "Sabastine", category: "Shoes", color: "Black", profileName: "Sabastine Esisorigho"),
+            "Black Shoes"
+        )
+        XCTAssertEqual(
+            ClosetItemDisplay.displayName(name: "Navy Blazer", category: "Jacket", color: "Navy", profileName: "Sabastine Esisorigho"),
+            "Navy Blazer"
+        )
+    }
+
+    func testClosetViewUsesReadOnlyGarmentRecordsForScanCategorySections() throws {
+        let source = try projectSource("StyleMatchAI/ClosetView.swift")
+
+        XCTAssertTrue(source.contains("@StateObject private var outfitMemoryStore = OutfitMemoryStore()"))
+        XCTAssertTrue(source.contains("outfitMemoryStore.garmentRecords"))
+        XCTAssertTrue(source.contains("Scanned Clothing"))
+        XCTAssertTrue(source.contains("No scan categories yet"))
+        XCTAssertFalse(source.contains("outfitMemoryStore.addScan"))
+        XCTAssertFalse(source.contains("outfitMemoryStore.addOrMergeScan"))
+        XCTAssertFalse(source.contains("outfitMemoryStore.mergeGarmentRecords"))
+    }
+
+    func testHomeViewKeepsDuplicatedFactsInOnePlace() throws {
+        let source = try projectSource("StyleMatchAI/HomeView.swift")
+
+        XCTAssertEqual(source.components(separatedBy: "AI Confidence: High").count - 1, 1)
+        XCTAssertEqual(source.components(separatedBy: "Continue your last outfit").count - 1, 1)
+        XCTAssertFalse(source.contains("Weather & Calendar"))
+        XCTAssertFalse(source.contains("weatherIntelligenceCard"))
+        XCTAssertFalse(source.contains("Favorite Color"))
+        XCTAssertFalse(source.contains("Closet Items"))
+        XCTAssertFalse(source.contains("closetItemCountText"))
+        XCTAssertFalse(source.contains("memoryClosetCountText"))
+        XCTAssertFalse(source.contains("progressClosetCountText"))
+        XCTAssertFalse(source.contains("weatherIntelligenceCard"))
+        XCTAssertFalse(source.contains("LinearGradient("))
+        XCTAssertFalse(source.contains(".stroke(task.tint"))
+        XCTAssertFalse(source.contains(".stroke(tint"))
+        XCTAssertFalse(source.contains("saved item\\(wishlistCount"))
+        XCTAssertFalse(source.contains("light or gym item\\(count"))
+        XCTAssertTrue(source.contains("Projected: 95"))
+        XCTAssertTrue(source.contains("Score +6 this month"))
+        XCTAssertTrue(source.contains("StyleMatchHomeDisplay.starSystemName"))
+        XCTAssertTrue(source.contains("StyleMatchHomeDisplay.countText(wishlistCount"))
+    }
+
+    private func projectSource(_ relativePath: String) throws -> String {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = root.appendingPathComponent(relativePath)
+        return try String(contentsOf: url, encoding: .utf8)
     }
 
     private func makeAnalysis(
