@@ -293,9 +293,10 @@ struct SaleWatcher {
     }
 
     static func activeCatalogProvider() -> ProductCatalogProvider {
-        if FeatureFlags.remoteCatalogEnabled, let remoteURL = URL(string: "https://example.com/stylematch/ProductCatalog.json") {
+        let config = (try? BundledShoppingIntegrationConfigProvider().config()) ?? .empty
+        if FeatureFlags.remoteCatalogEnabled, let remoteURL = config.catalogBaseURL {
             return RemoteCatalogProvider(
-                catalogURL: remoteURL,
+                baseURL: remoteURL,
                 cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
                 fallbackProvider: BundledCatalogProvider()
             )

@@ -315,6 +315,10 @@ struct BestBuyAdapter: RetailerSearchAdapter {
                 price: product.regularPrice,
                 salePrice: product.salePrice != product.regularPrice ? product.salePrice : nil,
                 saleEndsAt: nil,
+                availableColors: nil,
+                customerRating: nil,
+                reviewCount: nil,
+                estimatedShippingText: nil,
                 tags: [product.type].compactMap { $0 },
                 genderPresentation: nil
             )
@@ -518,6 +522,10 @@ private enum RetailerProductMapping {
             price: price,
             salePrice: salePrice,
             saleEndsAt: nil,
+            availableColors: nil,
+            customerRating: nil,
+            reviewCount: nil,
+            estimatedShippingText: nil,
             tags: [categoryText].compactMap { $0 },
             genderPresentation: nil
         )
