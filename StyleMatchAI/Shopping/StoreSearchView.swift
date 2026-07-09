@@ -68,7 +68,7 @@ struct StoreSearchView: View {
                     }
                 }
 
-                Text("Purchases, payment, shipping, returns, and product availability are handled entirely by the retailer. StyleMatch Pro may earn a commission on qualifying purchases.")
+                Text("We may earn a small commission from qualifying purchases at no extra cost to you. Orders are completed securely with the retailer.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -113,7 +113,7 @@ struct StoreSearchView: View {
                     Text("Affiliate Disclosure")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("StyleMatch Pro may earn a commission when you buy through retailer links in this app. StyleMatch Pro is not the seller. Checkout, fulfillment, shipping, refunds, returns, and customer service are handled by the retailer.")
+                    Text("We may earn a small commission from qualifying purchases at no extra cost to you. StyleMatch Pro is not the seller. Checkout, fulfillment, shipping, refunds, returns, and customer service are handled by the retailer.")
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -132,7 +132,7 @@ struct StoreSearchView: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "info.circle.fill").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 4) {
-                Text("StyleMatch Pro may earn a commission when you buy through these links. All purchases are completed with the retailer.")
+                Text("Shopping through StyleMatch Pro")
                     .font(.footnote)
                     .fontWeight(.semibold)
                 Button("How affiliate shopping works") { showDisclosure = true }
@@ -366,7 +366,7 @@ private struct SearchProductCard: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    if let brand = product.brand {
+                    if let brand = viewModel.brandText {
                         Text(brand)
                             .font(.caption)
                             .foregroundStyle(.secondary)

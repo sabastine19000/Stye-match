@@ -58,21 +58,64 @@ struct ProductRecommendationReasonFacts: Codable, Equatable {
     let saleFact: String?
 
     var oneLineReason: String {
+        let item = Self.customerProductName(productName)
         switch rule {
         case "complement":
-            let outfit = referencedOutfit ?? "a saved outfit"
+            let outfit = referencedOutfit.map(Self.customerOutfitPhrase) ?? "a saved outfit"
             let date = referencedDate.map { " you wore \($0)" } ?? ""
-            return "\(productName) pairs with \(outfit)\(date)."
+            return "Recommended because \(item) complements \(outfit)\(date)."
         case "upgrade":
-            let outfit = referencedOutfit ?? "a lower-scoring saved item"
-            return "\(productName) matches the color family of \(outfit) and can upgrade that slot."
+            let outfit = referencedOutfit.map(Self.customerOutfitPhrase) ?? "a lower-scoring saved outfit"
+            return "Recommended because \(item) gives \(outfit) a cleaner, more polished finish."
         case "weather":
-            return weatherFact ?? "\(productName) matches the current weather."
+            return weatherFact ?? "Recommended because \(item) matches today's weather."
         case "gap":
-            return "\(productName) fills a category not yet common in your saved closet history."
+            return "Recommended because \(item) fills a useful wardrobe gap."
+        case "favoriteAffinity":
+            return "Recommended because \(item) is similar to styles, colors, or brands you have saved."
+        case "styleHistory":
+            return "Recommended because \(item) matches styles you wear often."
+        case "popular":
+            return "Recommended as a popular starting point while StyleMatch learns your wardrobe."
         default:
-            return "\(productName) matches your saved style facts."
+            return "Recommended because \(item) matches your wardrobe and style preferences."
         }
+    }
+
+    var explanationBullets: [String] {
+        var bullets: [String] = []
+        if referencedOutfit != nil { bullets.append("Matches your wardrobe") }
+        if !productColors.isEmpty { bullets.append("Matches your preferred colors") }
+        if rule == "styleHistory" || referencedScore != nil { bullets.append("Matches your style") }
+        if saleFact != nil { bullets.append("On sale today") }
+        if rule == "favoriteAffinity" || rule == "upgrade" { bullets.append("Similar to items you've liked before") }
+        if rule == "popular" { bullets.append("Popular product") }
+        if bullets.isEmpty { bullets.append("Selected by your shopping filters") }
+        return Array(bullets.prefix(5))
+    }
+
+    private static func customerProductName(_ value: String) -> String {
+        DisplayLabelSanitizer.displayName(for: value) ?? value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func customerOutfitPhrase(_ value: String) -> String {
+        let pieces = value
+            .components(separatedBy: " and ")
+            .flatMap { $0.components(separatedBy: ",") }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .compactMap { safePiecePhrase($0) }
+
+        if pieces.isEmpty { return "a recent outfit" }
+        if pieces.count == 1 { return pieces[0] }
+        if pieces.count == 2 { return "\(pieces[0]) and \(pieces[1])" }
+        return pieces.dropLast().joined(separator: ", ") + ", and \(pieces.last ?? "")"
+    }
+
+    private static func safePiecePhrase(_ value: String) -> String? {
+        let tokens = value.split(separator: " ").map(String.init)
+        guard let item = DisplayLabelSanitizer.displayName(for: value) else { return nil }
+        let color = tokens.compactMap { DisplayLabelSanitizer.safeColorName($0) }.first
+        return color.map { "\($0) \(item)" } ?? item
     }
 }
 
@@ -206,6 +249,30 @@ enum ShoppingRecommendationEngine {
             if lhs.rank == rhs.rank { return lhs.product.name < rhs.product.name }
             return lhs.rank > rhs.rank
         }
+    }
+
+    static func popularFallbackRecommendations(catalog: [AffiliateProduct], limit: Int = 4, now: Date = Date()) -> [ProductRecommendation] {
+        catalog
+            .filter { !$0.tags.contains(where: { $0.localizedCaseInsensitiveContains("internal") }) }
+            .prefix(limit)
+            .map { product in
+                ProductRecommendation(
+                    id: product.id,
+                    product: product,
+                    rank: 40,
+                    reasonFacts: ProductRecommendationReasonFacts(
+                        rule: "popular",
+                        productName: product.name,
+                        productCategory: product.category.displayName,
+                        productColors: product.colors,
+                        referencedOutfit: nil,
+                        referencedDate: nil,
+                        referencedScore: nil,
+                        weatherFact: nil,
+                        saleFact: hasActiveSale(product, now: now) ? "\(product.name) is currently on sale." : nil
+                    )
+                )
+            }
     }
 
     private static func complementFacts(
@@ -399,9 +466,10 @@ enum ShoppingRecommendationEngine {
 
     private static func outfitPhrase(garments: [String], colors: [String]) -> String {
         let pieces = garments.enumerated().map { index, garment in
-            let item = clean(garment)
+            guard let item = DisplayLabelSanitizer.displayName(for: clean(garment)) else { return "" }
             let color = index < colors.count ? clean(colors[index]) : ""
-            return color.isEmpty || item.localizedCaseInsensitiveContains(color) ? item : "\(color) \(item)"
+            let safeColor = DisplayLabelSanitizer.safeColorName(color)
+            return safeColor == nil || item.localizedCaseInsensitiveContains(safeColor ?? "") ? item : "\(safeColor ?? "") \(item)"
         }.filter { !$0.isEmpty }
 
         if pieces.isEmpty { return "the outfit" }

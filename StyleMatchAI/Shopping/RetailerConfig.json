@@ -1,21 +1,21 @@
 {
   "retailers": [
-    {"name": "Nike", "trackingID": "PENDING-APPROVAL", "trackingParamName": "stylematch_affiliate", "disclosureName": "Nike", "searchAdapter": "cj", "searchStatus": "pending"},
-    {"name": "Macy's", "trackingID": "PENDING-APPROVAL", "trackingParamName": "stylematch_affiliate", "disclosureName": "Macy's", "searchAdapter": "cj", "searchStatus": "pending"},
-    {"name": "Best Buy", "trackingID": "PENDING-APPROVAL", "trackingParamName": "irclickid", "disclosureName": "Best Buy", "searchAdapter": "bestbuy", "searchStatus": "pending"},
-    {"name": "Amazon", "trackingID": "PENDING-APPROVAL", "trackingParamName": "tag", "disclosureName": "Amazon", "searchAdapter": "amazon", "searchStatus": "pending"},
-    {"name": "Nordstrom", "trackingID": "PENDING-APPROVAL", "trackingParamName": "utm_source", "disclosureName": "Nordstrom", "searchAdapter": "rakuten", "searchStatus": "pending"},
-    {"name": "Levi's", "trackingID": "PENDING-APPROVAL", "trackingParamName": "camp", "disclosureName": "Levi's", "searchAdapter": "cj", "searchStatus": "pending"},
-    {"name": "Target", "trackingID": "PENDING-APPROVAL", "trackingParamName": "clkid", "disclosureName": "Target", "searchAdapter": "impact", "searchStatus": "pending"},
-    {"name": "Walmart", "trackingID": "PENDING-APPROVAL", "trackingParamName": "affinityOverride", "disclosureName": "Walmart", "searchAdapter": "impact", "searchStatus": "pending"},
-    {"name": "Adidas", "trackingID": "PENDING-APPROVAL", "trackingParamName": "cm_mmc", "disclosureName": "Adidas", "searchAdapter": "rakuten", "searchStatus": "pending"},
-    {"name": "H&M", "trackingID": "PENDING-APPROVAL", "trackingParamName": "utm_source", "disclosureName": "H&M", "searchAdapter": "sovrn", "searchStatus": "pending"},
-    {"name": "Zara", "trackingID": "PENDING-APPROVAL", "trackingParamName": "utm_source", "disclosureName": "Zara", "searchAdapter": "sovrn", "searchStatus": "pending"},
-    {"name": "SHEIN", "trackingID": "PENDING-APPROVAL", "trackingParamName": "url_from", "disclosureName": "SHEIN", "searchAdapter": "sovrn", "searchStatus": "pending"},
-    {"name": "Fashion Nova", "trackingID": "PENDING-APPROVAL", "trackingParamName": "utm_source", "disclosureName": "Fashion Nova", "searchAdapter": "sovrn", "searchStatus": "pending"},
-    {"name": "Foot Locker", "trackingID": "PENDING-APPROVAL", "trackingParamName": "SID", "disclosureName": "Foot Locker", "searchAdapter": "cj", "searchStatus": "pending"},
-    {"name": "DICK'S Sporting Goods", "trackingID": "PENDING-APPROVAL", "trackingParamName": "camp", "disclosureName": "DICK'S Sporting Goods", "searchAdapter": "impact", "searchStatus": "pending"},
-    {"name": "Sephora", "trackingID": "PENDING-APPROVAL", "trackingParamName": "om_mmc", "disclosureName": "Sephora", "searchAdapter": "rakuten", "searchStatus": "pending"},
-    {"name": "Ulta", "trackingID": "PENDING-APPROVAL", "trackingParamName": "utm_source", "disclosureName": "Ulta", "searchAdapter": "impact", "searchStatus": "pending"}
+    {"name": "Nike", "trackingID": "", "trackingParamName": "stylematch_affiliate", "disclosureName": "Nike", "searchAdapter": "cj", "searchStatus": "pending"},
+    {"name": "Macy's", "trackingID": "", "trackingParamName": "stylematch_affiliate", "disclosureName": "Macy's", "searchAdapter": "cj", "searchStatus": "pending"},
+    {"name": "Best Buy", "trackingID": "", "trackingParamName": "irclickid", "disclosureName": "Best Buy", "searchAdapter": "bestbuy", "searchStatus": "pending"},
+    {"name": "Amazon", "trackingID": "", "trackingParamName": "tag", "disclosureName": "Amazon", "searchAdapter": "amazon", "searchStatus": "pending"},
+    {"name": "Nordstrom", "trackingID": "", "trackingParamName": "utm_source", "disclosureName": "Nordstrom", "searchAdapter": "rakuten", "searchStatus": "pending"},
+    {"name": "Levi's", "trackingID": "", "trackingParamName": "camp", "disclosureName": "Levi's", "searchAdapter": "cj", "searchStatus": "pending"},
+    {"name": "Target", "trackingID": "", "trackingParamName": "clkid", "disclosureName": "Target", "searchAdapter": "impact", "searchStatus": "pending"},
+    {"name": "Walmart", "trackingID": "", "trackingParamName": "affinityOverride", "disclosureName": "Walmart", "searchAdapter": "impact", "searchStatus": "pending"},
+    {"name": "Adidas", "trackingID": "", "trackingParamName": "cm_mmc", "disclosureName": "Adidas", "searchAdapter": "rakuten", "searchStatus": "pending"},
+    {"name": "H&M", "trackingID": "", "trackingParamName": "utm_source", "disclosureName": "H&M", "searchAdapter": "sovrn", "searchStatus": "pending"},
+    {"name": "Zara", "trackingID": "", "trackingParamName": "utm_source", "disclosureName": "Zara", "searchAdapter": "sovrn", "searchStatus": "pending"},
+    {"name": "SHEIN", "trackingID": "", "trackingParamName": "url_from", "disclosureName": "SHEIN", "searchAdapter": "sovrn", "searchStatus": "pending"},
+    {"name": "Fashion Nova", "trackingID": "", "trackingParamName": "utm_source", "disclosureName": "Fashion Nova", "searchAdapter": "sovrn", "searchStatus": "pending"},
+    {"name": "Foot Locker", "trackingID": "", "trackingParamName": "SID", "disclosureName": "Foot Locker", "searchAdapter": "cj", "searchStatus": "pending"},
+    {"name": "DICK'S Sporting Goods", "trackingID": "", "trackingParamName": "camp", "disclosureName": "DICK'S Sporting Goods", "searchAdapter": "impact", "searchStatus": "pending"},
+    {"name": "Sephora", "trackingID": "", "trackingParamName": "om_mmc", "disclosureName": "Sephora", "searchAdapter": "rakuten", "searchStatus": "pending"},
+    {"name": "Ulta", "trackingID": "", "trackingParamName": "utm_source", "disclosureName": "Ulta", "searchAdapter": "impact", "searchStatus": "pending"}
   ]
 }

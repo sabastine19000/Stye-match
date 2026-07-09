@@ -4,6 +4,56 @@ import SwiftUI
 import UIKit
 #endif
 
+enum ShoppingRecommendationBasis: String, CaseIterable, Identifiable {
+    case wardrobeHistory
+    case favoriteBrands
+    case favoriteColors
+    case budget
+    case currentTrends
+    case weather
+    case calendarEvents
+
+    var id: String { rawValue }
+
+    static let defaultEnabled: [ShoppingRecommendationBasis] = [
+        .wardrobeHistory,
+        .favoriteBrands,
+        .favoriteColors,
+        .budget,
+        .currentTrends
+    ]
+
+    var title: String {
+        switch self {
+        case .wardrobeHistory: return "Wardrobe"
+        case .favoriteBrands: return "Brands"
+        case .favoriteColors: return "Colors"
+        case .budget: return "Budget"
+        case .currentTrends: return "Trends"
+        case .weather: return "Weather"
+        case .calendarEvents: return "Calendar"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .wardrobeHistory: return "tshirt.fill"
+        case .favoriteBrands: return "tag.fill"
+        case .favoriteColors: return "paintpalette.fill"
+        case .budget: return "dollarsign.circle.fill"
+        case .currentTrends: return "flame.fill"
+        case .weather: return "cloud.sun.fill"
+        case .calendarEvents: return "calendar"
+        }
+    }
+}
+
+private struct RecommendationRationaleSheet: Identifiable {
+    let id = UUID()
+    let productName: String
+    let rationale: RecommendationRationale
+}
+
 struct ShoppingView: View {
     @Binding var selectedTab: AppTab
     @State private var products: [AffiliateProduct] = []
@@ -17,19 +67,26 @@ struct ShoppingView: View {
     @State private var selectedCategory: ProductCategory? = nil
     @State private var searchCriteria = ShoppingSearchCriteria()
     @State private var selectedProduct: AffiliateProduct?
-    @State private var showDisclosure = false
+    @State private var showExpandedDisclosure = false
+    @State private var selectedRationaleSheet: RecommendationRationaleSheet?
+    @State private var showRecommendationPreferences = false
+    @State private var recommendationBasis: Set<ShoppingRecommendationBasis> = Set(ShoppingRecommendationBasis.defaultEnabled)
     @State private var isLoading = true
     @State private var isSearchingLive = false
     @State private var loadError: String?
+    @StateObject private var profileStore = ProfileStore()
+    @StateObject private var outfitMemoryStore = OutfitMemoryStore()
 
     private let store = ShoppingLocalStore()
+    private let companionRecommender = CatalogProductComplementaryPieceRecommender()
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    disclosureBanner
+                    disclosureSummary
                     alertControls
+                    recommendationBasisControls
                     NavigationLink {
                         StoreSearchView()
                     } label: {
@@ -48,12 +105,13 @@ struct ShoppingView: View {
                         }
 
                         if !recommendations.isEmpty {
-                            sectionTitle("For You")
+                            sectionTitle(recommendationSectionTitle)
                             LazyVStack(spacing: 12) {
                                 ForEach(recommendations) { recommendation in
                                     productCard(
                                         product: recommendation.product,
-                                        reason: recommendation.reasonFacts.oneLineReason
+                                        reasonFacts: recommendation.reasonFacts,
+                                        rank: recommendation.rank
                                     )
                                 }
                             }
@@ -69,7 +127,7 @@ struct ShoppingView: View {
                         categoryChips
                         LazyVStack(spacing: 12) {
                             ForEach(searchResults) { product in
-                                productCard(product: product, reason: nil)
+                                productCard(product: product, reasonFacts: nil, rank: nil)
                             }
                         }
                         if searchResults.isEmpty, !products.isEmpty {
@@ -92,6 +150,13 @@ struct ShoppingView: View {
                         Label("Back", systemImage: "chevron.left")
                     }
                     .accessibilityLabel("Back to Home")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showRecommendationPreferences = true
+                    } label: {
+                        Label("Recommendation preferences", systemImage: "gearshape")
+                    }
                 }
             }
             .appScreenBackground(.shop)
@@ -120,13 +185,19 @@ struct ShoppingView: View {
                     selectProduct(productID: productID)
                 }
             }
-            .sheet(isPresented: $showDisclosure) {
+            .sheet(item: $selectedRationaleSheet) { sheet in
+                recommendationReasonSheet(sheet)
+            }
+            .sheet(isPresented: $showRecommendationPreferences) {
+                recommendationPreferencesSheet
+            }
+            .sheet(isPresented: $showExpandedDisclosure) {
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 16) {
-                        Text("Affiliate Disclosure")
+                        Text("Shopping through StyleMatch Pro")
                             .font(.title2)
                             .fontWeight(.bold)
-                        Text("StyleMatch Pro may earn a commission when you buy through retailer links in this app. StyleMatch Pro is not the seller. Checkout, fulfillment, shipping, refunds, returns, and customer service are handled by the retailer.")
+                        Text("We may earn a small commission from qualifying purchases at no extra cost to you. Orders are completed securely with the retailer.")
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -134,29 +205,74 @@ struct ShoppingView: View {
                     .navigationTitle("Disclosure")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { showDisclosure = false }
+                            Button("Done") {
+                                store.affiliateDisclosureExpanded = false
+                                showExpandedDisclosure = false
+                            }
                         }
                     }
                 }
             }
+            .onAppear {
+                showExpandedDisclosure = store.affiliateDisclosureExpanded
+                recommendationBasis = Set(basis(from: RecommendationRationaleBuilder.preferences(from: profileStore.currentProfile)))
+            }
         }
     }
 
-    private var disclosureBanner: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "info.circle.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("StyleMatch Pro may earn a commission when you buy through these links. All purchases are completed with the retailer.")
-                    .font(.footnote)
+    private var disclosureSummary: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Shopping through StyleMatch Pro")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                store.affiliateDisclosureExpanded = true
+                showExpandedDisclosure = true
+            } label: {
+                Text("Learn more")
+                    .font(.caption)
                     .fontWeight(.semibold)
-                Button("How affiliate shopping works") {
-                    showDisclosure = true
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Affiliate disclosure")
+            Spacer()
+        }
+        .lineLimit(1)
+    }
+
+    private var recommendationBasisControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Recommendations")
+                .font(.subheadline)
+                .fontWeight(.bold)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(ShoppingRecommendationBasis.allCases) { basis in
+                        Button {
+                            if recommendationBasis.contains(basis) {
+                                recommendationBasis.remove(basis)
+                            } else {
+                                recommendationBasis.insert(basis)
+                            }
+                            persistRecommendationPreferences()
+                        } label: {
+                            Label(basis.title, systemImage: basis.icon)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 7)
+                                .background(recommendationBasis.contains(basis) ? Color.orange.opacity(0.22) : Color(.secondarySystemBackground))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .font(.footnote)
             }
         }
-        .padding()
+        .padding(12)
         .appCard(.shop, radius: 10)
     }
 
@@ -356,7 +472,11 @@ struct ShoppingView: View {
     private var searchResults: [AffiliateProduct] {
         var criteria = searchCriteria
         criteria.category = selectedCategory
-        return ShoppingSearchEngine.filter(products: liveSearchProducts ?? products, criteria: criteria)
+        return ShoppingSearchEngine.filter(products: budgetFiltered(liveSearchProducts ?? products), criteria: criteria)
+    }
+
+    private var recommendationSectionTitle: String {
+        recommendations.allSatisfy { rationale(for: $0.product, reasonFacts: $0.reasonFacts).isTrendingFallback } ? "Trending Now" : "For You"
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -409,8 +529,11 @@ struct ShoppingView: View {
         )
     }
 
-    private func productCard(product: AffiliateProduct, reason: String?) -> some View {
-        let viewModel = AffiliateProductViewModel(product: product, reasonText: reason)
+    private func productCard(product: AffiliateProduct, reasonFacts: ProductRecommendationReasonFacts?, rank: Int?) -> some View {
+        let rationale = rationale(for: product, reasonFacts: reasonFacts)
+        let reason = rationale.headline
+        let matchPercent = matchPercent(for: rank, hasReason: !rationale.isTrendingFallback)
+        let viewModel = AffiliateProductViewModel(product: product, reasonText: reason, matchPercent: matchPercent)
         return VStack(alignment: .leading, spacing: 10) {
             Button {
                 selectedProduct = product
@@ -437,6 +560,15 @@ struct ShoppingView: View {
                                 .font(.headline)
                                 .lineLimit(2)
                             Spacer()
+                            if let matchText = viewModel.matchText {
+                                Text(matchText)
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 4)
+                                    .background(Color.green.opacity(0.16))
+                                    .clipShape(Capsule())
+                            }
                             Text(viewModel.retailerName)
                                 .font(.caption)
                                 .fontWeight(.bold)
@@ -481,12 +613,13 @@ struct ShoppingView: View {
                         }
                         }
 
-                        if let reason {
+                        if !reason.isEmpty {
                             Text(reason)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                                .lineLimit(3)
                         }
+                        productMetadata(viewModel)
                         if let footnote = viewModel.footnote {
                             Text(footnote)
                                 .font(.caption2)
@@ -496,6 +629,10 @@ struct ShoppingView: View {
                 }
             }
             .buttonStyle(.plain)
+
+            whyRecommendationButton(product: product, rationale: rationale)
+
+            completeTheLookSection(for: product)
 
             HStack(spacing: 8) {
                 productActionButton(
@@ -536,6 +673,83 @@ struct ShoppingView: View {
         .appCard(.shop, radius: 10)
     }
 
+    private func productMetadata(_ viewModel: AffiliateProductViewModel) -> some View {
+        let values = [
+            viewModel.saleCountdownText,
+            viewModel.availableSizesText,
+            viewModel.availableColorsText,
+            viewModel.ratingText,
+            viewModel.shippingText
+        ].compactMap { $0 }
+
+        return Group {
+            if !values.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(values, id: \.self) { value in
+                        Text(value)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func whyRecommendationButton(product: AffiliateProduct, rationale: RecommendationRationale) -> some View {
+        Button {
+            selectedRationaleSheet = RecommendationRationaleSheet(productName: product.name, rationale: rationale)
+        } label: {
+            Label("Why this recommendation?", systemImage: "checkmark.circle")
+                .font(.caption)
+                .fontWeight(.semibold)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func completeTheLookSection(for product: AffiliateProduct) -> some View {
+        let suggestions = companionRecommender.companions(for: product, catalog: budgetFiltered(products), limit: 6)
+        return Group {
+            if suggestions.count >= 2 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Complete the Look")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(suggestions) { suggestion in
+                                Button {
+                                    selectedProduct = suggestion
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(suggestion.name)
+                                            .font(.caption2)
+                                            .fontWeight(.semibold)
+                                            .lineLimit(2)
+                                        Text(rationale(for: suggestion, reasonFacts: nil).headline)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                    }
+                                    .frame(width: 150, alignment: .leading)
+                                    .padding(8)
+                                    .background(Color(.secondarySystemBackground))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func matchPercent(for rank: Int?, hasReason: Bool) -> Int? {
+        guard hasReason else { return nil }
+        let rank = rank ?? 50
+        return max(72, min(98, 72 + rank / 4))
+    }
+
     private func productActionButton(title: String, systemImage: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
@@ -549,6 +763,159 @@ struct ShoppingView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(title)
+    }
+
+    private func recommendationReasonSheet(_ sheet: RecommendationRationaleSheet) -> some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(sheet.productName)
+                    .font(.headline)
+                Text(sheet.rationale.headline)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if sheet.rationale.reasons.isEmpty {
+                        Label("Trending with shoppers this week", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline)
+                    } else {
+                        ForEach(sheet.rationale.reasons, id: \.self) { reason in
+                            Label(reason.displayText, systemImage: "checkmark.circle.fill")
+                                .font(.subheadline)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Why this recommendation?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        selectedRationaleSheet = nil
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var recommendationPreferencesSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    preferenceToggle(.wardrobeHistory, detail: "Use saved scans and closet history.")
+                    preferenceToggle(.favoriteBrands, detail: "Favor brands you save or prefer.")
+                    preferenceToggle(.favoriteColors, detail: "Lean into colors you wear often.")
+                    preferenceToggle(.budget, detail: "Filter catalog picks by your saved budget.")
+                    preferenceToggle(.currentTrends, detail: "Use popular catalog picks when your wardrobe history is limited.")
+                    preferenceToggle(.weather, detail: "Prepare shopping suggestions for weather-aware outfit planning.")
+                    preferenceToggle(.calendarEvents, detail: "Prepare shopping suggestions for upcoming occasions when calendar access is enabled.")
+                } footer: {
+                    Text("Weather and calendar suggestions only use those signals after you enable the related app permissions.")
+                    // FUTURE: Add weather and calendar recommendation controls when those permissions exist.
+                }
+            }
+            .navigationTitle("Recommendations")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        showRecommendationPreferences = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func preferenceToggle(_ basis: ShoppingRecommendationBasis, detail: String) -> some View {
+        Toggle(isOn: Binding(
+            get: { recommendationBasis.contains(basis) },
+            set: { enabled in
+                if enabled {
+                    recommendationBasis.insert(basis)
+                } else {
+                    recommendationBasis.remove(basis)
+                }
+                persistRecommendationPreferences()
+                reloadRecommendations()
+            }
+        )) {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(basis.title, systemImage: basis.icon)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func rationale(for product: AffiliateProduct, reasonFacts: ProductRecommendationReasonFacts?) -> RecommendationRationale {
+        RecommendationRationaleBuilder.build(
+            for: product,
+            reasonFacts: reasonFacts,
+            profile: profileStore.currentProfile,
+            memories: outfitMemoryStore.memories,
+            savedFavorites: products.filter { store.savedFavorites.contains($0.id) },
+            favoriteProductIDs: Set(store.savedFavorites),
+            preferences: currentRecommendationPreferences()
+        )
+    }
+
+    private func currentRecommendationPreferences() -> ShoppingRecommendationPreferences {
+        ShoppingRecommendationPreferences(
+            usesWardrobeHistory: recommendationBasis.contains(.wardrobeHistory),
+            usesFavoriteBrands: recommendationBasis.contains(.favoriteBrands),
+            usesFavoriteColors: recommendationBasis.contains(.favoriteColors),
+            usesBudgetRange: recommendationBasis.contains(.budget),
+            usesCurrentTrends: recommendationBasis.contains(.currentTrends),
+            usesWeather: recommendationBasis.contains(.weather),
+            usesCalendarEvents: recommendationBasis.contains(.calendarEvents)
+        )
+    }
+
+    private func basis(from preferences: ShoppingRecommendationPreferences) -> [ShoppingRecommendationBasis] {
+        var output: [ShoppingRecommendationBasis] = []
+        if preferences.usesWardrobeHistory { output.append(.wardrobeHistory) }
+        if preferences.usesFavoriteBrands { output.append(.favoriteBrands) }
+        if preferences.usesFavoriteColors { output.append(.favoriteColors) }
+        if preferences.usesBudgetRange { output.append(.budget) }
+        if preferences.usesCurrentTrends { output.append(.currentTrends) }
+        if preferences.usesWeather { output.append(.weather) }
+        if preferences.usesCalendarEvents { output.append(.calendarEvents) }
+        return output
+    }
+
+    private func persistRecommendationPreferences() {
+        var profile = profileStore.currentProfile
+        RecommendationRationaleBuilder.apply(currentRecommendationPreferences(), to: &profile)
+        profileStore.currentProfile = profile
+        profileStore.save()
+    }
+
+    private func budgetFiltered(_ catalog: [AffiliateProduct]) -> [AffiliateProduct] {
+        RecommendationRationaleBuilder.budgetFiltered(
+            catalog,
+            profile: profileStore.currentProfile,
+            preferences: currentRecommendationPreferences()
+        )
+    }
+
+    private func reloadRecommendations() {
+        let ranked = ShoppingRecommendationEngine.recommendations(
+            currentGarments: [],
+            currentColors: [],
+            memories: currentRecommendationPreferences().usesWardrobeHistory ? outfitMemoryStore.memories : [],
+            weather: nil,
+            catalog: budgetFiltered(products),
+            dismissedProductIDs: store.dismissedProductIDs,
+            recentlyViewedProductIDs: store.recentlyViewedProductIDs
+        )
+        recommendations = ranked.isEmpty
+            ? ShoppingRecommendationEngine.popularFallbackRecommendations(catalog: budgetFiltered(products))
+            : ranked
     }
 
     private func retryState(_ message: String) -> some View {
@@ -571,10 +938,10 @@ struct ShoppingView: View {
         loadError = nil
         do {
             let provider: ProductCatalogProvider
-            if FeatureFlags.remoteCatalogEnabled,
-               let remoteURL = URL(string: "https://example.com/stylematch/ProductCatalog.json") {
+            let config = (try? BundledShoppingIntegrationConfigProvider().config()) ?? .empty
+            if FeatureFlags.remoteCatalogEnabled, let remoteURL = config.catalogBaseURL {
                 provider = RemoteCatalogProvider(
-                    catalogURL: remoteURL,
+                    baseURL: remoteURL,
                     cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
                     fallbackProvider: BundledCatalogProvider()
                 )
@@ -586,17 +953,26 @@ struct ShoppingView: View {
             async let loadedStores = BundledStoreDirectoryProvider().stores()
             let loaded = try await loadedProducts
             let stores = (try? await loadedStores) ?? []
+            let preferences = await MainActor.run { currentRecommendationPreferences() }
+            let eligibleCatalog = RecommendationRationaleBuilder.budgetFiltered(
+                loaded,
+                profile: await MainActor.run { profileStore.currentProfile },
+                preferences: preferences
+            )
             let ranked = ShoppingRecommendationEngine.recommendations(
                 currentGarments: [],
                 currentColors: [],
-                memories: OutfitMemoryStore().memories,
+                memories: preferences.usesWardrobeHistory ? await MainActor.run { outfitMemoryStore.memories } : [],
                 weather: nil,
-                catalog: loaded,
+                catalog: eligibleCatalog,
                 dismissedProductIDs: store.dismissedProductIDs,
                 recentlyViewedProductIDs: store.recentlyViewedProductIDs
             )
+            let visibleRecommendations = ranked.isEmpty
+                ? ShoppingRecommendationEngine.popularFallbackRecommendations(catalog: eligibleCatalog)
+                : ranked
             #if DEBUG
-            ranked.forEach { _ = PersonalizationContextBuilder.buildShoppingRecommendationPromptContext($0.reasonFacts) }
+            visibleRecommendations.forEach { _ = PersonalizationContextBuilder.buildShoppingRecommendationPromptContext($0.reasonFacts) }
             #endif
             let alertList = makeSaleAlerts(from: loaded)
             let watcher = SaleWatcher(catalogProvider: provider)
@@ -604,8 +980,9 @@ struct ShoppingView: View {
             await MainActor.run {
                 products = loaded
                 supportedStores = stores
-                recommendations = ranked
+                recommendations = visibleRecommendations
                 alertsEnabled = store.saleNotificationsEnabled
+                showExpandedDisclosure = store.affiliateDisclosureExpanded
                 saleAlerts = alertList
                 favoriteSaleEvents = favoriteSales
                 isLoading = false

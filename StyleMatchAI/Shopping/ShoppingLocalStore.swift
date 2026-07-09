@@ -14,6 +14,8 @@ struct ShoppingLocalStore {
     static let saleNotificationHistoryBaseKey = "shoppingSaleNotificationHistory"
     static let recentSaleEventsBaseKey = "shoppingRecentSaleEvents"
     static let viewedSaleEventIDsBaseKey = "shoppingViewedSaleEventIDs"
+    static let affiliateDisclosureExpandedBaseKey = "shoppingAffiliateDisclosureExpanded"
+    static let affiliateDisclosureSeenExpandedBaseKey = "shoppingAffiliateDisclosureSeenExpanded"
 
     let defaults: UserDefaults
     let userID: String
@@ -60,6 +62,19 @@ struct ShoppingLocalStore {
             return defaults.bool(forKey: scoped)
         }
         nonmutating set { defaults.set(newValue, forKey: key(Self.saleNotificationsEnabledBaseKey)) }
+    }
+
+    var affiliateDisclosureExpanded: Bool {
+        get {
+            let seenKey = key(Self.affiliateDisclosureSeenExpandedBaseKey)
+            let expandedKey = key(Self.affiliateDisclosureExpandedBaseKey)
+            guard defaults.object(forKey: seenKey) != nil else { return false }
+            return defaults.bool(forKey: expandedKey)
+        }
+        nonmutating set {
+            defaults.set(true, forKey: key(Self.affiliateDisclosureSeenExpandedBaseKey))
+            defaults.set(newValue, forKey: key(Self.affiliateDisclosureExpandedBaseKey))
+        }
     }
 
     var saleStateSnapshots: [String: ShoppingSaleStateSnapshot] {
@@ -152,6 +167,8 @@ struct ShoppingLocalStore {
         defaults.removeObject(forKey: key(Self.saleNotificationHistoryBaseKey))
         defaults.removeObject(forKey: key(Self.recentSaleEventsBaseKey))
         defaults.removeObject(forKey: key(Self.viewedSaleEventIDsBaseKey))
+        defaults.removeObject(forKey: key(Self.affiliateDisclosureExpandedBaseKey))
+        defaults.removeObject(forKey: key(Self.affiliateDisclosureSeenExpandedBaseKey))
     }
 
     static func deleteShoppingData(for userID: String, defaults: UserDefaults = .standard) {

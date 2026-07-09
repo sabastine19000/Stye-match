@@ -300,9 +300,10 @@ enum ShoppingSaleAlertService {
 
     private static func outfitPhrase(garments: [String], colors: [String]) -> String {
         let pieces = garments.enumerated().map { index, garment in
-            let item = clean(garment)
+            guard let item = DisplayLabelSanitizer.displayName(for: clean(garment)) else { return "" }
             let color = index < colors.count ? clean(colors[index]) : ""
-            return color.isEmpty || item.localizedCaseInsensitiveContains(color) ? item : "\(color) \(item)"
+            let safeColor = DisplayLabelSanitizer.safeColorName(color)
+            return safeColor == nil || item.localizedCaseInsensitiveContains(safeColor ?? "") ? item : "\(safeColor ?? "") \(item)"
         }.filter { !$0.isEmpty }
         if pieces.isEmpty { return "a past outfit" }
         if pieces.count == 1 { return pieces[0] }
