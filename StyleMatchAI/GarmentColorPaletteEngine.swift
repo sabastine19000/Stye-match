@@ -48,10 +48,15 @@ enum GarmentMaskTier: String, Codable, CaseIterable {
     case foregroundSubject
     case personSegmentation
     case saliencyCrop
-    case fullImageFallback
+    case couldNotIsolateGarment
 
     var maskingApplied: Bool {
-        self != .fullImageFallback
+        switch self {
+        case .foregroundSubject, .personSegmentation, .saliencyCrop:
+            return true
+        case .couldNotIsolateGarment:
+            return false
+        }
     }
 }
 
@@ -73,14 +78,14 @@ struct GarmentRegionMask: Equatable {
         self.tier = tier
     }
 
-    static func fullImage(width: Int, height: Int) -> GarmentRegionMask {
+    static func couldNotIsolate(width: Int, height: Int) -> GarmentRegionMask {
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
         return GarmentRegionMask(
             width: safeWidth,
             height: safeHeight,
-            included: Array(repeating: true, count: safeWidth * safeHeight),
-            tier: .fullImageFallback
+            included: Array(repeating: false, count: safeWidth * safeHeight),
+            tier: .couldNotIsolateGarment
         )
     }
 
@@ -134,31 +139,35 @@ enum GarmentRegionMasker {
         minimumIncludedPixels: Int = minimumMaskedPixelCount,
         foregroundSubject: @escaping MaskAttempt,
         personSegmentation: @escaping MaskAttempt,
-        saliencyCrop: @escaping MaskAttempt,
-        fullImageFallback: () -> GarmentRegionMask = { GarmentRegionMask.fullImage(width: 1, height: 1) }
+        saliencyCrop: @escaping MaskAttempt
     ) -> GarmentRegionMask {
-        let attempts: [MaskAttempt] = [
-            foregroundSubject,
-            personSegmentation,
-            saliencyCrop
+        let attempts: [(GarmentMaskTier, MaskAttempt)] = [
+            (.foregroundSubject, foregroundSubject),
+            (.personSegmentation, personSegmentation),
+            (.saliencyCrop, saliencyCrop)
         ]
 
-        for attempt in attempts {
+        for (tier, attempt) in attempts {
             do {
                 if let mask = try attempt(),
                    mask.includedCount >= minimumIncludedPixels {
+                    #if DEBUG
+                    print("[StyleMatch Color Debug] maskTier=\(tier.rawValue) succeeded with \(mask.includedCount) included pixels.")
+                    #endif
                     return mask
                 }
             } catch {
+                #if DEBUG
+                print("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed: \(error.localizedDescription)")
+                #endif
                 continue
             }
         }
 
-        let fallback = fullImageFallback()
-        if fallback.width == width, fallback.height == height {
-            return fallback
-        }
-        return GarmentRegionMask.fullImage(width: width, height: height)
+        #if DEBUG
+        print("[StyleMatch Color Debug] all garment mask tiers failed; returning couldNotIsolateGarment.")
+        #endif
+        return GarmentRegionMask.couldNotIsolate(width: width, height: height)
     }
 }
 

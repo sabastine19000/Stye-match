@@ -34,7 +34,7 @@ struct ScanView: View {
     @AppStorage("liveWeatherUpdatedAt") private var liveWeatherUpdatedAt = 0.0
     @AppStorage("openAIModel") private var openAIModel = "gpt-4o-mini"
     @AppStorage("shareAppContextWithChatGPT") private var shareAppContextWithChatGPT = true
-    @AppStorage(VoiceAssistantSettings.enabledKey) private var voiceAssistantEnabled = false
+    @AppStorage(VoiceAssistantSettings.enabledKey) private var voiceAssistantEnabled = VoiceAssistantSettings.defaultEnabled
     @AppStorage("profileName") private var profileName = ""
     @AppStorage("shoppingBudget") private var budget = "$50 - $200"
     @AppStorage("favoriteBrands") private var favoriteBrands = "Ralph Lauren, Nike, Levi's"
@@ -76,12 +76,9 @@ struct ScanView: View {
     @State private var scanAIInput = ""
     @State private var scanAIChatMessages: [ScanAIChatMessage] = []
     @State private var isScanAIThinking = false
-    @State private var dismissedFeedbackSignatures = Set<String>()
-    @State private var feedbackAwaitingLikeSignatures = Set<String>()
-    @State private var feedbackReasonSignatures = Set<String>()
     @State private var selectedScanOccasion: Occasion = .general
     @State private var dismissedFormalityMismatchSignatures = Set<String>()
-    @StateObject private var voiceAssistant = VoiceAssistantService()
+    @StateObject private var voiceAssistant = VoiceStylistService()
     
     private var activeTheme: StyleMatchAppTheme {
         StyleMatchAppTheme(rawValue: selectedAppTheme) ?? .system
@@ -161,8 +158,7 @@ struct ScanView: View {
             labels: labels,
             colorPalette: resolvedColorPalette,
             detectedItems: detectedItems,
-            styleCategory: resolvedStyleCategory,
-            occasionFit: noveltyStyle?.occasionCategory ?? purposeStyle?.occasionCategory ?? culturalStyle?.occasionCategory ?? plannedOccasionSummary(environment: environment)
+            styleCategory: resolvedStyleCategory
         ).breakdown
 
         return OutfitAnalysisResult(
@@ -548,6 +544,9 @@ struct ScanView: View {
             scanAIChatMessages.removeAll()
             startResultAnimation(to: score)
         }
+        .onDisappear {
+            voiceAssistant.stop()
+        }
         .onReceive(Timer.publish(every: 2.8, on: .main, in: .common).autoconnect()) { _ in
             guard selectedUIImage == nil, !scannerExamples.isEmpty else {
                 return
@@ -802,7 +801,7 @@ struct ScanView: View {
 
     private var scanOccasionSelector: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Occasion")
+            Text("What's this for?")
                 .font(.caption)
                 .fontWeight(.bold)
                 .foregroundStyle(scanMuted)
@@ -1327,6 +1326,8 @@ struct ScanView: View {
                 highScoreCelebrationCard(result)
             }
 
+            scanResultOccasionPicker(for: result)
+
             if !result.chatGPTStylistSections.isEmpty {
                 chatGPTStylistSectionsCard(result.chatGPTStylistSections, darkMode: true)
             }
@@ -1376,6 +1377,82 @@ struct ScanView: View {
                 .stroke(scanPanelBorder, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func scanResultOccasionPicker(for result: OutfitAnalysisResult) -> some View {
+        let current = matchingOutfitMemory(for: result)?.occasion ?? currentScanOccasionForContext
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Occasion", systemImage: "calendar")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanMuted)
+
+                Spacer()
+
+                Text(current?.displayName ?? "Not tagged")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(scanMuted)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button {
+                        updateOccasion(nil, for: result)
+                    } label: {
+                        Text("Skip")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.vertical, 7)
+                            .padding(.horizontal, 10)
+                            .foregroundStyle(current == nil ? scanBackground : scanMuted)
+                            .background(current == nil ? scanCream : scanBackground.opacity(0.32))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(Occasion.allCases.filter(\.isSpecified), id: \.self) { occasion in
+                        Button {
+                            updateOccasion(occasion, for: result)
+                        } label: {
+                            Text(occasion.displayName)
+                                .font(.caption2)
+                                .fontWeight(.bold)
+                                .lineLimit(1)
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 10)
+                                .foregroundStyle(current == occasion ? scanBackground : scanCream)
+                                .background(current == occasion ? scanCream : scanBackground.opacity(0.32))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(scanCream.opacity(current == occasion ? 0 : 0.24), lineWidth: 1)
+                                )
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(scanBackground.opacity(0.36))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func updateOccasion(_ occasion: Occasion?, for result: OutfitAnalysisResult) {
+        let store = OutfitMemoryStore()
+        let memory = ensureOutfitMemory(for: result, store: store)
+        store.updateOccasion(for: memory.id, occasion: occasion)
+        selectedScanOccasion = occasion ?? .general
+        scanMessage = ScanMessage(
+            title: occasion == nil ? "Occasion cleared" : "Occasion saved",
+            description: occasion.map { "This scan is now tagged for \($0.displayName)." } ?? "This scan no longer has an occasion tag.",
+            icon: "calendar",
+            isSuccess: true
+        )
     }
 
     private func voiceAssistantButton(for result: OutfitAnalysisResult, darkMode: Bool) -> some View {
@@ -1661,7 +1738,7 @@ struct ScanView: View {
     private func formalityMismatch(for result: OutfitAnalysisResult) -> FormalityMismatch? {
         guard let mismatch = FormalityMismatchEvaluator.evaluate(
             detectedStyle: detectedStyleTitle(for: result),
-            occasion: selectedScanOccasion
+            occasion: selectedScanOccasion.canonical
         ) else {
             return nil
         }
@@ -1967,7 +2044,37 @@ struct ScanView: View {
             return "Loungewear"
         }
 
+        if let contextualCategory = contextualSleepwearSetCategory(from: text) {
+            return contextualCategory
+        }
+
         return nil
+    }
+
+    private func contextualSleepwearSetCategory(from text: String) -> String? {
+        let homeOrYouthSignals = [
+            "bedroom", "bed", "blanket", "pillow", "home", "house", "indoor",
+            "child", "kid", "girl", "boy", "children", "youth", "toy"
+        ].filter { text.contains($0) }.count
+        let matchingSetSignals = [
+            "matching set", "coordinated set", "two-piece", "two piece",
+            "matching top and bottom", "top and bottom", "matching outfit",
+            "shirt and pants set", "pants set"
+        ].filter { text.contains($0) }.count
+        let comfortPatternSignals = [
+            "stripe", "striped", "red and white", "pink and white", "pink red",
+            "pastel", "soft", "loose", "barefoot"
+        ].filter { text.contains($0) }.count
+
+        guard homeOrYouthSignals > 0, matchingSetSignals > 0, comfortPatternSignals > 0 else {
+            return nil
+        }
+
+        if ["child", "kid", "girl", "boy", "children", "youth", "toy"].contains(where: { text.contains($0) }) {
+            return "Children's Sleepwear"
+        }
+
+        return "Sleepwear"
     }
 
     private func chatGPTStylistSectionsCard(_ sections: [ChatGPTStylistSection], darkMode: Bool) -> some View {
@@ -2581,7 +2688,8 @@ struct ScanView: View {
         let personalStylistMemorySection = PersonalizationContextBuilder.promptSection(
             title: "PERSONAL STYLIST MEMORY (read-only design personalization context; do not create or change scan scores)",
             profile: stylistProfile,
-            recentMemories: outfitMemories
+            recentMemories: outfitMemories,
+            currentOccasion: currentScanOccasionForContext
         )
 
         return """
@@ -3621,6 +3729,8 @@ struct ScanView: View {
                 .overlay(scanPanelBorder)
 
             if !isEditingScanHistory {
+                savedScanOccasionRow(scan)
+
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     scanHistoryActionButton(title: "Open", icon: "folder") {
                         openSavedScan(scan, scrollProxy: scrollProxy)
@@ -3713,6 +3823,46 @@ struct ScanView: View {
             }
             .tint(.orange)
         }
+    }
+
+    private func savedScanOccasionRow(_ scan: RecentOutfitScore) -> some View {
+        Menu {
+            Button("Clear occasion") {
+                updateSavedScanOccasion(nil, for: scan)
+            }
+
+            ForEach(Occasion.allCases.filter(\.isSpecified), id: \.self) { occasion in
+                Button(occasion.displayName) {
+                    updateSavedScanOccasion(occasion, for: scan)
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Label("Occasion", systemImage: "calendar")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+
+                Spacer()
+
+                Text(scan.occasionText ?? "Add tag")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(scan.occasionText == nil ? scanMuted : scanCream.opacity(0.9))
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanMuted)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(scanBackground.opacity(0.38))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Adds or changes the occasion tag for this saved scan.")
     }
 
     private func scanHistoryActionButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -3825,6 +3975,19 @@ struct ScanView: View {
         }
     }
 
+    private func updateSavedScanOccasion(_ occasion: Occasion?, for scan: RecentOutfitScore) {
+        var history = loadScanHistory()
+        guard var stored = history[scan.id] else {
+            updateOccasion(occasion, for: scan.analysis)
+            return
+        }
+
+        stored.occasion = occasion?.canonical
+        history[scan.id] = stored
+        saveScanHistory(history)
+        updateOccasion(occasion, for: scan.analysis)
+    }
+
     private func compareSavedScan(_ scan: RecentOutfitScore) {
         guard let currentScore = result?.score else {
             result = scan.analysis
@@ -3875,7 +4038,7 @@ struct ScanView: View {
             colors: analysis.colorPalette,
             detectedStyle: detectedStyleTitle(for: analysis),
             styleScore: analysis.score,
-            occasion: selectedScanOccasion,
+            occasion: selectedScanOccasion.canonical,
             wasWorn: nil,
             wasLiked: nil,
             feedbackTimestamp: nil,
@@ -3889,36 +4052,6 @@ struct ScanView: View {
         store.addOrMergeScan(memory)
         ProfileStore().updateProfile(from: memory)
         return memory
-    }
-
-    private func recordOutfitFeedback(
-        for analysis: OutfitAnalysisResult,
-        wasWorn: Bool?,
-        wasLiked: Bool?,
-        wouldWearAgain: Bool?,
-        dislikeReason: String? = nil
-    ) {
-        guard let wasWorn else {
-            return
-        }
-
-        let store = OutfitMemoryStore()
-        let memory = ensureOutfitMemory(for: analysis, store: store)
-        store.updateFeedback(
-            for: memory.id,
-            wasWorn: wasWorn,
-            wasLiked: wasLiked,
-            dislikeReason: dislikeReason
-        )
-        feedbackAwaitingLikeSignatures.remove(outfitMemorySignature(for: analysis))
-        feedbackReasonSignatures.remove(outfitMemorySignature(for: analysis))
-
-        scanMessage = ScanMessage(
-            title: "Feedback saved",
-            description: "Style Match Pro will use this feedback in future personal stylist recommendations.",
-            icon: "checkmark.circle",
-            isSuccess: true
-        )
     }
 
     private func outfitMemorySignature(for analysis: OutfitAnalysisResult) -> String {
@@ -4290,11 +4423,26 @@ struct ScanView: View {
     }
 
     private func activeScanOccasionText(environment: String) -> String {
-        if selectedScanOccasion != .general {
-            return selectedScanOccasion.displayName
+        if let selected = selectedScanOccasion.canonical {
+            return selected.displayName
         }
 
         return plannedOccasionSummary(environment: environment)
+    }
+
+    private var currentScanOccasionForContext: Occasion? {
+        selectedScanOccasion.canonical
+    }
+
+    private func occasionHonestyInstruction(for analysis: OutfitAnalysisResult) -> String {
+        guard let mismatch = FormalityMismatchEvaluator.evaluate(
+            detectedStyle: detectedStyleTitle(for: analysis),
+            occasion: currentScanOccasionForContext
+        ) else {
+            return "- No deterministic occasion conflict was detected. Use the existing score and facts as provided."
+        }
+
+        return "- Deterministic occasion conflict: \(mismatch.message) Address this mismatch honestly and helpfully; do not praise this outfit as a strong fit for \(mismatch.occasion.displayName) unless the provided facts support that."
     }
 
     private func cleanOptionalSize(_ value: String) -> String? {
@@ -4532,8 +4680,7 @@ struct ScanView: View {
             labels: labels,
             colorPalette: colorPalette,
             detectedItems: detectedClothingItems(from: labels),
-            styleCategory: detectedStyleCategorySignal(validation: validation, labels: labels),
-            occasionFit: plannedOccasionSummary(environment: detectedEnvironment(from: labels))
+            styleCategory: detectedStyleCategorySignal(validation: validation, labels: labels)
         )
 
         return makeAnalysisResult(
@@ -4552,11 +4699,23 @@ struct ScanView: View {
     private func validateFashionImage(_ image: UIImage) -> ScanValidation {
         let detectedAttributes = detectGarmentAttributes(for: image)
 
+        #if DEBUG
+        debugLogScanGateInputs(image: image, detectedAttributes: detectedAttributes)
+        #endif
+
         if let qualityIssue = detectedAttributes.qualityIssue {
+            #if DEBUG
+            print("[ScanGate] FAIL: imageQuality - \(qualityIssue.rawValue)")
+            print("[ScanGate] VERDICT: poorQuality(\(qualityIssue.rawValue)); thresholds: averageBrightness<35 tooDark, averageBrightness>226 tooBright, contrast<28 lowContrast, contrast<38 with image larger than 600x600 blurry")
+            #endif
             return .poorQuality(qualityIssue)
         }
 
         guard detectedAttributes.canAnalyze else {
+            #if DEBUG
+            print("[ScanGate] FAIL: analyzableSignal - labels=\(detectedAttributes.labels.count), hasHuman=\(detectedAttributes.hasHuman)")
+            print("[ScanGate] VERDICT: unknown; threshold requires qualityIssue=nil and at least one classifier label or human signal")
+            #endif
             return .unknown
         }
 
@@ -4564,6 +4723,11 @@ struct ScanView: View {
         let hasHuman = detectedAttributes.hasHuman
         let clothingConfidence = clothingConfidence(in: labels)
         let rejectedLabel = strongestRejectedLabel(in: labels)
+        let sceneMatch = clothingSceneMatch(in: labels)
+        let hasSleepwearEvidence = hasSleepwearLabelEvidence(in: labels)
+        let directClothingLabel = labels.first { label in
+            clothingTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) }
+        }
 
         if hasHuman {
             var personLabels = labels
@@ -4571,32 +4735,92 @@ struct ScanView: View {
             if clothingConfidence < 0.28 {
                 personLabels.insert(DetectedLabel(identifier: "clothing", confidence: 0.58), at: min(1, personLabels.count))
             }
+            #if DEBUG
+            print("[ScanGate] PASS: personDetection - hasHuman=true, clothingConfidence=\(String(format: "%.3f", clothingConfidence)), clothing assist threshold=0.28")
+            print("[ScanGate] VERDICT: acceptedPerson")
+            #endif
             return .acceptedPerson(Array(personLabels.prefix(12)))
         }
 
-        if let sceneMatch = clothingSceneMatch(in: labels), clothingConfidence >= 0.24 {
+        #if DEBUG
+        print("[ScanGate] FAIL: personDetection - no accepted human rectangle, face, or person-context classifier label")
+        #endif
+
+        if let sceneMatch, clothingConfidence >= 0.24 {
+            #if DEBUG
+            print("[ScanGate] PASS: clothingScene - scene=\(sceneMatch.scene.rawValue), label=\(sceneMatch.label), clothingConfidence=\(String(format: "%.3f", clothingConfidence)), threshold>=0.24")
+            print("[ScanGate] VERDICT: acceptedClothingScene(\(sceneMatch.scene.rawValue))")
+            #endif
             return .acceptedClothingScene(sceneMatch.scene, sceneMatch.label, Array(labels.prefix(12)))
         }
 
-        if hasSleepwearLabelEvidence(in: labels) {
-            if let sceneMatch = clothingSceneMatch(in: labels) {
+        #if DEBUG
+        if sceneMatch == nil {
+            print("[ScanGate] FAIL: clothingScene - no clothing label plus accepted flat-lay/display scene term")
+        } else {
+            print("[ScanGate] FAIL: clothingScene - clothingConfidence=\(String(format: "%.3f", clothingConfidence)) below threshold>=0.24 for scene=\(sceneMatch?.scene.rawValue ?? "none")")
+        }
+        #endif
+
+        if hasSleepwearEvidence {
+            if let sceneMatch {
+                #if DEBUG
+                print("[ScanGate] PASS: sleepwearScene - scene=\(sceneMatch.scene.rawValue), label=\(sceneMatch.label)")
+                print("[ScanGate] VERDICT: acceptedClothingScene(\(sceneMatch.scene.rawValue)) via sleepwear evidence")
+                #endif
                 return .acceptedClothingScene(sceneMatch.scene, sceneMatch.label, Array(labels.prefix(12)))
             }
+            #if DEBUG
+            print("[ScanGate] PASS: sleepwearEvidence - no scene required")
+            print("[ScanGate] VERDICT: acceptedClothing(Sleepwear)")
+            #endif
             return .acceptedClothing("Sleepwear", Array(labels.prefix(12)))
         }
 
-        if let clothingLabel = labels.first(where: { label in
-            clothingTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) }
-        }), clothingConfidence >= 0.30 {
+        #if DEBUG
+        print("[ScanGate] FAIL: sleepwearEvidence - no sleepwear/loungewear label evidence")
+        #endif
+
+        if let clothingLabel = directClothingLabel, clothingConfidence >= 0.30 {
+            #if DEBUG
+            print("[ScanGate] PASS: directClothing - label=\(clothingLabel.identifier), confidence=\(String(format: "%.3f", clothingLabel.confidence)), bestClothingConfidence=\(String(format: "%.3f", clothingConfidence)), threshold>=0.30")
+            print("[ScanGate] VERDICT: acceptedClothing(\(clothingLabel.identifier))")
+            #endif
             return .acceptedClothing(clothingLabel.identifier, Array(labels.prefix(12)))
         }
 
+        #if DEBUG
+        if let directClothingLabel {
+            print("[ScanGate] FAIL: directClothing - label=\(directClothingLabel.identifier), confidence=\(String(format: "%.3f", directClothingLabel.confidence)), bestClothingConfidence=\(String(format: "%.3f", clothingConfidence)) below threshold>=0.30")
+        } else {
+            print("[ScanGate] FAIL: directClothing - no classifier label matched clothing terms")
+        }
+        #endif
+
         if let rejectedLabel {
+            #if DEBUG
+            print("[ScanGate] FAIL: rejectedLabel - \(rejectedLabel), threshold>=0.32")
+            print("[ScanGate] VERDICT: rejected(\(rejectedLabel))")
+            #endif
             return .rejected(rejectedLabel)
         }
 
+        #if DEBUG
+        print("[ScanGate] VERDICT: unknown; thresholds: scene clothingConfidence>=0.24, direct clothingConfidence>=0.30, rejectedLabel>=0.32, humanOrFace confidence>0.35, personContext label>=0.18")
+        #endif
         return .unknown
     }
+
+    #if DEBUG
+    private func debugLogScanGateInputs(image: UIImage, detectedAttributes: GarmentAttributeDetection) {
+        let labelsText = detectedAttributes.labels
+            .prefix(5)
+            .map { "\($0.identifier)=\(String(format: "%.3f", $0.confidence))" }
+            .joined(separator: ", ")
+        print("[ScanGate] INPUT: size=\(Int(image.size.width))x\(Int(image.size.height)), labelsTop5=[\(labelsText)], hasHuman=\(detectedAttributes.hasHuman), qualityIssue=\(detectedAttributes.qualityIssue?.rawValue ?? "none")")
+        image.debugLogScanGateMaskDiagnostics()
+    }
+    #endif
 
     private func detectGarmentAttributes(for image: UIImage) -> GarmentAttributeDetection {
         if let qualityIssue = image.qualityIssue() {
@@ -4648,8 +4872,7 @@ struct ScanView: View {
             labels: labels,
             colorPalette: colorPalette,
             detectedItems: detectedClothingItems(from: labels),
-            styleCategory: detectedStyleCategorySignal(validation: validation, labels: labels),
-            occasionFit: plannedOccasionSummary(environment: detectedEnvironment(from: labels))
+            styleCategory: detectedStyleCategorySignal(validation: validation, labels: labels)
         )
         let analysis = makeAnalysisResult(
             score: styleScore.total,
@@ -4668,7 +4891,7 @@ struct ScanView: View {
             firstScannedAt: Date(),
             scanCount: 1,
             thumbnailData: image.scanThumbnailData(),
-            occasion: selectedScanOccasion
+            occasion: selectedScanOccasion.canonical
         )
         history[fingerprint] = storedScan
         saveScanHistory(history)
@@ -4935,9 +5158,11 @@ struct ScanView: View {
         let personalStylistMemorySection = PersonalizationContextBuilder.promptSection(
             title: "PERSONAL STYLIST MEMORY",
             profile: stylistProfile,
-            recentMemories: outfitMemories
+            recentMemories: outfitMemories,
+            currentOccasion: currentScanOccasionForContext
         )
         let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
+        let occasionHonesty = occasionHonestyInstruction(for: analysis)
 
         return """
         You are StyleMatch AI's Personal Stylist. A rules-based scoring engine has already calculated this outfit's score. Your job is ONLY to explain WHY this score was given and offer improvement advice. Do not recalculate or contradict the score.
@@ -4956,6 +5181,9 @@ struct ScanView: View {
 
         WEATHER STYLING RULES:
         \(weatherGuardrails)
+
+        OCCASION HONESTY RULES:
+        \(occasionHonesty)
 
         VISION CONFIDENCE RULES:
         - Every detected item has its own confidence in FULL STRUCTURED SCAN FACTS.
@@ -5546,7 +5774,7 @@ struct ScanView: View {
             scanCount: existing?.scanCount ?? 1,
             thumbnailData: existing?.thumbnailData ?? selectedUIImage.scanThumbnailData(),
             customTitle: existing?.customTitle,
-            occasion: existing?.occasion ?? selectedScanOccasion
+            occasion: existing?.occasion?.canonical ?? selectedScanOccasion.canonical
         )
         saveScanHistory(history)
     }
@@ -5748,8 +5976,7 @@ struct ScanView: View {
         labels: [DetectedLabel],
         colorPalette: [String],
         detectedItems: [String],
-        styleCategory: String,
-        occasionFit: String
+        styleCategory: String
     ) -> StyleScoreResult {
         let attributes = detectGarmentAttributes(
             validation: validation,
@@ -5758,26 +5985,10 @@ struct ScanView: View {
             detectedItems: detectedItems,
             styleCategory: styleCategory
         )
-        let context = StyleScoreContext(
-            occasion: plannedOccasionSummary(environment: detectedEnvironment(from: labels)),
-            weather: weatherLocationText,
-            temperature: currentWeatherTemperature.map { "\($0)°F" } ?? "unknown",
-            feelsLike: currentFeelsLikeTemperature.map { "\($0)°F" } ?? cleanWeatherFact(weatherFeelsLike),
-            humidity: cleanWeatherFact(weatherHumidity),
-            rainChance: cleanWeatherFact(weatherRainChance),
-            wind: cleanWeatherFact(weatherWindSpeed),
-            uvIndex: cleanWeatherFact(weatherUVIndex),
-            season: currentSeasonText,
-            timeOfDay: currentTimeOfDayText
-        )
         #if DEBUG
-        print("[StyleMatch Score Debug] attributes style=\(attributes.detectedStyle); colors=\(attributes.colors); patterns=\(attributes.patterns); fit=\(attributes.fitAssessment); accessories=\(attributes.accessories); occasion=\(context.occasion); occasionFit=\(occasionFit)")
+        print("[StyleMatch Score Debug] attributes style=\(attributes.detectedStyle); colors=\(attributes.colors); patterns=\(attributes.patterns); fit=\(attributes.fitAssessment); accessories=\(attributes.accessories)")
         #endif
-        let result = calculateStyleScore(
-            detectedAttributes: attributes,
-            context: context,
-            occasionFit: occasionFit
-        )
+        let result = calculateStyleScore(detectedAttributes: attributes)
         #if DEBUG
         print("[StyleMatch Score Debug] result total=\(result.total); tier=\(result.tier); breakdown=color:\(result.breakdown.colorHarmony), pattern:\(result.breakdown.patternBalance), fit:\(result.breakdown.fitQuality), occasion:\(result.breakdown.occasionMatch), accessories:\(result.breakdown.accessoryUse)")
         #endif
@@ -5802,29 +6013,25 @@ struct ScanView: View {
         )
     }
 
-    private func calculateStyleScore(
-        detectedAttributes attributes: DetectedStyleAttributes,
-        context: StyleScoreContext,
-        occasionFit: String
-    ) -> StyleScoreResult {
-        let breakdown = scoreComponents(attributes: attributes, context: context, occasionFit: occasionFit)
-        let total = clampedScore(Int(round(Double(
+    private func calculateStyleScore(detectedAttributes attributes: DetectedStyleAttributes) -> StyleScoreResult {
+        let breakdown = scoreComponents(attributes: attributes)
+        let rawTotal =
             breakdown.colorHarmony +
             breakdown.patternBalance +
             breakdown.fitQuality +
-            breakdown.occasionMatch +
             breakdown.accessoryUse
-        ))))
+        let total = clampedScore(Int(round(Double(rawTotal) / 80.0 * 100.0)))
 
         return StyleScoreResult(total: total, breakdown: breakdown, tier: scoreRatingTitle(for: total))
     }
 
-    private func scoreComponents(attributes: DetectedStyleAttributes, context: StyleScoreContext, occasionFit: String) -> StyleScoreBreakdown {
+    private func scoreComponents(attributes: DetectedStyleAttributes) -> StyleScoreBreakdown {
         StyleScoreBreakdown(
             colorHarmony: scoreColorHarmony(attributes.colors),
             patternBalance: scorePatterns(attributes.patterns),
             fitQuality: scoreFit(attributes.fitAssessment),
-            occasionMatch: scoreOccasion(detectedStyle: attributes.detectedStyle, targetOccasion: context.occasion, occasionFit: occasionFit),
+            // Occasion is explanation-only; never a score input.
+            occasionMatch: 0,
             accessoryUse: scoreAccessories(attributes.accessories)
         )
     }
@@ -5862,40 +6069,6 @@ struct ScanView: View {
         if goodFitTerms.contains(where: { lowered.contains($0) }) { return 25 }
         if poorFitTerms.contains(where: { lowered.contains($0) }) { return 14 }
         return 18
-    }
-
-    private func scoreOccasion(detectedStyle: String, targetOccasion: String, occasionFit: String) -> Int {
-        let detected = "\(detectedStyle) \(occasionFit)".lowercased()
-        let target = targetOccasion.lowercased()
-        guard !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return 15
-        }
-
-        if detected.contains("unrecognized") || detected.contains("category uncertain") {
-            return 6
-        }
-
-        if target.contains("work") || target.contains("office") {
-            if detected.contains("business") || detected.contains("smart") || detected.contains("formal") { return 20 }
-            if detected.contains("casual") || detected.contains("street") || detected.contains("sleep") { return 10 }
-        }
-
-        if target.contains("home") || target.contains("lounge") || target.contains("sleep") {
-            if detected.contains("sleep") || detected.contains("lounge") || detected.contains("indoor") { return 20 }
-            return 12
-        }
-
-        if target.contains("church") || target.contains("dinner") || target.contains("event") || target.contains("date") {
-            if detected.contains("smart") || detected.contains("formal") || detected.contains("traditional") || detected.contains("business") { return 20 }
-            return 13
-        }
-
-        if target.contains("travel") || target.contains("casual") || target.contains("everyday") {
-            if detected.contains("casual") || detected.contains("athletic") || detected.contains("street") || detected.contains("rugged") { return 20 }
-            return 14
-        }
-
-        return detected.contains(target) ? 20 : 15
     }
 
     private func scoreAccessories(_ accessories: [String]) -> Int {
@@ -5997,10 +6170,17 @@ struct ScanView: View {
 
         do {
             try handler.perform([request])
-            return (request.results ?? []).contains { $0.confidence > 0.35 }
+            let results = request.results ?? []
+            #if DEBUG
+            let confidences = results
+                .map { String(format: "%.3f", $0.confidence) }
+                .joined(separator: ", ")
+            print("[ScanGate] personDetection humanRectangles count=\(results.count), confidences=[\(confidences)], threshold>0.35")
+            #endif
+            return results.contains { $0.confidence > 0.35 }
         } catch {
             #if DEBUG
-            print("[StyleMatch Vision Debug] human detection failed: \(error.localizedDescription)")
+            print("[ScanGate] personDetection humanRectangles error=\(error.localizedDescription), threshold>0.35")
             #endif
             return false
         }
@@ -6012,10 +6192,17 @@ struct ScanView: View {
 
         do {
             try handler.perform([request])
-            return (request.results ?? []).contains { $0.confidence > 0.35 }
+            let results = request.results ?? []
+            #if DEBUG
+            let confidences = results
+                .map { String(format: "%.3f", $0.confidence) }
+                .joined(separator: ", ")
+            print("[ScanGate] personDetection faces count=\(results.count), confidences=[\(confidences)], threshold>0.35")
+            #endif
+            return results.contains { $0.confidence > 0.35 }
         } catch {
             #if DEBUG
-            print("[StyleMatch Vision Debug] face detection failed: \(error.localizedDescription)")
+            print("[ScanGate] personDetection faces error=\(error.localizedDescription), threshold>0.35")
             #endif
             return false
         }
@@ -6215,17 +6402,35 @@ struct ScanView: View {
             "bedroom", "bathroom", "bed", "blanket", "pillow", "dresser", "closet",
             "children's room", "kids room", "home"
         ]
+        let matchingSetTerms = [
+            "matching set", "coordinated set", "two-piece", "two piece",
+            "matching top and bottom", "top and bottom", "matching outfit",
+            "shirt and pants set", "pants set"
+        ]
+        let comfortPatternTerms = [
+            "stripe", "striped", "red and white", "pink and white", "pink red",
+            "pastel", "soft", "loose", "barefoot"
+        ]
 
         let sleepMatches = sleepwearTerms.filter { contextText.contains($0) }.count
         let loungeMatches = loungeTerms.filter { contextText.contains($0) }.count
         let childMatches = childTerms.filter { contextText.contains($0) }.count
         let bedroomMatches = bedroomTerms.filter { contextText.contains($0) }.count
-        let hasStrongSleepwearSignal = sleepMatches >= 1 || imageSleepwearBoost >= 5
-        let hasIndoorComfortSignal = loungeMatches >= 1 || imageSleepwearBoost >= 5
+        let matchingSetMatches = matchingSetTerms.filter { contextText.contains($0) }.count
+        let comfortPatternMatches = comfortPatternTerms.filter { contextText.contains($0) }.count
+        let contextualSleepwearSetSignal = (childMatches > 0 || bedroomMatches > 0)
+            && (matchingSetMatches > 0 || imageSleepwearBoost >= 5)
+            && (comfortPatternMatches > 0 || imageSleepwearBoost >= 5)
+        let visualHomeSleepwearSignal = imageSleepwearBoost >= 6 && (childMatches > 0 || bedroomMatches > 0)
+        let hasStrongSleepwearSignal = sleepMatches >= 1 || contextualSleepwearSetSignal || visualHomeSleepwearSignal
+        let hasIndoorComfortSignal = loungeMatches >= 1
+            || contextualSleepwearSetSignal
+            || visualHomeSleepwearSignal
+            || (imageSleepwearBoost >= 5 && bedroomMatches > 0)
 
         if hasStrongSleepwearSignal || (hasIndoorComfortSignal && childMatches > 0) {
-            let category = childMatches > 0 ? "Children's Sleepwear" : (sleepMatches > 0 ? "Sleepwear" : "Indoor Wear")
-            let confidence = min(0.94, Float(0.78 + Double(sleepMatches + loungeMatches + bedroomMatches + childMatches) * 0.04 + Double(imageSleepwearBoost) * 0.01))
+            let category = childMatches > 0 ? "Children's Sleepwear" : (sleepMatches > 0 || contextualSleepwearSetSignal || visualHomeSleepwearSignal ? "Sleepwear" : "Indoor Wear")
+            let confidence = min(0.94, Float(0.78 + Double(sleepMatches + loungeMatches + bedroomMatches + childMatches + matchingSetMatches + comfortPatternMatches) * 0.04 + Double(imageSleepwearBoost) * 0.01))
             return ClothingPurposeMatch(
                 garment: category,
                 styleCategory: category,
@@ -6813,13 +7018,14 @@ private enum ScanHistoryFilter: String, CaseIterable, Identifiable {
         case .favorites:
             return scan.isFavorite(in: favoriteOutfits)
         case .business:
-            return scan.occasion == .work || scan.matchesAny(["business", "office", "work", "meeting", "professional", "polished"])
+            return scan.occasion?.canonical == .work || scan.matchesAny(["business", "office", "work", "meeting", "professional", "polished"])
         case .casual:
-            return scan.occasion == .casual || scan.occasion == .general || scan.matchesAny(["casual", "weekend", "sneaker", "jeans", "everyday"])
+            return scan.occasion?.canonical == .casualDay || scan.matchesAny(["casual", "weekend", "sneaker", "jeans", "everyday"])
         case .formal:
-            return scan.occasion == .wedding || scan.occasion == .formalEvent || scan.matchesAny(["formal", "wedding", "suit", "church", "interview", "dress"])
+            let occasion = scan.occasion?.canonical
+            return occasion == .weddingGuest || occasion == .businessFormal || occasion == .specialEvent || scan.matchesAny(["formal", "wedding", "suit", "church", "interview", "dress"])
         case .travel:
-            return scan.occasion == .travel || scan.matchesAny(["travel", "airport", "luggage", "trip", "vacation"])
+            return scan.occasion?.canonical == .travel || scan.matchesAny(["travel", "airport", "luggage", "trip", "vacation"])
         }
     }
 }
@@ -7236,7 +7442,7 @@ private func formalityAdjustment(attributes: GarmentAttributes, occasion: Occasi
     let warning: (mismatch: Bool, reason: String)
 
     switch occasion {
-    case .wedding:
+    case .wedding, .weddingGuest:
         switch formality {
         case .veryCasual:
             warning = (true, "This reads as very casual for a wedding. Consider a dressier layer, polished shoes, or sharper accessories.")
@@ -7247,7 +7453,7 @@ private func formalityAdjustment(attributes: GarmentAttributes, occasion: Occasi
         case .businessCasual, .formal:
             warning = (false, "The outfit formality fits a wedding or dressy event.")
         }
-    case .formalEvent:
+    case .formalEvent, .businessFormal, .specialEvent:
         switch formality {
         case .veryCasual:
             warning = (true, "This reads as very casual for a formal event. A more polished outfit would fit the occasion better.")
@@ -7289,14 +7495,14 @@ private func formalityAdjustment(attributes: GarmentAttributes, occasion: Occasi
         case .formal:
             warning = (false, "Formal clothing may be less comfortable for travel.")
         }
-    case .casual:
+    case .casual, .casualDay, .party:
         switch formality {
         case .veryCasual, .casual:
             warning = (false, "The outfit formality fits a casual setting.")
         case .smartCasual, .businessCasual, .formal:
             warning = (false, "The outfit is dressier than required, but still wearable casually.")
         }
-    case .general, .other:
+    case .gym, .loungewear, .general, .other:
         warning = (false, "No special formality warning for this occasion.")
     }
 
@@ -7543,7 +7749,7 @@ private struct StoredOutfitScan: Codable {
         thumbnailData = try container.decodeIfPresent(Data.self, forKey: .thumbnailData)
         customTitle = try container.decodeIfPresent(String.self, forKey: .customTitle)
         if let occasionLabel = try container.decodeIfPresent(String.self, forKey: .occasion) {
-            occasion = Occasion(rawValue: occasionLabel) ?? Occasion(label: occasionLabel)
+            occasion = (Occasion(rawValue: occasionLabel) ?? Occasion(label: occasionLabel))?.canonical
         } else {
             occasion = nil
         }
@@ -7909,19 +8115,204 @@ private extension OutfitAnalysisResult {
 }
 
 private extension UIImage {
+    #if DEBUG
+    func debugLogScanGateMaskDiagnostics(width: Int = 80, height: Int = 100) {
+        guard let cgImage else {
+            print("[ScanGate] maskDiagnostics unavailable - no CGImage")
+            return
+        }
+
+        debugLogForegroundSubjectMask(cgImage: cgImage, width: width, height: height)
+        debugLogPersonSegmentationMask(cgImage: cgImage, width: width, height: height)
+        debugLogSaliencyMask(cgImage: cgImage)
+    }
+
+    private func debugLogForegroundSubjectMask(cgImage: CGImage, width: Int, height: Int) {
+        guard #available(iOS 17.0, *) else {
+            print("[ScanGate] mask foregroundSubject unavailable - requires iOS 17")
+            return
+        }
+
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
+
+        do {
+            try handler.perform([request])
+            guard let observation = request.results?.first else {
+                print("[ScanGate] mask foregroundSubject instances=0, coverage=0.0%, thresholdByte>96")
+                return
+            }
+
+            let instances = observation.allInstances
+            if instances.isEmpty {
+                print("[ScanGate] mask foregroundSubject instances=0, coverage=0.0%, thresholdByte>96")
+                return
+            }
+
+            let maskBuffer = try observation.generateScaledMaskForImage(
+                forInstances: instances,
+                from: handler
+            )
+            let coverage = debugMaskCoverage(maskBuffer, width: width, height: height, threshold: 96)
+            print("[ScanGate] mask foregroundSubject instances=\(instances.count), coverage=\(String(format: "%.1f", coverage * 100))%, thresholdByte>96")
+        } catch {
+            print("[ScanGate] mask foregroundSubject error=\(error.localizedDescription), thresholdByte>96")
+        }
+    }
+
+    private func debugLogPersonSegmentationMask(cgImage: CGImage, width: Int, height: Int) {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .balanced
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
+
+        do {
+            try handler.perform([request])
+            guard let maskBuffer = request.results?.first?.pixelBuffer else {
+                print("[ScanGate] mask personSegmentation result=none, coverage=0.0%, thresholdByte>96")
+                return
+            }
+
+            let coverage = debugMaskCoverage(maskBuffer, width: width, height: height, threshold: 96)
+            print("[ScanGate] mask personSegmentation result=1, coverage=\(String(format: "%.1f", coverage * 100))%, thresholdByte>96")
+        } catch {
+            print("[ScanGate] mask personSegmentation error=\(error.localizedDescription), thresholdByte>96")
+        }
+    }
+
+    private func debugLogSaliencyMask(cgImage: CGImage) {
+        let request = VNGenerateAttentionBasedSaliencyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
+
+        do {
+            try handler.perform([request])
+            guard let observation = request.results?.first,
+                  let salientObjects = observation.salientObjects,
+                  !salientObjects.isEmpty else {
+                print("[ScanGate] mask saliency objects=0, unionCoverage=0.0%")
+                return
+            }
+
+            let unionBox = salientObjects
+                .map(\.boundingBox)
+                .reduce(CGRect.null) { partial, rect in
+                    partial.isNull ? rect : partial.union(rect)
+                }
+                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+
+            let coverage = max(0, Double(unionBox.width * unionBox.height))
+            print("[ScanGate] mask saliency objects=\(salientObjects.count), unionCoverage=\(String(format: "%.1f", coverage * 100))%")
+        } catch {
+            print("[ScanGate] mask saliency error=\(error.localizedDescription)")
+        }
+    }
+
+    private func debugMaskCoverage(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int, threshold: UInt8) -> Double {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return 0
+        }
+
+        let maskWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let maskHeight = CVPixelBufferGetHeight(pixelBuffer)
+        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var included = 0
+        let total = max(1, width * height)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let maskX = min(maskWidth - 1, max(0, Int((Double(x) / Double(max(1, width - 1))) * Double(maskWidth - 1))))
+                let maskY = min(maskHeight - 1, max(0, Int((Double(y) / Double(max(1, height - 1))) * Double(maskHeight - 1))))
+                if bytes[maskY * stride + maskX] > threshold {
+                    included += 1
+                }
+            }
+        }
+
+        return Double(included) / Double(total)
+    }
+    #endif
+
     func sleepwearVisualSignalScore() -> Int {
         let palette = garmentColorPalette().map { $0.lowercased() }
         var score = 0
-        if palette.contains(where: { ["pink", "red", "cream", "white", "pastel"].contains($0) || $0.contains("pink") || $0.contains("cream") }) {
+        let hasPinkOrRed = palette.contains(where: { $0.contains("pink") || $0.contains("red") })
+        let hasLightSleepwearColor = palette.contains(where: { ["cream", "white", "pastel"].contains($0) || $0.contains("cream") || $0.contains("white") || $0.contains("pastel") })
+        if hasPinkOrRed {
             score += 2
         }
-        if palette.contains(where: { $0.contains("neutral") || $0.contains("light") }) {
+        if hasLightSleepwearColor {
             score += 1
         }
+        if hasPinkOrRed && hasLightSleepwearColor {
+            score += 2
+        }
+        score += redPinkStripeSignalScore()
         if outfitIdentitySignature().contains("soft") {
             score += 1
         }
         return score
+    }
+
+    private func redPinkStripeSignalScore() -> Int {
+        let width = 18
+        let height = 24
+        let samples = sampledRGB(width: width, height: height)
+        guard samples.count == width * height else {
+            return 0
+        }
+
+        var redPinkColumns = [Bool]()
+        var lightColumns = [Bool]()
+
+        for x in 0..<width {
+            var redPinkCount = 0
+            var lightCount = 0
+
+            for y in 0..<height {
+                let pixel = samples[y * width + x]
+                let red = Int(pixel.red)
+                let green = Int(pixel.green)
+                let blue = Int(pixel.blue)
+
+                if red > 120, red > green + 18, red > blue + 8 {
+                    redPinkCount += 1
+                }
+
+                let brightness = red + green + blue
+                if brightness > 590, abs(red - green) < 60, abs(green - blue) < 80 {
+                    lightCount += 1
+                }
+            }
+
+            redPinkColumns.append(Double(redPinkCount) / Double(height) > 0.18)
+            lightColumns.append(Double(lightCount) / Double(height) > 0.28)
+        }
+
+        let redPinkColumnCount = redPinkColumns.filter { $0 }.count
+        let lightColumnCount = lightColumns.filter { $0 }.count
+        var alternationCount = 0
+        for index in 1..<width {
+            let changesRedPinkState = redPinkColumns[index] != redPinkColumns[index - 1]
+            let hasRedPinkColumn = redPinkColumns[index] || redPinkColumns[index - 1]
+            let hasLightColumn = lightColumns[index] || lightColumns[index - 1]
+            if changesRedPinkState && hasRedPinkColumn && hasLightColumn {
+                alternationCount += 1
+            }
+        }
+
+        if redPinkColumnCount >= 2, lightColumnCount >= 2, alternationCount >= 2 {
+            return 2
+        }
+
+        if redPinkColumnCount >= 2, lightColumnCount >= 2 {
+            return 1
+        }
+
+        return 0
     }
 
     func scanSizedImage(maxSide: CGFloat = 900) -> UIImage {
@@ -8005,6 +8396,20 @@ private extension UIImage {
     func garmentColorDetection() -> GarmentColorDetection {
         let start = CFAbsoluteTimeGetCurrent()
         let maskedSamples = maskedGarmentPaletteSamples(width: 80, height: 100)
+        if maskedSamples.tier == .couldNotIsolateGarment {
+            let latencyMs = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
+            #if DEBUG
+            print("[StyleMatch Color Debug] maskTier=\(maskedSamples.tier.rawValue), maskingApplied=false, palette latencyMs=\(latencyMs); all tiers failed")
+            #endif
+            return GarmentColorDetection(
+                garmentColors: [],
+                confidence: 0,
+                notes: "Couldn't isolate the outfit from the background. Try retaking the photo with the outfit filling more of the frame.",
+                maskingApplied: false,
+                maskTier: maskedSamples.tier.rawValue
+            )
+        }
+
         let extraction = GarmentColorPaletteEngine.extractPalette(from: maskedSamples.samples)
         let finalColors = extraction.palette
         let confidence = extraction.confidence
@@ -8017,7 +8422,7 @@ private extension UIImage {
 
         let sourceNote = maskedSamples.maskingApplied
             ? "Colors came from masked garment-region pixels only"
-            : "Colors came from the full photo because StyleMatch Pro could not isolate a garment region"
+            : "Couldn’t isolate the outfit from the background"
 
         return GarmentColorDetection(
             garmentColors: finalColors,
@@ -8035,7 +8440,7 @@ private extension UIImage {
     private func maskedGarmentPaletteSamples(width: Int, height: Int) -> MaskedGarmentPaletteSamples {
         guard let cgImage,
               let rgbBytes = renderedRGBBytes(width: width, height: height) else {
-            return fullImagePaletteSamples(width: width, height: height, rgbBytes: [])
+            return failedPaletteSamples(width: width, height: height)
         }
 
         let mask = GarmentRegionMasker.tieredMask(
@@ -8049,9 +8454,6 @@ private extension UIImage {
             },
             saliencyCrop: {
                 try self.saliencyCropMask(cgImage: cgImage, width: width, height: height)
-            },
-            fullImageFallback: {
-                GarmentRegionMask.fullImage(width: width, height: height)
             }
         ).eroded(radius: 1)
 
@@ -8184,11 +8586,11 @@ private extension UIImage {
         return samples
     }
 
-    private func fullImagePaletteSamples(width: Int, height: Int, rgbBytes: [UInt8]) -> MaskedGarmentPaletteSamples {
-        let mask = GarmentRegionMask.fullImage(width: width, height: height)
+    private func failedPaletteSamples(width: Int, height: Int) -> MaskedGarmentPaletteSamples {
+        let mask = GarmentRegionMask.couldNotIsolate(width: width, height: height)
         return MaskedGarmentPaletteSamples(
-            samples: paletteSamples(width: width, height: height, rgbBytes: rgbBytes, mask: mask),
-            tier: .fullImageFallback,
+            samples: [],
+            tier: mask.tier,
             maskingApplied: false
         )
     }

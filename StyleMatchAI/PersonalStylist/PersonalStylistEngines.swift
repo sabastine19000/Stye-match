@@ -487,12 +487,35 @@ struct StyleClassificationGuardrails {
     }
 
     private static func hasSleepwearEvidence(_ text: String) -> Bool {
-        [
+        if [
             "pajama", "pyjama", "sleepwear", "nightwear", "nightgown",
             "robe", "bathrobe", "fleece robe", "plush robe", "housecoat",
             "slipper", "slippers", "bedroom slipper", "house shoe",
-            "onesie", "loungewear"
-        ].contains { text.contains($0) }
+            "onesie", "loungewear", "lounge set", "homewear", "house clothes",
+            "indoor wear", "sleep set", "matching sleep"
+        ].contains(where: { text.contains($0) }) {
+            return true
+        }
+
+        return hasContextualSleepwearSetEvidence(text)
+    }
+
+    private static func hasContextualSleepwearSetEvidence(_ text: String) -> Bool {
+        let homeOrYouthSignals = [
+            "bedroom", "bed", "blanket", "pillow", "home", "house", "indoor",
+            "child", "kid", "girl", "boy", "children", "youth", "toy"
+        ].filter { text.contains($0) }.count
+        let matchingSetSignals = [
+            "matching set", "coordinated set", "two-piece", "two piece",
+            "matching top and bottom", "top and bottom", "matching outfit",
+            "shirt and pants set", "pants set"
+        ].filter { text.contains($0) }.count
+        let comfortPatternSignals = [
+            "stripe", "striped", "red and white", "pink and white", "pink red",
+            "pastel", "soft", "loose", "barefoot"
+        ].filter { text.contains($0) }.count
+
+        return homeOrYouthSignals > 0 && matchingSetSignals > 0 && comfortPatternSignals > 0
     }
 
     private static func hasTraditionalEvidence(_ text: String) -> Bool {
