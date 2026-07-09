@@ -171,6 +171,86 @@ struct ClothingSizes: Codable {
     }
 }
 
+struct PantsSizeMeasurements: Equatable {
+    let waist: String
+    let inseam: String
+}
+
+struct PantsSizeVisibleValues: Equatable {
+    let pantsSize: String
+    let waistSize: String
+    let inseamLength: String
+}
+
+enum PantsSizeEditSource: String {
+    case picker
+    case manual
+}
+
+enum PantsSizeSync {
+    static func measurements(from selection: String) -> PantsSizeMeasurements? {
+        let pattern = #"(?i)(\d{1,3})\s*[x×]\s*(\d{1,3})"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(selection.startIndex..<selection.endIndex, in: selection)
+        guard let match = expression.firstMatch(in: selection, range: range),
+              match.numberOfRanges >= 3,
+              let waistRange = Range(match.range(at: 1), in: selection),
+              let inseamRange = Range(match.range(at: 2), in: selection) else {
+            return nil
+        }
+
+        return PantsSizeMeasurements(
+            waist: String(selection[waistRange]),
+            inseam: String(selection[inseamRange])
+        )
+    }
+}
+
+struct PantsSizeFieldState: Equatable {
+    var pantsSize: String
+    var waistSize: String
+    var inseamLength: String
+    var lastEditSource: PantsSizeEditSource
+
+    init(
+        pantsSize: String,
+        waistSize: String,
+        inseamLength: String,
+        lastEditSource: PantsSizeEditSource = .manual
+    ) {
+        self.pantsSize = pantsSize
+        self.waistSize = waistSize
+        self.inseamLength = inseamLength
+        self.lastEditSource = lastEditSource
+    }
+
+    mutating func applyPickerSelection(_ selection: String) {
+        pantsSize = selection
+        lastEditSource = .picker
+        guard let measurements = PantsSizeSync.measurements(from: selection) else { return }
+        waistSize = measurements.waist
+        inseamLength = measurements.inseam
+    }
+
+    mutating func applyManualWaist(_ value: String) {
+        waistSize = value
+        lastEditSource = .manual
+    }
+
+    mutating func applyManualInseam(_ value: String) {
+        inseamLength = value
+        lastEditSource = .manual
+    }
+
+    var visibleValuesForSave: PantsSizeVisibleValues {
+        PantsSizeVisibleValues(
+            pantsSize: pantsSize,
+            waistSize: waistSize,
+            inseamLength: inseamLength
+        )
+    }
+}
+
 struct GarmentRecord: Codable, Identifiable, Equatable {
     let id: UUID
     var garmentCategory: String

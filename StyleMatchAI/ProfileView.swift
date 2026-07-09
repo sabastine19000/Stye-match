@@ -62,6 +62,7 @@ struct ProfileView: View {
     @State private var hasUnsavedProfileChanges = false
     @State private var hasLoadedProfileDraft = false
     @State private var dataDeletionMessage: String?
+    @State private var pantsSizeLastEditSource: PantsSizeEditSource = .manual
     @StateObject private var voiceAssistant = VoiceStylistService()
 
     private var selectedAssistant: PreferredAIAssistant {
@@ -645,6 +646,11 @@ struct ProfileView: View {
         }
     }
 
+    private enum PantsMeasurementField {
+        case waist
+        case inseam
+    }
+
     private func draftBinding(_ keyPath: WritableKeyPath<ProfileEditDraft, String>) -> Binding<String> {
         Binding {
             profileDraft[keyPath: keyPath]
@@ -652,6 +658,80 @@ struct ProfileView: View {
             profileDraft[keyPath: keyPath] = newValue
             updateProfileDirtyState()
         }
+    }
+
+    private func pantsSizePickerBinding() -> Binding<String> {
+        Binding {
+            profileDraft.pantsSize
+        } set: { newValue in
+            applyPantsSizePickerSelection(newValue)
+        }
+    }
+
+    private func pantsMeasurementBinding(
+        _ keyPath: WritableKeyPath<ProfileEditDraft, String>,
+        field: PantsMeasurementField
+    ) -> Binding<String> {
+        Binding {
+            profileDraft[keyPath: keyPath]
+        } set: { newValue in
+            switch field {
+            case .waist:
+                applyManualPantsWaist(newValue)
+            case .inseam:
+                applyManualPantsInseam(newValue)
+            }
+        }
+    }
+
+    private func applyPantsSizePickerSelection(_ selection: String) {
+        var state = PantsSizeFieldState(
+            pantsSize: profileDraft.pantsSize,
+            waistSize: profileDraft.waistSize,
+            inseamLength: profileDraft.inseamLength,
+            lastEditSource: pantsSizeLastEditSource
+        )
+        state.applyPickerSelection(selection)
+        profileDraft.pantsSize = state.pantsSize
+        profileDraft.waistSize = state.waistSize
+        profileDraft.inseamLength = state.inseamLength
+        pantsSizeLastEditSource = state.lastEditSource
+        updateProfileDirtyState()
+    }
+
+    private func applyManualPantsWaist(_ value: String) {
+        var state = PantsSizeFieldState(
+            pantsSize: profileDraft.pantsSize,
+            waistSize: profileDraft.waistSize,
+            inseamLength: profileDraft.inseamLength,
+            lastEditSource: pantsSizeLastEditSource
+        )
+        state.applyManualWaist(value)
+        profileDraft.waistSize = state.waistSize
+        pantsSizeLastEditSource = state.lastEditSource
+        updateProfileDirtyState()
+    }
+
+    private func applyManualPantsInseam(_ value: String) {
+        var state = PantsSizeFieldState(
+            pantsSize: profileDraft.pantsSize,
+            waistSize: profileDraft.waistSize,
+            inseamLength: profileDraft.inseamLength,
+            lastEditSource: pantsSizeLastEditSource
+        )
+        state.applyManualInseam(value)
+        profileDraft.inseamLength = state.inseamLength
+        pantsSizeLastEditSource = state.lastEditSource
+        updateProfileDirtyState()
+    }
+
+    private func logPantsPickerChange(_ newValue: String) {
+        #if DEBUG
+        let measurements = PantsSizeSync.measurements(from: newValue)
+        let parsedWaist = measurements?.waist ?? "nil"
+        let parsedInseam = measurements?.inseam ?? "nil"
+        print("[ProfilePantsSize] PICKER changed pantsSize='\(newValue)' waist='\(profileDraft.waistSize)' inseam='\(profileDraft.inseamLength)' parsedWaist='\(parsedWaist)' parsedInseam='\(parsedInseam)' source='\(pantsSizeLastEditSource.rawValue)'")
+        #endif
     }
 
     private func profileDraftField(_ title: String, text: Binding<String>, prompt: String) -> some View {
@@ -678,15 +758,18 @@ struct ProfileView: View {
                 }
             }
 
-            Picker("Men's pants size", selection: draftBinding(\.pantsSize)) {
+            Picker("Men's pants size", selection: pantsSizePickerBinding()) {
                 ForEach(optionsIncludingCurrent(pantSizeOptions, current: profileDraft.pantsSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
             }
+            .styleMatchOnChange(of: profileDraft.pantsSize) { newValue in
+                logPantsPickerChange(newValue)
+            }
 
-            profileDraftField("Waist", text: draftBinding(\.waistSize), prompt: "36")
+            profileDraftField("Waist", text: pantsMeasurementBinding(\.waistSize, field: .waist), prompt: "36")
                 .keyboardType(.numbersAndPunctuation)
-            profileDraftField("Inseam / Length", text: draftBinding(\.inseamLength), prompt: "36")
+            profileDraftField("Inseam / Length", text: pantsMeasurementBinding(\.inseamLength, field: .inseam), prompt: "36")
                 .keyboardType(.numbersAndPunctuation)
             profileDraftField("Neck Size", text: draftBinding(\.neckSize), prompt: "Optional")
                 .keyboardType(.numbersAndPunctuation)
@@ -707,10 +790,13 @@ struct ProfileView: View {
                 }
             }
 
-            Picker("Women's bottoms size", selection: draftBinding(\.pantsSize)) {
+            Picker("Women's bottoms size", selection: pantsSizePickerBinding()) {
                 ForEach(optionsIncludingCurrent(womenBottomSizeOptions, current: profileDraft.pantsSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
+            }
+            .styleMatchOnChange(of: profileDraft.pantsSize) { newValue in
+                logPantsPickerChange(newValue)
             }
 
             Picker("Dress size", selection: draftBinding(\.dressSize)) {
@@ -734,9 +820,9 @@ struct ProfileView: View {
             }
 
             profileDraftField("Unisex bottoms / pants", text: draftBinding(\.pantsSize), prompt: "M, L, 36x36, or brand size")
-            profileDraftField("Waist", text: draftBinding(\.waistSize), prompt: "Optional")
+            profileDraftField("Waist", text: pantsMeasurementBinding(\.waistSize, field: .waist), prompt: "Optional")
                 .keyboardType(.numbersAndPunctuation)
-            profileDraftField("Inseam / Length", text: draftBinding(\.inseamLength), prompt: "Optional")
+            profileDraftField("Inseam / Length", text: pantsMeasurementBinding(\.inseamLength, field: .inseam), prompt: "Optional")
                 .keyboardType(.numbersAndPunctuation)
 
             Picker("Shoe size", selection: draftBinding(\.shoeSize)) {
@@ -1026,6 +1112,7 @@ struct ProfileView: View {
         let draft = currentStoredProfileDraft()
         profileDraft = draft
         savedProfileDraft = draft
+        pantsSizeLastEditSource = .manual
         hasUnsavedProfileChanges = false
     }
 
@@ -1063,6 +1150,7 @@ struct ProfileView: View {
     private func saveProfileDraft() {
         var draft = profileDraft
         draft.normalize()
+        logPantsSave(draft)
 
         name = draft.name
         favoriteColors = draft.favoriteColors
@@ -1090,8 +1178,10 @@ struct ProfileView: View {
         profileLastSavedAt = ISO8601DateFormatter().string(from: Date())
         profileNeedsCloudSync = accountSyncEnabled
 
-        profileDraft = draft
-        savedProfileDraft = draft
+        let savedDraft = currentStoredProfileDraft()
+        profileDraft = savedDraft
+        savedProfileDraft = savedDraft
+        pantsSizeLastEditSource = .manual
         hasUnsavedProfileChanges = false
         syncPersonalStylistProfile(from: draft)
         dataDeletionMessage = accountSyncEnabled
@@ -1101,6 +1191,12 @@ struct ProfileView: View {
         if voiceAssistantEnabled {
             voiceAssistant.speak(VoiceScriptBuilder.profileSaved())
         }
+    }
+
+    private func logPantsSave(_ draft: ProfileEditDraft) {
+        #if DEBUG
+        print("[ProfilePantsSize] SAVE pantsSize='\(draft.pantsSize)' waist='\(draft.waistSize)' inseam='\(draft.inseamLength)' source='\(pantsSizeLastEditSource.rawValue)'")
+        #endif
     }
 
     private func syncPersonalStylistProfile(from draft: ProfileEditDraft) {

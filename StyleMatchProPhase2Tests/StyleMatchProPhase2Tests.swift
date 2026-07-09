@@ -35,6 +35,47 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         super.tearDown()
     }
 
+    // MARK: - Profile pants size sync tests
+
+    func testMenPantsSizeParserExtractsWaistAndInseam() {
+        XCTAssertEqual(
+            PantsSizeSync.measurements(from: "Men 36x32"),
+            PantsSizeMeasurements(waist: "36", inseam: "32")
+        )
+        XCTAssertEqual(
+            PantsSizeSync.measurements(from: "36 x 32"),
+            PantsSizeMeasurements(waist: "36", inseam: "32")
+        )
+        XCTAssertEqual(
+            PantsSizeSync.measurements(from: "Men 36X32"),
+            PantsSizeMeasurements(waist: "36", inseam: "32")
+        )
+        XCTAssertNil(PantsSizeSync.measurements(from: "Women 12"))
+    }
+
+    func testPantsPickerChangeUpdatesWaistAndInseamFields() {
+        var state = PantsSizeFieldState(pantsSize: "Men 36x36", waistSize: "36", inseamLength: "36")
+        state.applyPickerSelection("Men 36x32")
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 36x32", waistSize: "36", inseamLength: "32"))
+        XCTAssertEqual(state.lastEditSource, .picker)
+
+        state = PantsSizeFieldState(pantsSize: "Men 34x30", waistSize: "34", inseamLength: "30")
+        state.applyPickerSelection("Men 34x32")
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 34x32", waistSize: "34", inseamLength: "32"))
+
+        state = PantsSizeFieldState(pantsSize: "Men 32x32", waistSize: "32", inseamLength: "32")
+        state.applyPickerSelection("Men 32x30")
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 32x30", waistSize: "32", inseamLength: "30"))
+    }
+
+    func testManualInseamEditSurvivesVisibleSaveValues() {
+        var state = PantsSizeFieldState(pantsSize: "Men 36x32", waistSize: "36", inseamLength: "32", lastEditSource: .picker)
+        state.applyManualInseam("34")
+
+        XCTAssertEqual(state.lastEditSource, .manual)
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 36x32", waistSize: "36", inseamLength: "34"))
+    }
+
     // MARK: - Phase 3 feedback loop tests
 
     func testFeedbackSchedulerEligibilityWindow() {
