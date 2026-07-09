@@ -11,36 +11,36 @@ struct ProfileView: View {
     @AppStorage("guestDataLinkedToApple") private var guestDataLinkedToApple = false
     @AppStorage("guestDataTransferSummary") private var guestDataTransferSummary = ""
     @AppStorage("profileName") private var name = ""
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
-    @AppStorage("favoriteBrands") private var favoriteBrands = "Ralph Lauren, Nike, Levi's"
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("favoriteBrands") private var favoriteBrands = ""
     @AppStorage("favoriteStores") private var favoriteStores = ""
-    @AppStorage("shoppingBudget") private var budget = "$50 - $200"
-    @AppStorage("sizeProfile") private var sizeProfile = "Pants: 24W-60W x 26L-40L, saved 36W x 36L; Shirts: XXS-8XL; Shoes: 5-18; Fit: slim, straight, relaxed, curvy, petite, tall"
-    @AppStorage("shirtSize") private var shirtSize = "L"
-    @AppStorage("pantsSize") private var pantsSize = "Men 36x36"
+    @AppStorage("shoppingBudget") private var budget = ""
+    @AppStorage("sizeProfile") private var sizeProfile = ""
+    @AppStorage("shirtSize") private var shirtSize = ""
+    @AppStorage("pantsSize") private var pantsSize = ""
     @AppStorage("dressSize") private var dressSize = ""
-    @AppStorage("sizeCategory") private var sizeCategory = SizeProfileCategory.men.rawValue
-    @AppStorage("waistSize") private var waistSize = "36"
-    @AppStorage("inseamLength") private var inseamLength = "36"
+    @AppStorage("sizeCategory") private var sizeCategory = ""
+    @AppStorage("waistSize") private var waistSize = ""
+    @AppStorage("inseamLength") private var inseamLength = ""
     @AppStorage("neckSize") private var neckSize = ""
     @AppStorage("sleeveLength") private var sleeveLength = ""
-    @AppStorage("shoeSize") private var shoeSize = "10"
-    @AppStorage("fitPreference") private var fitPreference = "Regular"
-    @AppStorage("stylePreferences") private var stylePreferences = "Classic, business casual, clean sneakers"
-    @AppStorage("occasions") private var occasions = "Work, church, dinner, travel"
-    @AppStorage("plannedOccasion") private var plannedOccasion = "Work"
-    @AppStorage("dressCode") private var dressCode = "Smart casual"
-    @AppStorage("occasionFormality") private var occasionFormality = "Polished"
-    @AppStorage("weather") private var weather = "Mild weather"
+    @AppStorage("shoeSize") private var shoeSize = ""
+    @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("stylePreferences") private var stylePreferences = ""
+    @AppStorage("occasions") private var occasions = ""
+    @AppStorage("plannedOccasion") private var plannedOccasion = ""
+    @AppStorage("dressCode") private var dressCode = ""
+    @AppStorage("occasionFormality") private var occasionFormality = ""
+    @AppStorage("weather") private var weather = ""
     @AppStorage("weatherCity") private var weatherCity = ""
-    @AppStorage("weatherCondition") private var weatherCondition = "Mild"
-    @AppStorage("weatherSource") private var weatherSource = "Saved"
+    @AppStorage("weatherCondition") private var weatherCondition = ""
+    @AppStorage("weatherSource") private var weatherSource = ""
     @AppStorage("liveWeatherUpdatedAt") private var liveWeatherUpdatedAt = 0.0
-    @AppStorage("pastPurchases") private var pastPurchases = "White Oxford shirt, black leather belt"
-    @AppStorage("favoriteOutfits") private var favoriteOutfits = "Navy blazer with dark denim"
-    @AppStorage("closetInventory") private var closetInventory = "Dark denim, white shirts, black shoes"
+    @AppStorage("pastPurchases") private var pastPurchases = ""
+    @AppStorage("favoriteOutfits") private var favoriteOutfits = ""
+    @AppStorage("closetInventory") private var closetInventory = ""
     @AppStorage("outfitDislikes") private var outfitDislikes = ""
-    @AppStorage("clothingPreferences") private var clothingPreferences = "Clean fits, comfortable shoes, polished basics"
+    @AppStorage("clothingPreferences") private var clothingPreferences = ""
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("closetItemsData") private var closetItemsData = Data()
     @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.siri.rawValue
@@ -251,16 +251,16 @@ struct ProfileView: View {
                 Section("Style Profile") {
                     profileDraftField("Name", text: draftBinding(\.name), prompt: "Your display name")
                     profileDraftField("Favorite Colors", text: draftBinding(\.favoriteColors), prompt: "Black, navy, white")
-                    profileDraftField("Favorite Brands", text: draftBinding(\.favoriteBrands), prompt: "Nike, Levi's, Ralph Lauren")
+                    profileDraftField("Favorite Brands", text: draftBinding(\.favoriteBrands), prompt: "e.g. favorite brands")
                     profileDraftField("Favorite Stores", text: draftBinding(\.favoriteStores), prompt: "Macy's, Target, Nordstrom")
                     profileDraftField("Budget Range", text: draftBinding(\.budget), prompt: "$50 - $200")
                     profileDraftField("Style Preference", text: draftBinding(\.stylePreferences), prompt: "Classic, streetwear, minimal")
-                    profileDraftField("Occasions", text: draftBinding(\.occasions), prompt: "Work, church, dinner, travel")
+                    profileDraftField("Occasions", text: draftBinding(\.occasions), prompt: "e.g. work, travel, dinner")
                     profileDraftField("Outfit Dislikes", text: draftBinding(\.outfitDislikes), prompt: "Too tight, loud colors, heavy layers")
                     profileDraftField("Clothing Preferences", text: draftBinding(\.clothingPreferences), prompt: "Comfortable shoes, clean fits")
-                    profileDraftField("Past Purchases", text: draftBinding(\.pastPurchases), prompt: "White Oxford shirt, black belt")
-                    profileDraftField("Favorite Outfits", text: draftBinding(\.favoriteOutfits), prompt: "Navy blazer with dark denim")
-                    profileDraftField("Closet Inventory", text: draftBinding(\.closetInventory), prompt: "Dark denim, white shirts")
+                    profileDraftField("Past Purchases", text: draftBinding(\.pastPurchases), prompt: "e.g. recent clothing purchases")
+                    profileDraftField("Favorite Outfits", text: draftBinding(\.favoriteOutfits), prompt: "e.g. your favorite go-to outfit")
+                    profileDraftField("Closet Inventory", text: draftBinding(\.closetInventory), prompt: "e.g. closet staples")
                 }
 
                 Section("Weather Planning") {
@@ -1057,10 +1057,12 @@ struct ProfileView: View {
     private var hasTransferableGuestData: Bool {
         !outfitScanHistoryData.isEmpty
         || !closetItemsData.isEmpty
-        || favoriteOutfits.trimmingCharacters(in: .whitespacesAndNewlines) != "Navy blazer with dark denim"
-        || stylePreferences.trimmingCharacters(in: .whitespacesAndNewlines) != "Classic, business casual, clean sneakers"
-        || favoriteColors.trimmingCharacters(in: .whitespacesAndNewlines) != "Black, white, navy"
-        || StyleMatchGreetingBuilder.firstName(from: name) != nil
+        || LoginWelcomeProfileData.hasIntentionalProfileValues(
+            favoriteOutfits: favoriteOutfits,
+            stylePreferences: stylePreferences,
+            favoriteColors: favoriteColors,
+            profileName: name
+        )
     }
 
     private func transferGuestDataToApple() {
@@ -1070,7 +1072,10 @@ struct ProfileView: View {
             transferred.append("scan history")
         }
 
-        if favoriteOutfits.trimmingCharacters(in: .whitespacesAndNewlines) != "Navy blazer with dark denim" {
+        let hasIntentionalProfileSave = FounderProfileDefaultsMigration.hasIntentionalProfileSave()
+
+        if hasIntentionalProfileSave,
+           cleanOptional(favoriteOutfits) != nil {
             transferred.append("favorites")
         }
 
@@ -1078,11 +1083,13 @@ struct ProfileView: View {
             transferred.append("closet")
         }
 
-        if stylePreferences.trimmingCharacters(in: .whitespacesAndNewlines) != "Classic, business casual, clean sneakers" || favoriteColors.trimmingCharacters(in: .whitespacesAndNewlines) != "Black, white, navy" {
+        if hasIntentionalProfileSave,
+           cleanOptional(stylePreferences) != nil || cleanOptional(favoriteColors) != nil {
             transferred.append("style preferences")
         }
 
-        if StyleMatchGreetingBuilder.firstName(from: name) != nil {
+        if hasIntentionalProfileSave,
+           StyleMatchGreetingBuilder.firstName(from: name) != nil {
             transferred.append("profile")
         }
 
@@ -1208,8 +1215,8 @@ struct ProfileView: View {
         profile.favoriteBrands = splitProfileList(draft.favoriteBrands)
         profile.preferredFit = FitPreference(rawValue: draft.fitPreference.lowercased()) ?? .regular
         profile.budgetRange = budgetRange(from: draft.budget)
-        profile.climate = weatherCondition
-        profile.workDressCode = dressCode
+        profile.climate = cleanOptional(weatherCondition) ?? ""
+        profile.workDressCode = cleanOptional(dressCode) ?? ""
         profile.clothingSizes = ClothingSizes(
             shirtSize: cleanOptional(draft.shirtSize),
             pantSize: cleanOptional(draft.pantsSize),
@@ -1223,9 +1230,9 @@ struct ProfileView: View {
     }
 
     private func summaryText(for draft: ProfileEditDraft) -> String {
-        let category = SizeProfileCategory.resolved(from: draft.sizeCategory)
+        let category = SizeProfileCategory.resolvedIfSet(from: draft.sizeCategory)
         var parts: [String] = [
-            "Category: \(category.rawValue)",
+            "Category: \(category?.rawValue ?? "not set")",
             "Top: \(cleanValue(draft.shirtSize, fallback: "not set"))",
             "Bottom: \(cleanValue(draft.pantsSize, fallback: "not set"))"
         ]
@@ -1246,7 +1253,7 @@ struct ProfileView: View {
         }
 
         parts.append("Shoes: \(cleanValue(draft.shoeSize, fallback: "not set"))")
-        parts.append("Fit: \(cleanValue(draft.fitPreference, fallback: "Regular"))")
+        parts.append("Fit: \(cleanValue(draft.fitPreference, fallback: "not set"))")
         return parts.joined(separator: "; ")
     }
 
@@ -1265,8 +1272,11 @@ struct ProfileView: View {
         let values = text
             .components(separatedBy: CharacterSet(charactersIn: "0123456789.").inverted)
             .compactMap(Double.init)
-        let minPrice = values.first ?? 50
-        let maxPrice = values.dropFirst().first ?? max(minPrice, 200)
+        guard let first = values.first else {
+            return .neutral
+        }
+        let minPrice = first
+        let maxPrice = values.dropFirst().first ?? first
         let tier: String
         switch maxPrice {
         case 0..<75:
@@ -1281,41 +1291,43 @@ struct ProfileView: View {
 
     private func deleteSavedData() {
         PrivacyDataManager.shared.deleteAllLocalCustomerData()
+        FounderProfileDefaultsMigration.clearProfilePreferenceDefaults()
         customerAccountMode = CustomerAccountMode.guest.rawValue
         customerAccountEmail = ""
         customerAppleUserID = ""
         accountSyncEnabled = false
         name = ""
-        favoriteColors = "Black, white, navy"
-        favoriteBrands = "Ralph Lauren, Nike, Levi's"
+        favoriteColors = ""
+        favoriteBrands = ""
         favoriteStores = ""
-        budget = "$50 - $200"
-        sizeProfile = "Pants: 24W-60W x 26L-40L, saved 36W x 36L; Shirts: XXS-8XL; Shoes: 5-18; Fit: slim, straight, relaxed, curvy, petite, tall"
-        sizeCategory = SizeProfileCategory.men.rawValue
-        stylePreferences = "Classic, business casual, clean sneakers"
-        occasions = "Work, church, dinner, travel"
-        plannedOccasion = "Work"
-        dressCode = "Smart casual"
-        occasionFormality = "Polished"
-        weather = "Mild weather"
+        budget = ""
+        sizeProfile = ""
+        sizeCategory = ""
+        stylePreferences = ""
+        occasions = ""
+        plannedOccasion = ""
+        dressCode = ""
+        occasionFormality = ""
+        weather = ""
         weatherCity = ""
-        weatherCondition = "Mild"
-        pastPurchases = "White Oxford shirt, black leather belt"
-        favoriteOutfits = "Navy blazer with dark denim"
-        closetInventory = "Dark denim, white shirts, black shoes"
+        weatherCondition = ""
+        weatherSource = ""
+        pastPurchases = ""
+        favoriteOutfits = ""
+        closetInventory = ""
         preferredAIAssistant = PreferredAIAssistant.siri.rawValue
         shareAppContextWithChatGPT = false
         outfitDislikes = ""
-        clothingPreferences = "Clean fits, comfortable shoes, polished basics"
-        shirtSize = "L"
-        pantsSize = "Men 36x36"
+        clothingPreferences = ""
+        shirtSize = ""
+        pantsSize = ""
         dressSize = ""
-        waistSize = "36"
-        inseamLength = "36"
+        waistSize = ""
+        inseamLength = ""
         neckSize = ""
         sleeveLength = ""
-        shoeSize = "10"
-        fitPreference = "Regular"
+        shoeSize = ""
+        fitPreference = ""
         profileLastSavedAt = ""
         profileNeedsCloudSync = false
         updateSizeProfileSummary()
@@ -1325,15 +1337,15 @@ struct ProfileView: View {
 
     private func clearAIMemory() {
         shareAppContextWithChatGPT = false
-        favoriteColors = "Black, white, navy"
-        favoriteBrands = "Ralph Lauren, Nike, Levi's"
+        favoriteColors = ""
+        favoriteBrands = ""
         favoriteStores = ""
-        budget = "$50 - $200"
-        stylePreferences = "Classic, business casual, clean sneakers"
-        occasions = "Work, church, dinner, travel"
-        favoriteOutfits = "Navy blazer with dark denim"
+        budget = ""
+        stylePreferences = ""
+        occasions = ""
+        favoriteOutfits = ""
         outfitDislikes = ""
-        clothingPreferences = "Clean fits, comfortable shoes, polished basics"
+        clothingPreferences = ""
         loadProfileDraft(force: true)
         dataDeletionMessage = "Personal Style Memory was cleared and turned off."
     }
@@ -1358,6 +1370,15 @@ private enum SizeProfileCategory: String, CaseIterable, Identifiable {
         }
         return SizeProfileCategory(rawValue: trimmed) ?? .men
     }
+
+    static func resolvedIfSet(from storedValue: String) -> SizeProfileCategory? {
+        let trimmed = storedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.caseInsensitiveCompare("Unisex") == .orderedSame {
+            return .unisex
+        }
+        return SizeProfileCategory(rawValue: trimmed)
+    }
 }
 
 private struct ProfileEditDraft: Equatable {
@@ -1373,7 +1394,7 @@ private struct ProfileEditDraft: Equatable {
     var pastPurchases = ""
     var favoriteOutfits = ""
     var closetInventory = ""
-    var sizeCategory = SizeProfileCategory.men.rawValue
+    var sizeCategory = ""
     var shirtSize = ""
     var pantsSize = ""
     var dressSize = ""
@@ -1382,14 +1403,14 @@ private struct ProfileEditDraft: Equatable {
     var neckSize = ""
     var sleeveLength = ""
     var shoeSize = ""
-    var fitPreference = "Regular"
+    var fitPreference = ""
 
     mutating func normalize() {
         name = normalized(name, fallback: "")
         favoriteColors = normalized(favoriteColors, fallback: "")
         favoriteBrands = normalized(favoriteBrands, fallback: "")
         favoriteStores = normalized(favoriteStores, fallback: "")
-        budget = normalized(budget, fallback: "$50 - $200")
+        budget = normalized(budget, fallback: "")
         stylePreferences = normalized(stylePreferences, fallback: "")
         occasions = normalized(occasions, fallback: "")
         outfitDislikes = normalized(outfitDislikes, fallback: "")
@@ -1397,7 +1418,7 @@ private struct ProfileEditDraft: Equatable {
         pastPurchases = normalized(pastPurchases, fallback: "")
         favoriteOutfits = normalized(favoriteOutfits, fallback: "")
         closetInventory = normalized(closetInventory, fallback: "")
-        sizeCategory = SizeProfileCategory.resolved(from: sizeCategory).rawValue
+        sizeCategory = SizeProfileCategory.resolvedIfSet(from: sizeCategory)?.rawValue ?? ""
         shirtSize = normalized(shirtSize, fallback: "")
         pantsSize = normalized(pantsSize, fallback: "")
         dressSize = normalized(dressSize, fallback: "")
@@ -1406,7 +1427,7 @@ private struct ProfileEditDraft: Equatable {
         neckSize = normalized(neckSize, fallback: "")
         sleeveLength = normalized(sleeveLength, fallback: "")
         shoeSize = normalized(shoeSize, fallback: "")
-        fitPreference = normalized(fitPreference, fallback: "Regular")
+        fitPreference = normalized(fitPreference, fallback: "")
     }
 
     private func normalized(_ text: String, fallback: String) -> String {

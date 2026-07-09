@@ -639,21 +639,21 @@ struct StableAIFallbackView: View {
     @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.chatGPT.rawValue
     @AppStorage("connectedAIAssistants") private var connectedAIAssistants = "\(PreferredAIAssistant.siri.rawValue),\(PreferredAIAssistant.chatGPT.rawValue)"
     @AppStorage("shareAppContextWithChatGPT") private var shareAppContextWithChatGPT = true
-    @AppStorage("shirtSize") private var shirtSize = "L"
-    @AppStorage("pantsSize") private var pantsSize = "Men 36x36"
+    @AppStorage("shirtSize") private var shirtSize = ""
+    @AppStorage("pantsSize") private var pantsSize = ""
     @AppStorage("neckSize") private var neckSize = ""
     @AppStorage("sleeveLength") private var sleeveLength = ""
-    @AppStorage("shoeSize") private var shoeSize = "10"
-    @AppStorage("fitPreference") private var fitPreference = "Regular"
-    @AppStorage("shoppingBudget") private var budget = "$50 - $200"
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
-    @AppStorage("favoriteBrands") private var favoriteBrands = "Ralph Lauren, Nike, Levi's"
-    @AppStorage("favoriteOutfits") private var favoriteOutfits = "Navy blazer with dark denim"
-    @AppStorage("weather") private var weather = "Mild weather"
-    @AppStorage("weatherCondition") private var weatherCondition = "Sunny"
-    @AppStorage("weatherSource") private var weatherSource = "Saved"
-    @AppStorage("plannedOccasion") private var plannedOccasion = "Work"
-    @AppStorage("stylePreferences") private var stylePreferences = "Classic, business casual, clean sneakers"
+    @AppStorage("shoeSize") private var shoeSize = ""
+    @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("shoppingBudget") private var budget = ""
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("favoriteBrands") private var favoriteBrands = ""
+    @AppStorage("favoriteOutfits") private var favoriteOutfits = ""
+    @AppStorage("weather") private var weather = ""
+    @AppStorage("weatherCondition") private var weatherCondition = ""
+    @AppStorage("weatherSource") private var weatherSource = ""
+    @AppStorage("plannedOccasion") private var plannedOccasion = ""
+    @AppStorage("stylePreferences") private var stylePreferences = ""
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("closetItemsData") private var closetItemsData = Data()
     @AppStorage("aiStylistConversationData") private var aiStylistConversationData = Data()
@@ -828,7 +828,7 @@ struct StableAIFallbackView: View {
                 .buttonStyle(.plain)
             }
 
-            Text("Your personal stylist checks weather, closet, sizes, saved scans, and style memory before suggesting what to wear.")
+            Text(profileHasSavedData ? "Your personal stylist checks saved weather, closet, sizes, scans, and style memory before suggesting what to wear." : "Add your profile, closet, and scans when you're ready. StyleMatch Pro will use them before suggesting what to wear.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
@@ -837,7 +837,7 @@ struct StableAIFallbackView: View {
                 WeatherStylingButton {
                     aiMiniMetric(title: weatherTemperatureText, detail: weatherConditionText, icon: "cloud.sun.fill")
                 }
-                aiMiniMetric(title: "\(expectedStyleScore)", detail: "Expected Score", icon: "star.fill")
+                aiMiniMetric(title: expectedStyleScoreText, detail: "Expected Score", icon: "star.fill")
             }
         }
         .padding()
@@ -852,15 +852,15 @@ struct StableAIFallbackView: View {
                 .font(.title2)
                 .fontWeight(.bold)
 
-            Text("Today's weather is \(weatherTemperatureText) and \(weatherConditionText.lowercased()). Based on your saved wardrobe, preferences, and today's occasion, StyleMatch Pro recommends a clean \(plannedOccasion.lowercased()) look.")
+            Text(dailyStyleBriefText)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineSpacing(4)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                aiMiniMetric(title: plannedOccasion, detail: "Occasion", icon: "calendar")
+                aiMiniMetric(title: plannedOccasionText, detail: "Occasion", icon: "calendar")
                 aiMiniMetric(title: "\(savedClosetCount)", detail: "Closet Items", icon: "tshirt.fill")
-                aiMiniMetric(title: "\(recentStyleScore)", detail: "Recent Score", icon: "clock.fill")
+                aiMiniMetric(title: recentStyleScoreText, detail: "Recent Score", icon: "clock.fill")
                 aiMiniMetric(title: "\(savedScanCount)", detail: "Saved Scans", icon: "photo.on.rectangle")
             }
         }
@@ -989,7 +989,7 @@ struct StableAIFallbackView: View {
                         .font(.title2)
                         .fontWeight(.bold)
 
-                    Text("\(recommendedStyle) • \(plannedOccasion) • \(weatherConditionText)")
+                    Text("\(recommendedStyle) • \(plannedOccasionText) • \(weatherConditionText)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -997,7 +997,7 @@ struct StableAIFallbackView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(expectedStyleScore)")
+                    Text(expectedStyleScoreText)
                         .font(.system(size: 38, weight: .bold, design: .rounded))
                     Text("Expected")
                         .font(.caption)
@@ -1333,10 +1333,10 @@ struct StableAIFallbackView: View {
                 }
 
                 aiSmallAction("Reset Style Profile", "arrow.counterclockwise") {
-                    favoriteColors = "Black, white, navy"
-                    favoriteBrands = "Ralph Lauren, Nike, Levi's"
-                    stylePreferences = "Classic, business casual, clean sneakers"
-                    message = "Style profile reset to starter preferences."
+                    favoriteColors = ""
+                    favoriteBrands = ""
+                    stylePreferences = ""
+                    message = "Style profile fields were cleared. Add preferences in Profile when you're ready."
                 }
             }
 
@@ -1654,9 +1654,9 @@ struct StableAIFallbackView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 aiAdviceRow(icon: "tshirt.fill", title: "Start with", value: "Navy or white shirt")
-                aiAdviceRow(icon: "figure.stand", title: "Pair with", value: "Dark denim or 36x36 pants")
+                aiAdviceRow(icon: "figure.stand", title: "Pair with", value: "Dark denim or tailored pants")
                 aiAdviceRow(icon: "shoe.2.fill", title: "Shoes", value: "Clean white sneakers or black loafers")
-                aiAdviceRow(icon: "star.fill", title: "Expected score", value: "92-95 if the fit is clean")
+                aiAdviceRow(icon: "star.fill", title: "Expected score", value: expectedStyleAdviceText)
             }
 
             HStack(spacing: 12) {
@@ -1955,9 +1955,9 @@ struct StableAIFallbackView: View {
             weatherPreferences: "\(weatherConditionText), \(weatherTemperatureText)",
             dressCode: plannedOccasion,
             shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands)",
-            pastOutfitRatings: "\(recentStyleScore)/100 recent score, \(savedScanCount) saved scan\(savedScanCount == 1 ? "" : "s")",
+            pastOutfitRatings: pastOutfitRatingsContext,
             frequentlyWornOutfits: favoriteOutfits,
-            pastPurchases: "White Oxford shirt, black leather belt",
+            pastPurchases: "",
             favoriteOutfits: favoriteOutfits,
             closetInventory: closetItems.prefix(12).map { "\($0.color) \($0.name)" }.joined(separator: ", "),
             appContextSharingEnabled: shareAppContextWithChatGPT,
@@ -2418,12 +2418,29 @@ struct StableAIFallbackView: View {
         cachedLatestStoredScan
     }
 
+    private var profileHasSavedData: Bool {
+        FounderProfileDefaultsMigration.hasIntentionalProfileSave()
+    }
+
     private var recentStyleScore: Int {
-        latestStoredScan?.score ?? 92
+        latestStoredScan?.score ?? 0
+    }
+
+    private var recentStyleScoreText: String {
+        latestStoredScan.map { "\($0.score)" } ?? "No scans yet"
     }
 
     private var expectedStyleScore: Int {
+        guard latestStoredScan != nil else { return 0 }
         min(98, max(82, recentStyleScore + (shareAppContextWithChatGPT ? 2 : 0)))
+    }
+
+    private var expectedStyleScoreText: String {
+        latestStoredScan == nil ? "No scans yet" : "\(expectedStyleScore)"
+    }
+
+    private var expectedStyleAdviceText: String {
+        latestStoredScan == nil ? "Scan an outfit to unlock an expected score." : "\(expectedStyleScore) projected from your recent scan."
     }
 
     private var aiConfidence: Int {
@@ -2431,6 +2448,9 @@ struct StableAIFallbackView: View {
     }
 
     private var recommendedStyle: String {
+        guard profileHasSavedData || latestStoredScan != nil else {
+            return "Personalized look"
+        }
         if plannedOccasion.localizedCaseInsensitiveContains("church") {
             return "Polished Traditional or Smart Casual"
         }
@@ -2441,6 +2461,21 @@ struct StableAIFallbackView: View {
             return "Formal Event"
         }
         return "Smart Casual"
+    }
+
+    private var plannedOccasionText: String {
+        plannedOccasion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "No occasion yet" : plannedOccasion
+    }
+
+    private var dailyStyleBriefText: String {
+        if profileHasSavedData || latestStoredScan != nil || savedClosetCount > 0 {
+            return "Today's weather is \(weatherTemperatureText) and \(weatherConditionText.lowercased()). Based on your saved wardrobe, preferences, and today's occasion, StyleMatch Pro recommends a clean \(plannedOccasionText.lowercased()) look."
+        }
+        return "Add a profile, closet item, or scan history to unlock a personalized daily style brief."
+    }
+
+    private var pastOutfitRatingsContext: String {
+        latestStoredScan.map { "\($0.score)/100 recent score, \(savedScanCount) saved scan\(savedScanCount == 1 ? "" : "s")" } ?? "\(savedScanCount) saved scan\(savedScanCount == 1 ? "" : "s")"
     }
 
     private var profileCompleteness: Int {
@@ -2476,7 +2511,7 @@ struct StableAIFallbackView: View {
             return "You already own everything needed for a complete outfit."
         }
         if !closetHasShoes {
-            return "Only black loafers or clean sneakers appear to be missing."
+            return "Add shoes to your closet to improve outfit matching."
         }
         if !closetHasTop {
             return "A crisp shirt would complete more outfits in your closet."
@@ -2720,9 +2755,9 @@ struct StableAIFallbackView: View {
             weatherPreferences: "\(weatherConditionText), \(weatherTemperatureText)",
             dressCode: plannedOccasion,
             shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands)",
-            pastOutfitRatings: "\(recentStyleScore)/100 recent score, \(savedScanCount) saved scan\(savedScanCount == 1 ? "" : "s")",
+            pastOutfitRatings: pastOutfitRatingsContext,
             frequentlyWornOutfits: favoriteOutfits,
-            pastPurchases: "White Oxford shirt, black leather belt",
+            pastPurchases: "",
             favoriteOutfits: favoriteOutfits,
             closetInventory: closetItems.prefix(12).map { "\($0.color) \($0.name)" }.joined(separator: ", "),
             appContextSharingEnabled: false,
@@ -2964,10 +2999,10 @@ struct WeatherStylingButton<LabelContent: View>: View {
 }
 
 struct WeatherStylingPanel: View {
-    @AppStorage("weather") private var weather = "84°F"
-    @AppStorage("weatherCondition") private var weatherCondition = "Sunny"
+    @AppStorage("weather") private var weather = ""
+    @AppStorage("weatherCondition") private var weatherCondition = ""
     @AppStorage("weatherCity") private var weatherCity = ""
-    @AppStorage("weatherSource") private var weatherSource = "Saved"
+    @AppStorage("weatherSource") private var weatherSource = ""
     @AppStorage("weatherFeelsLike") private var weatherFeelsLike = ""
     @AppStorage("weatherRainChance") private var weatherRainChance = ""
     @AppStorage("weatherHumidity") private var weatherHumidity = ""
@@ -2978,9 +3013,9 @@ struct WeatherStylingPanel: View {
     @AppStorage("weatherAlert") private var weatherAlert = ""
     @AppStorage("weatherErrorMessage") private var weatherErrorMessage = ""
     @AppStorage("liveWeatherUpdatedAt") private var liveWeatherUpdatedAt = 0.0
-    @AppStorage("plannedOccasion") private var plannedOccasion = "Work"
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
-    @AppStorage("shoppingBudget") private var budget = "$50 - $200"
+    @AppStorage("plannedOccasion") private var plannedOccasion = ""
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("shoppingBudget") private var budget = ""
     @StateObject private var manager = StyleMatchLiveWeatherManager()
     @State private var cityDraft = ""
     @Environment(\.dismiss) private var dismiss

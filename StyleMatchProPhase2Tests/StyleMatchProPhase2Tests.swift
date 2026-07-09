@@ -3391,6 +3391,16 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         )
     }
 
+    private func seedFounderSizeDefaults() {
+        defaults.set("Men", forKey: "sizeCategory")
+        defaults.set("L", forKey: "shirtSize")
+        defaults.set("Men 36x36", forKey: "pantsSize")
+        defaults.set("36", forKey: "waistSize")
+        defaults.set("36", forKey: "inseamLength")
+        defaults.set("10", forKey: "shoeSize")
+        defaults.set("Regular", forKey: "fitPreference")
+    }
+
     func testGreetingBuilderDoesNotUsePlaceholderNameForEmptyProfile() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -3421,6 +3431,135 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             StyleMatchGreetingBuilder.greetingLine(date: morning, calendar: calendar, storedName: newUserProfile.givenName),
             "Good Morning"
         )
+    }
+
+    func testFounderDefaultsMigrationClearsExactFingerprintWithoutSaveMarker() {
+        seedFounderSizeDefaults()
+        defaults.set("Black, white, navy", forKey: "favoriteColors")
+        defaults.set("Ralph Lauren, Nike, Levi's", forKey: "favoriteBrands")
+
+        XCTAssertTrue(FounderProfileDefaultsMigration.matchesFounderFingerprint(defaults: defaults))
+        XCTAssertTrue(FounderProfileDefaultsMigration.run(defaults: defaults, userID: userA))
+
+        XCTAssertNil(defaults.object(forKey: "sizeCategory"))
+        XCTAssertNil(defaults.object(forKey: "shirtSize"))
+        XCTAssertNil(defaults.object(forKey: "pantsSize"))
+        XCTAssertNil(defaults.object(forKey: "waistSize"))
+        XCTAssertNil(defaults.object(forKey: "inseamLength"))
+        XCTAssertNil(defaults.object(forKey: "shoeSize"))
+        XCTAssertNil(defaults.object(forKey: "fitPreference"))
+        XCTAssertNil(defaults.object(forKey: "favoriteColors"))
+        XCTAssertNil(defaults.object(forKey: "favoriteBrands"))
+        XCTAssertTrue(defaults.bool(forKey: FounderProfileDefaultsMigration.migrationFlag))
+    }
+
+    func testFounderDefaultsMigrationPreservesRealSavedProfile() {
+        seedFounderSizeDefaults()
+        defaults.set("2026-07-09T09:00:00Z", forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey)
+        defaults.set("Black, white, navy", forKey: "favoriteColors")
+        defaults.set("Ralph Lauren, Nike, Levi's", forKey: "favoriteBrands")
+
+        XCTAssertTrue(FounderProfileDefaultsMigration.matchesFounderFingerprint(defaults: defaults))
+        XCTAssertFalse(FounderProfileDefaultsMigration.run(defaults: defaults, userID: userA))
+
+        XCTAssertEqual(defaults.string(forKey: "sizeCategory"), "Men")
+        XCTAssertEqual(defaults.string(forKey: "shirtSize"), "L")
+        XCTAssertEqual(defaults.string(forKey: "pantsSize"), "Men 36x36")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "36")
+        XCTAssertEqual(defaults.string(forKey: "shoeSize"), "10")
+        XCTAssertEqual(defaults.string(forKey: "fitPreference"), "Regular")
+        XCTAssertEqual(defaults.string(forKey: "favoriteColors"), "Black, white, navy")
+        XCTAssertEqual(defaults.string(forKey: "favoriteBrands"), "Ralph Lauren, Nike, Levi's")
+        XCTAssertTrue(defaults.bool(forKey: FounderProfileDefaultsMigration.migrationFlag))
+    }
+
+    func testFounderDefaultsMigrationPreservesNonExactProfileValues() {
+        seedFounderSizeDefaults()
+        defaults.set("Men 36x32", forKey: "pantsSize")
+
+        XCTAssertFalse(FounderProfileDefaultsMigration.matchesFounderFingerprint(defaults: defaults))
+        XCTAssertFalse(FounderProfileDefaultsMigration.run(defaults: defaults, userID: userA))
+
+        XCTAssertEqual(defaults.string(forKey: "pantsSize"), "Men 36x32")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "36")
+    }
+
+    func testFounderDefaultsMigrationRunsOnlyOnce() {
+        seedFounderSizeDefaults()
+
+        XCTAssertTrue(FounderProfileDefaultsMigration.run(defaults: defaults, userID: userA))
+        defaults.set("Men 36x36", forKey: "pantsSize")
+        defaults.set("36", forKey: "waistSize")
+        defaults.set("36", forKey: "inseamLength")
+
+        XCTAssertFalse(FounderProfileDefaultsMigration.run(defaults: defaults, userID: userA))
+        XCTAssertEqual(defaults.string(forKey: "pantsSize"), "Men 36x36")
+    }
+
+    func testProfileStoreFreshInstallUsesBlankProfileAndZeroCompleteness() {
+        let profile = ProfileStore(defaults: defaults, userId: userA).currentProfile
+
+        XCTAssertTrue(profile.favoriteColors.isEmpty)
+        XCTAssertTrue(profile.favoriteBrands.isEmpty)
+        XCTAssertNil(profile.clothingSizes.shirtSize)
+        XCTAssertNil(profile.clothingSizes.pantSize)
+        XCTAssertNil(profile.clothingSizes.shoeSize)
+        XCTAssertEqual(ProfileStore.profileCompletenessPercentage(profile), 0)
+    }
+
+    func testProfileStoreKeepsSavedProfileThroughFounderMigration() {
+        seedFounderSizeDefaults()
+        defaults.set("2026-07-09T09:00:00Z", forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey)
+
+        let profile = ProfileStore(defaults: defaults, userId: userA).currentProfile
+
+        XCTAssertEqual(profile.clothingSizes.shirtSize, "L")
+        XCTAssertEqual(profile.clothingSizes.pantSize, "Men 36x36")
+        XCTAssertEqual(profile.clothingSizes.shoeSize, "10")
+        XCTAssertEqual(profile.preferredFit, .regular)
+        XCTAssertEqual(defaults.string(forKey: "sizeCategory"), "Men")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "36")
+    }
+
+    func testLoginWelcomeProfileDataRequiresIntentionalSaveMarker() {
+        defaults.set("Navy blazer with dark denim", forKey: "favoriteOutfits")
+        defaults.set("Classic, business casual, clean sneakers", forKey: "stylePreferences")
+        defaults.set("Black, white, navy", forKey: "favoriteColors")
+
+        XCTAssertFalse(
+            LoginWelcomeProfileData.hasIntentionalProfileValues(
+                favoriteOutfits: "Navy blazer with dark denim",
+                stylePreferences: "Classic, business casual, clean sneakers",
+                favoriteColors: "Black, white, navy",
+                profileName: "",
+                defaults: defaults
+            )
+        )
+
+        defaults.set("2026-07-09T09:00:00Z", forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey)
+
+        XCTAssertTrue(
+            LoginWelcomeProfileData.hasIntentionalProfileValues(
+                favoriteOutfits: "Navy blazer with dark denim",
+                stylePreferences: "",
+                favoriteColors: "",
+                profileName: "",
+                defaults: defaults
+            )
+        )
+    }
+
+    func testProfileDisplaySourcesDoNotUseFakeScoreFallbacks() throws {
+        let homeSource = try projectSource("StyleMatchAI/HomeView.swift")
+        let contentSource = try projectSource("StyleMatchAI/ContentView.swift")
+
+        XCTAssertFalse(homeSource.contains("return \"92\""))
+        XCTAssertFalse(contentSource.contains("?? 92"))
+        XCTAssertFalse(contentSource.contains("\"92-95 if the fit is clean\""))
+        XCTAssertFalse(contentSource.contains("Only black loafers or clean sneakers appear to be missing."))
     }
 
     func testPrivacyDeletionUsesActiveUserBeforeClearingSessionKeys() {

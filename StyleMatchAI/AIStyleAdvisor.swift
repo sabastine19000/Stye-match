@@ -71,9 +71,10 @@ enum AIStyleAdvisor {
 
     private static func weatherSummary(defaults: UserDefaults) -> String {
         let city = stringValue("weatherCity", fallback: "", defaults: defaults)
-        let weather = stringValue("weather", fallback: "Mild weather", defaults: defaults)
-        let condition = stringValue("weatherCondition", fallback: "Mild", defaults: defaults)
-        return city.isEmpty ? "\(condition), \(weather)" : "\(condition), \(weather), \(city)"
+        let weather = stringValue("weather", fallback: "", defaults: defaults)
+        let condition = stringValue("weatherCondition", fallback: "", defaults: defaults)
+        let parts = [condition, weather, city].filter { !$0.isEmpty }
+        return parts.isEmpty ? "No weather saved" : parts.joined(separator: ", ")
     }
 
     private static func dressCodeSummary(defaults: UserDefaults) -> String {

@@ -3,27 +3,27 @@ import SwiftUI
 struct ClosetView: View {
     @Binding var selectedTab: AppTab
     @AppStorage("closetItemsData") private var closetItemsData = Data()
-    @AppStorage("closetInventory") private var closetInventory = "Dark denim, white shirts, black shoes"
-    @AppStorage("sizeProfile") private var sizeProfile = "Pants: 24W-60W x 26L-40L, saved 36W x 36L; Shirts: XXS-8XL; Shoes: 5-18"
-    @AppStorage("shirtSize") private var shirtSize = "L"
-    @AppStorage("pantsSize") private var pantsSize = "Men 36x36"
-    @AppStorage("waistSize") private var waistSize = "36"
-    @AppStorage("inseamLength") private var inseamLength = "36"
+    @AppStorage("closetInventory") private var closetInventory = ""
+    @AppStorage("sizeProfile") private var sizeProfile = ""
+    @AppStorage("shirtSize") private var shirtSize = ""
+    @AppStorage("pantsSize") private var pantsSize = ""
+    @AppStorage("waistSize") private var waistSize = ""
+    @AppStorage("inseamLength") private var inseamLength = ""
     @AppStorage("neckSize") private var neckSize = ""
     @AppStorage("sleeveLength") private var sleeveLength = ""
-    @AppStorage("shoeSize") private var shoeSize = "10"
-    @AppStorage("fitPreference") private var fitPreference = "Regular"
+    @AppStorage("shoeSize") private var shoeSize = ""
+    @AppStorage("fitPreference") private var fitPreference = ""
     @AppStorage("favoriteClosetItemIDs") private var favoriteClosetItemIDs = ""
-    @AppStorage("favoriteOutfits") private var savedFavoriteOutfits = "Navy blazer with dark denim"
-    @AppStorage("favoriteColors") private var savedFavoriteColors = "Black, white, navy"
-    @AppStorage("favoriteBrands") private var savedFavoriteBrands = "Ralph Lauren, Nike, Levi's"
-    @AppStorage("budget") private var budget = "$50-$200"
-    @AppStorage("weatherLocation") private var weatherLocation = "Current location"
-    @AppStorage("weather") private var weather = "84°F"
-    @AppStorage("weatherCondition") private var weatherCondition = "Mild"
+    @AppStorage("favoriteOutfits") private var savedFavoriteOutfits = ""
+    @AppStorage("favoriteColors") private var savedFavoriteColors = ""
+    @AppStorage("favoriteBrands") private var savedFavoriteBrands = ""
+    @AppStorage("budget") private var budget = ""
+    @AppStorage("weatherLocation") private var weatherLocation = ""
+    @AppStorage("weather") private var weather = ""
+    @AppStorage("weatherCondition") private var weatherCondition = ""
     @AppStorage("weatherRainChance") private var weatherRainChance = ""
     @AppStorage("weatherCity") private var weatherCity = ""
-    @AppStorage("sizeCategory") private var sizeCategory = "Men"
+    @AppStorage("sizeCategory") private var sizeCategory = ""
     @State private var items: [ClosetItem] = []
     @State private var name = ""
     @State private var category = "Shirt"
@@ -668,7 +668,7 @@ struct ClosetView: View {
 
                 labeledControl(sizeLabel) {
                     if category == "Pants" || category == "Jeans" {
-                        TextField("Men 36x36", text: $size)
+                        TextField("Pants size", text: $size)
                             .textFieldStyle(.roundedBorder)
                     } else {
                         Picker(sizeLabel, selection: $size) {
@@ -2443,7 +2443,7 @@ struct ClosetView: View {
         case "Pants", "Jeans":
             let trimmed = size.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty || !trimmed.localizedCaseInsensitiveContains("x") {
-                size = "Men 36x36"
+                size = ""
             }
         case "Shoes":
             if !shoeSizes.contains(size) {
@@ -3069,7 +3069,7 @@ private struct AddClothingItemView: View {
 
                         labeledControl(sizeLabel) {
                             if category == "Pants" || category == "Jeans" {
-                                TextField("Men 36x36", text: $size)
+                                TextField("Pants size", text: $size)
                                     .textFieldStyle(.roundedBorder)
                             } else {
                                 Picker(sizeLabel, selection: $size) {
@@ -3226,16 +3226,16 @@ private struct AddClothingItemView: View {
 }
 
 struct SizeProfileView: View {
-    @AppStorage("sizeProfile") private var sizeProfile = "Pants: 24W-60W x 26L-40L, saved 36W x 36L; Shirts: XXS-8XL; Shoes: 5-18"
-    @AppStorage("shirtSize") private var shirtSize = "L"
-    @AppStorage("pantsSize") private var pantsSize = "Men 36x36"
-    @AppStorage("waistSize") private var waistSize = "36"
-    @AppStorage("inseamLength") private var inseamLength = "36"
+    @AppStorage("sizeProfile") private var sizeProfile = ""
+    @AppStorage("shirtSize") private var shirtSize = ""
+    @AppStorage("pantsSize") private var pantsSize = ""
+    @AppStorage("waistSize") private var waistSize = ""
+    @AppStorage("inseamLength") private var inseamLength = ""
     @AppStorage("neckSize") private var neckSize = ""
     @AppStorage("sleeveLength") private var sleeveLength = ""
-    @AppStorage("shoeSize") private var shoeSize = "10"
-    @AppStorage("fitPreference") private var fitPreference = "Regular"
-    @AppStorage("sizeCategory") private var sizeCategory = "Men"
+    @AppStorage("shoeSize") private var shoeSize = ""
+    @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("sizeCategory") private var sizeCategory = ""
 
     @State private var saveConfirmation = ""
 

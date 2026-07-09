@@ -2,13 +2,13 @@ import SwiftUI
 
 struct OnboardingView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
-    @AppStorage("stylePreferences") private var stylePreferences = "Classic, business casual, clean sneakers"
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
-    @AppStorage("occasions") private var occasions = "Work, church, dinner, travel"
+    @AppStorage("stylePreferences") private var stylePreferences = ""
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("occasions") private var occasions = ""
     @State private var selectedPage = 0
-    @State private var selectedStyles: Set<String> = ["Classic"]
-    @State private var selectedColors: Set<String> = ["Black", "White", "Navy"]
-    @State private var selectedOccasions: Set<String> = ["Work", "Dinner"]
+    @State private var selectedStyles: Set<String> = []
+    @State private var selectedColors: Set<String> = []
+    @State private var selectedOccasions: Set<String> = []
 
     private let slides = [
         OnboardingSlide(

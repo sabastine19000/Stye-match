@@ -107,9 +107,9 @@ struct StylistProfile: Codable, Identifiable {
         dislikedColors = try container.decodeIfPresent([String].self, forKey: .dislikedColors) ?? []
         favoriteBrands = try container.decodeIfPresent([String].self, forKey: .favoriteBrands) ?? []
         preferredFit = try container.decodeIfPresent(FitPreference.self, forKey: .preferredFit) ?? .regular
-        budgetRange = try container.decodeIfPresent(BudgetRange.self, forKey: .budgetRange) ?? BudgetRange(minPrice: 50, maxPrice: 200, preferredTier: "Mid")
-        climate = try container.decodeIfPresent(String.self, forKey: .climate) ?? "Mild"
-        workDressCode = try container.decodeIfPresent(String.self, forKey: .workDressCode) ?? "Smart casual"
+        budgetRange = try container.decodeIfPresent(BudgetRange.self, forKey: .budgetRange) ?? .neutral
+        climate = try container.decodeIfPresent(String.self, forKey: .climate) ?? ""
+        workDressCode = try container.decodeIfPresent(String.self, forKey: .workDressCode) ?? ""
         bodyProportions = try container.decodeIfPresent(BodyProportions.self, forKey: .bodyProportions)
         clothingSizes = try container.decodeIfPresent(ClothingSizes.self, forKey: .clothingSizes) ?? ClothingSizes()
         stylePreferencesLearned = try container.decodeIfPresent([String: Double].self, forKey: .stylePreferencesLearned) ?? [:]
@@ -141,6 +141,8 @@ struct BudgetRange: Codable {
     var minPrice: Double
     var maxPrice: Double
     var preferredTier: String
+
+    static let neutral = BudgetRange(minPrice: 0, maxPrice: 0, preferredTier: "")
 }
 
 struct BodyProportions: Codable {
@@ -248,6 +250,122 @@ struct PantsSizeFieldState: Equatable {
             waistSize: waistSize,
             inseamLength: inseamLength
         )
+    }
+}
+
+enum FounderProfileDefaultsMigration {
+    static let migrationFlag = "didRunFounderDefaultsMigration_v1"
+    static let profileLastSavedAtKey = "profileLastSavedAt"
+
+    private static let exactFingerprint: [String: String] = [
+        "sizeCategory": "Men",
+        "shirtSize": "L",
+        "pantsSize": "Men 36x36",
+        "waistSize": "36",
+        "inseamLength": "36",
+        "shoeSize": "10",
+        "fitPreference": "Regular"
+    ]
+
+    static let profilePreferenceKeys = [
+        "profileName",
+        "favoriteColors",
+        "favoriteBrands",
+        "favoriteStores",
+        "shoppingBudget",
+        "budget",
+        "sizeProfile",
+        "sizeCategory",
+        "shirtSize",
+        "pantsSize",
+        "dressSize",
+        "waistSize",
+        "inseamLength",
+        "neckSize",
+        "sleeveLength",
+        "shoeSize",
+        "fitPreference",
+        "stylePreferences",
+        "occasions",
+        "plannedOccasion",
+        "dressCode",
+        "occasionFormality",
+        "weather",
+        "weatherCity",
+        "weatherCondition",
+        "weatherSource",
+        "pastPurchases",
+        "favoriteOutfits",
+        "closetInventory",
+        "outfitDislikes",
+        "clothingPreferences"
+    ]
+
+    static func hasIntentionalProfileSave(defaults: UserDefaults = .standard) -> Bool {
+        clean(defaults.string(forKey: profileLastSavedAtKey)) != nil
+    }
+
+    static func matchesFounderFingerprint(defaults: UserDefaults = .standard) -> Bool {
+        for (key, expectedValue) in exactFingerprint {
+            guard clean(defaults.string(forKey: key))?.caseInsensitiveCompare(expectedValue) == .orderedSame else {
+                return false
+            }
+        }
+        return true
+    }
+
+    @discardableResult
+    static func run(defaults: UserDefaults = .standard, userID: String? = nil) -> Bool {
+        guard defaults.bool(forKey: migrationFlag) == false else { return false }
+        defer { defaults.set(true, forKey: migrationFlag) }
+        guard hasIntentionalProfileSave(defaults: defaults) == false,
+              matchesFounderFingerprint(defaults: defaults) else {
+            return false
+        }
+        clearProfilePreferenceDefaults(defaults: defaults, userID: userID)
+        return true
+    }
+
+    static func clearProfilePreferenceDefaults(defaults: UserDefaults = .standard, userID: String? = nil) {
+        for key in profilePreferenceKeys {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.removeObject(forKey: profileLastSavedAtKey)
+
+        let resolvedUserID = PersonalStylistStorage.normalizedUserID(
+            userID ?? PersonalStylistStorage.activeUserID(defaults: defaults)
+        )
+        defaults.removeObject(
+            forKey: PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyProfileKey, userID: resolvedUserID)
+        )
+        PersonalStylistSnapshotStore.deleteData(store: "StylistProfile", userID: resolvedUserID)
+    }
+
+    private static func clean(_ value: String?) -> String? {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+enum LoginWelcomeProfileData {
+    static func hasValue(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func hasIntentionalProfileValues(
+        favoriteOutfits: String,
+        stylePreferences: String,
+        favoriteColors: String,
+        profileName: String,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard FounderProfileDefaultsMigration.hasIntentionalProfileSave(defaults: defaults) else {
+            return false
+        }
+        return hasValue(favoriteOutfits)
+            || hasValue(stylePreferences)
+            || hasValue(favoriteColors)
+            || StyleMatchGreetingBuilder.firstName(from: profileName) != nil
     }
 }
 

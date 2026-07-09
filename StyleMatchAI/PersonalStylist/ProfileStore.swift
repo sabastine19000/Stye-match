@@ -13,7 +13,9 @@ final class ProfileStore: ObservableObject {
     init(defaults: UserDefaults = .standard, userId: String? = nil) {
         self.defaults = defaults
         PersonalStylistStorage.migrateLegacyKeysIfNeeded(defaults: defaults)
-        self.userID = PersonalStylistStorage.normalizedUserID(userId ?? PersonalStylistStorage.activeUserID(defaults: defaults))
+        let activeUserID = userId ?? PersonalStylistStorage.activeUserID(defaults: defaults)
+        FounderProfileDefaultsMigration.run(defaults: defaults, userID: activeUserID)
+        self.userID = PersonalStylistStorage.normalizedUserID(activeUserID)
         self.profileKey = PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyProfileKey, userID: self.userID)
         self.feedbackCountKey = PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyFeedbackCountKey, userID: self.userID)
         currentProfile = Self.loadProfile(from: defaults, key: profileKey, userID: self.userID) ?? Self.makeDefaultProfile(defaults: defaults, userID: self.userID)
@@ -104,7 +106,7 @@ final class ProfileStore: ObservableObject {
         let scanConfidence = min(55.0, Double(profile.totalScansCompleted) * 2.75)
         let feedbackConfidence = min(25.0, Double(defaults.integer(forKey: feedbackCountKey)) * 2.5)
         let preferenceConfidence = min(15.0, Double(profile.stylePreferencesLearned.count) * 0.75)
-        let profileDetailConfidence = profileCompletenessScore(profile) * 5.0
+        let profileDetailConfidence = Self.profileCompletenessScore(profile) * 5.0
         let total = 20.0 + scanConfidence + feedbackConfidence + preferenceConfidence + profileDetailConfidence
         profile.profileConfidenceScore = min(95.0, max(20.0, total))
         profile.lastUpdatedAt = Date()
@@ -117,7 +119,11 @@ final class ProfileStore: ObservableObject {
         profile.stylePreferencesLearned[key] = min(3.0, max(-1.0, current + delta))
     }
 
-    private func profileCompletenessScore(_ profile: StylistProfile) -> Double {
+    static func profileCompletenessPercentage(_ profile: StylistProfile) -> Int {
+        Int((profileCompletenessScore(profile) * 100).rounded())
+    }
+
+    private static func profileCompletenessScore(_ profile: StylistProfile) -> Double {
         var completed = 0.0
         var total = 0.0
 
@@ -180,26 +186,53 @@ final class ProfileStore: ObservableObject {
     }
 
     private static func makeDefaultProfile(defaults: UserDefaults, userID: String) -> StylistProfile {
+        guard FounderProfileDefaultsMigration.hasIntentionalProfileSave(defaults: defaults) else {
+            return blankProfile(userID: userID)
+        }
+
         let now = Date()
         return StylistProfile(
             id: UUID(),
             userId: userID,
             givenName: nil,
-            favoriteColors: splitList(defaults.string(forKey: "favoriteColors") ?? "Black, white, navy"),
+            favoriteColors: splitList(defaults.string(forKey: "favoriteColors") ?? ""),
             dislikedColors: [],
-            favoriteBrands: splitList(defaults.string(forKey: "favoriteBrands") ?? "Ralph Lauren, Nike, Levi's"),
-            preferredFit: FitPreference(rawValue: (defaults.string(forKey: "fitPreference") ?? "regular").lowercased()) ?? .regular,
-            budgetRange: parseBudget(defaults.string(forKey: "shoppingBudget") ?? "$50 - $200"),
-            climate: defaults.string(forKey: "weatherCondition") ?? "Mild",
-            workDressCode: defaults.string(forKey: "dressCode") ?? "Smart casual",
+            favoriteBrands: splitList(defaults.string(forKey: "favoriteBrands") ?? ""),
+            preferredFit: FitPreference(rawValue: (cleanOptional(defaults.string(forKey: "fitPreference")) ?? "").lowercased()) ?? .regular,
+            budgetRange: parseBudget(defaults.string(forKey: "shoppingBudget") ?? ""),
+            climate: cleanOptional(defaults.string(forKey: "weatherCondition")) ?? "",
+            workDressCode: cleanOptional(defaults.string(forKey: "dressCode")) ?? "",
             bodyProportions: nil,
             clothingSizes: ClothingSizes(
-                shirtSize: defaults.string(forKey: "shirtSize"),
-                pantSize: defaults.string(forKey: "pantsSize"),
-                shoeSize: defaults.string(forKey: "shoeSize"),
+                shirtSize: cleanOptional(defaults.string(forKey: "shirtSize")),
+                pantSize: cleanOptional(defaults.string(forKey: "pantsSize")),
+                shoeSize: cleanOptional(defaults.string(forKey: "shoeSize")),
                 jacketSize: nil,
-                dressSize: defaults.string(forKey: "dressSize")
+                dressSize: cleanOptional(defaults.string(forKey: "dressSize"))
             ),
+            stylePreferencesLearned: [:],
+            createdAt: now,
+            lastUpdatedAt: now,
+            totalScansCompleted: 0,
+            profileConfidenceScore: 20
+        )
+    }
+
+    private static func blankProfile(userID: String) -> StylistProfile {
+        let now = Date()
+        return StylistProfile(
+            id: UUID(),
+            userId: userID,
+            givenName: nil,
+            favoriteColors: [],
+            dislikedColors: [],
+            favoriteBrands: [],
+            preferredFit: .regular,
+            budgetRange: .neutral,
+            climate: "",
+            workDressCode: "",
+            bodyProportions: nil,
+            clothingSizes: ClothingSizes(),
             stylePreferencesLearned: [:],
             createdAt: now,
             lastUpdatedAt: now,
@@ -218,8 +251,11 @@ final class ProfileStore: ObservableObject {
         let numbers = text
             .components(separatedBy: CharacterSet(charactersIn: "0123456789.").inverted)
             .compactMap { Double($0) }
-        let minPrice = numbers.first ?? 50
-        let maxPrice = numbers.dropFirst().first ?? max(minPrice, 200)
+        guard let first = numbers.first else {
+            return .neutral
+        }
+        let minPrice = first
+        let maxPrice = numbers.dropFirst().first ?? first
         let tier: String
         switch maxPrice {
         case ..<75:
@@ -230,5 +266,10 @@ final class ProfileStore: ObservableObject {
             tier = "Premium"
         }
         return BudgetRange(minPrice: minPrice, maxPrice: maxPrice, preferredTier: tier)
+    }
+
+    private static func cleanOptional(_ text: String?) -> String? {
+        let trimmed = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

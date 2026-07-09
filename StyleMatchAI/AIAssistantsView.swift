@@ -8,27 +8,27 @@ struct AIAssistantsView: View {
     @Binding var selectedTab: AppTab
     @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.chatGPT.rawValue
     @AppStorage("connectedAIAssistants") private var connectedAIAssistants = "\(PreferredAIAssistant.siri.rawValue),\(PreferredAIAssistant.chatGPT.rawValue)"
-    @AppStorage("shoppingBudget") private var budget = "$50 - $200"
-    @AppStorage("sizeProfile") private var sizeProfile = "Pants: 24W-60W x 26L-40L, saved 36W x 36L; Shirts: XXS-8XL; Shoes: 5-18"
-    @AppStorage("shirtSize") private var shirtSize = "L"
-    @AppStorage("pantsSize") private var pantsSize = "Men 36x36"
-    @AppStorage("weather") private var weather = "Mild weather"
+    @AppStorage("shoppingBudget") private var budget = ""
+    @AppStorage("sizeProfile") private var sizeProfile = ""
+    @AppStorage("shirtSize") private var shirtSize = ""
+    @AppStorage("pantsSize") private var pantsSize = ""
+    @AppStorage("weather") private var weather = ""
     @AppStorage("weatherCity") private var weatherCity = ""
-    @AppStorage("weatherCondition") private var weatherCondition = "Mild"
+    @AppStorage("weatherCondition") private var weatherCondition = ""
     @AppStorage("openAIModel") private var openAIModel = "gpt-4o-mini"
-    @AppStorage("fitPreference") private var fitPreference = "Regular"
+    @AppStorage("fitPreference") private var fitPreference = ""
     @AppStorage("profileName") private var name = ""
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
-    @AppStorage("favoriteBrands") private var favoriteBrands = "Ralph Lauren, Nike, Levi's"
-    @AppStorage("stylePreferences") private var stylePreferences = "Classic, business casual, clean sneakers"
-    @AppStorage("occasions") private var occasions = "Work, church, dinner, travel"
-    @AppStorage("plannedOccasion") private var plannedOccasion = "Work"
-    @AppStorage("dressCode") private var dressCode = "Smart casual"
-    @AppStorage("occasionFormality") private var occasionFormality = "Polished"
-    @AppStorage("pastPurchases") private var pastPurchases = "White Oxford shirt, black leather belt"
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("favoriteBrands") private var favoriteBrands = ""
+    @AppStorage("stylePreferences") private var stylePreferences = ""
+    @AppStorage("occasions") private var occasions = ""
+    @AppStorage("plannedOccasion") private var plannedOccasion = ""
+    @AppStorage("dressCode") private var dressCode = ""
+    @AppStorage("occasionFormality") private var occasionFormality = ""
+    @AppStorage("pastPurchases") private var pastPurchases = ""
     @AppStorage("fashionJournalCompliments") private var fashionJournalCompliments = ""
-    @AppStorage("favoriteOutfits") private var favoriteOutfits = "Navy blazer with dark denim"
-    @AppStorage("closetInventory") private var closetInventory = "Dark denim, white shirts, black shoes"
+    @AppStorage("favoriteOutfits") private var favoriteOutfits = ""
+    @AppStorage("closetInventory") private var closetInventory = ""
     @AppStorage("closetItemsData") private var closetItemsData = Data()
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("wishlistProductNamesData") private var wishlistProductNamesData = Data()
@@ -2153,16 +2153,22 @@ struct AIAssistantsView: View {
     }
 
     private var topClosetColorInsight: String {
-        let color = topClosetColorName
+        guard let color = rankedCounts(decodedClosetItems.map(\.color)).first?.name else {
+            return "Add closet items to reveal color habits."
+        }
         return "You wear \(color.lowercased()) \(topClosetColorPercent)% of the time."
     }
 
     private var topClosetColorName: String {
-        rankedCounts(decodedClosetItems.map(\.color)).first?.name ?? "blue"
+        rankedCounts(decodedClosetItems.map(\.color)).first?.name ?? "No colors yet"
     }
 
     private var topClosetColorPercent: Int {
-        percent(count: rankedCounts(decodedClosetItems.map(\.color)).first?.count ?? 3, total: max(decodedClosetItems.count, 7))
+        guard let count = rankedCounts(decodedClosetItems.map(\.color)).first?.count,
+              decodedClosetItems.isEmpty == false else {
+            return 0
+        }
+        return percent(count: count, total: decodedClosetItems.count)
     }
 
     private var shoeCount: Int {

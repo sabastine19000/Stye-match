@@ -10,9 +10,9 @@ struct LoginWelcomeView: View {
     @AppStorage("profileName") private var profileName = ""
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("closetItemsData") private var closetItemsData = Data()
-    @AppStorage("favoriteOutfits") private var favoriteOutfits = "Navy blazer with dark denim"
-    @AppStorage("stylePreferences") private var stylePreferences = "Classic, business casual, clean sneakers"
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
+    @AppStorage("favoriteOutfits") private var favoriteOutfits = ""
+    @AppStorage("stylePreferences") private var stylePreferences = ""
+    @AppStorage("favoriteColors") private var favoriteColors = ""
     @AppStorage("guestDataLinkedToApple") private var guestDataLinkedToApple = false
     @AppStorage("guestDataTransferSummary") private var guestDataTransferSummary = ""
 
@@ -221,10 +221,12 @@ struct LoginWelcomeView: View {
     private var hasTransferableGuestData: Bool {
         !outfitScanHistoryData.isEmpty
         || !closetItemsData.isEmpty
-        || favoriteOutfits.trimmingCharacters(in: .whitespacesAndNewlines) != "Navy blazer with dark denim"
-        || stylePreferences.trimmingCharacters(in: .whitespacesAndNewlines) != "Classic, business casual, clean sneakers"
-        || favoriteColors.trimmingCharacters(in: .whitespacesAndNewlines) != "Black, white, navy"
-        || StyleMatchGreetingBuilder.firstName(from: profileName) != nil
+        || LoginWelcomeProfileData.hasIntentionalProfileValues(
+            favoriteOutfits: favoriteOutfits,
+            stylePreferences: stylePreferences,
+            favoriteColors: favoriteColors,
+            profileName: profileName
+        )
     }
 
     private func transferGuestDataToApple() {
@@ -234,7 +236,10 @@ struct LoginWelcomeView: View {
             transferred.append("scan history")
         }
 
-        if favoriteOutfits.trimmingCharacters(in: .whitespacesAndNewlines) != "Navy blazer with dark denim" {
+        let hasIntentionalProfileSave = FounderProfileDefaultsMigration.hasIntentionalProfileSave()
+
+        if hasIntentionalProfileSave,
+           LoginWelcomeProfileData.hasValue(favoriteOutfits) {
             transferred.append("favorites")
         }
 
@@ -242,11 +247,13 @@ struct LoginWelcomeView: View {
             transferred.append("closet")
         }
 
-        if stylePreferences.trimmingCharacters(in: .whitespacesAndNewlines) != "Classic, business casual, clean sneakers" || favoriteColors.trimmingCharacters(in: .whitespacesAndNewlines) != "Black, white, navy" {
+        if hasIntentionalProfileSave,
+           LoginWelcomeProfileData.hasValue(stylePreferences) || LoginWelcomeProfileData.hasValue(favoriteColors) {
             transferred.append("style preferences")
         }
 
-        if StyleMatchGreetingBuilder.firstName(from: profileName) != nil {
+        if hasIntentionalProfileSave,
+           StyleMatchGreetingBuilder.firstName(from: profileName) != nil {
             transferred.append("profile")
         }
 

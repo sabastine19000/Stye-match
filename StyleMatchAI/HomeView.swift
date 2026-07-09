@@ -31,15 +31,15 @@ struct HomeView: View {
     var onFeedbackComplete: () -> Void = {}
     @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.siri.rawValue
     @AppStorage("profileName") private var profileName = ""
-    @AppStorage("weather") private var weather = "82°"
-    @AppStorage("weatherCondition") private var weatherCondition = "Sunny"
-    @AppStorage("plannedOccasion") private var plannedOccasion = "Work"
-    @AppStorage("dressCode") private var dressCode = "Smart casual"
-    @AppStorage("sizeProfile") private var sizeProfile = "Shirt: L; Pants: Men 36x36; Shoes: 10"
-    @AppStorage("favoriteColors") private var favoriteColors = "Black, white, navy"
-    @AppStorage("shoppingBudget") private var budget = "$50 - $200"
-    @AppStorage("favoriteBrands") private var favoriteBrands = "Ralph Lauren, Nike, Levi's"
-    @AppStorage("fitPreference") private var fitPreference = "Regular"
+    @AppStorage("weather") private var weather = ""
+    @AppStorage("weatherCondition") private var weatherCondition = ""
+    @AppStorage("plannedOccasion") private var plannedOccasion = ""
+    @AppStorage("dressCode") private var dressCode = ""
+    @AppStorage("sizeProfile") private var sizeProfile = ""
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("shoppingBudget") private var budget = ""
+    @AppStorage("favoriteBrands") private var favoriteBrands = ""
+    @AppStorage("fitPreference") private var fitPreference = ""
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("closetItemsData") private var closetItemsData = Data()
     @AppStorage("wishlistProductNamesData") private var wishlistProductNamesData = Data()
@@ -832,14 +832,14 @@ struct HomeView: View {
         guard !outfitScanHistoryData.isEmpty,
               let history = try? JSONDecoder().decode([String: HomeStoredScan].self, from: outfitScanHistoryData),
               let latestScan = history.values.sorted(by: { $0.firstScannedAt > $1.firstScannedAt }).first else {
-            return "92"
+            return "No scans yet"
         }
 
         return "\(latestScan.score)"
     }
 
     private var latestScoreValue: Int {
-        Int(latestScoreText) ?? 92
+        Int(latestScoreText) ?? 0
     }
 
     private func scoreRatingTitle(for score: Int) -> String {
@@ -983,7 +983,7 @@ struct HomeView: View {
             return temperature.contains("F") || temperature.contains("C") ? temperature : "\(temperature)F"
         }
 
-        return "84°F"
+        return "No weather yet"
     }
 
     private var outfitMoodText: String {
