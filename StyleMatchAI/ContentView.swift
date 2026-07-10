@@ -636,8 +636,6 @@ private struct OutfitFeedbackCard: View {
 struct StableAIFallbackView: View {
     @Binding var selectedTab: AppTab
     @AppStorage("profileName") private var profileName = ""
-    @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.chatGPT.rawValue
-    @AppStorage("connectedAIAssistants") private var connectedAIAssistants = "\(PreferredAIAssistant.siri.rawValue),\(PreferredAIAssistant.chatGPT.rawValue)"
     @AppStorage("shareAppContextWithChatGPT") private var shareAppContextWithChatGPT = true
     @AppStorage("shirtSize") private var shirtSize = ""
     @AppStorage("pantsSize") private var pantsSize = ""
@@ -665,7 +663,6 @@ struct StableAIFallbackView: View {
     @State private var showAwarenessTestResult = false
     @State private var showAwarenessDetail = false
     @State private var showMemoryDetails = false
-    @State private var showAISettings = false
     @State private var dashboardAppeared = false
     @State private var chatInput = ""
     @State private var chatMessages: [AIStylistChatMessage] = []
@@ -749,7 +746,7 @@ struct StableAIFallbackView: View {
                     }
                 }
             }
-            .alert("ChatGPT Awareness", isPresented: $showAwarenessTestResult) {
+            .alert("StyleMatch Pro AI Awareness", isPresented: $showAwarenessTestResult) {
                 Button("OK", role: .cancel) {
                 }
             } message: {
@@ -763,29 +760,11 @@ struct StableAIFallbackView: View {
                     }
                     .scrollContentBackground(.hidden)
                     .appScreenBackground(.ai)
-                    .navigationTitle("ChatGPT Awareness")
+                    .navigationTitle("StyleMatch Pro AI Awareness")
                     .toolbar {
                         ToolbarItem(placement: .topBarTrailing) {
                             Button("Done") {
                                 showAwarenessDetail = false
-                            }
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $showAISettings) {
-                NavigationStack {
-                    ScrollView {
-                        aiSettingsScreen
-                            .padding()
-                    }
-                    .scrollContentBackground(.hidden)
-                    .appScreenBackground(.ai)
-                    .navigationTitle("AI Settings")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") {
-                                showAISettings = false
                             }
                         }
                     }
@@ -807,25 +786,13 @@ struct StableAIFallbackView: View {
                         .font(.title3)
                         .fontWeight(.bold)
 
-                    Text("Powered by \(selectedAssistantDisplayName)")
+                    Text("Powered by StyleMatch Pro AI")
                         .font(.headline)
                         .fontWeight(.semibold)
                         .foregroundStyle(AppTab.ai.palette.accent)
                 }
 
                 Spacer(minLength: 8)
-
-                Button {
-                    showAISettings = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .frame(width: 44, height: 44)
-                        .background(Color(.secondarySystemBackground))
-                        .clipShape(Circle())
-                }
-                .buttonStyle(.plain)
             }
 
             Text(profileHasSavedData ? "Your personal stylist checks saved weather, closet, sizes, scans, and style memory before suggesting what to wear." : "Add your profile, closet, and scans when you're ready. StyleMatch Pro will use them before suggesting what to wear.")
@@ -879,7 +846,7 @@ struct StableAIFallbackView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("ChatGPT Live Assistant")
+                    Text("StyleMatch Pro AI Test Access")
                         .font(.title3)
                         .fontWeight(.bold)
 
@@ -907,7 +874,7 @@ struct StableAIFallbackView: View {
                 Button {
                     saveBetaOpenAIKey()
                 } label: {
-                    Label("Activate ChatGPT", systemImage: "bolt.fill")
+                    Label("Activate StyleMatch Pro AI", systemImage: "bolt.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -1176,7 +1143,7 @@ struct StableAIFallbackView: View {
                 .font(.title2)
                 .fontWeight(.bold)
 
-            Text("StyleMatch Pro is your personal AI fashion stylist. ChatGPT powers the experience in the background.")
+            Text("StyleMatch Pro is your personal AI fashion stylist, powered by StyleMatch Pro AI.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .lineSpacing(5)
@@ -1214,7 +1181,7 @@ struct StableAIFallbackView: View {
                         .fontWeight(.bold)
                         .minimumScaleFactor(0.8)
 
-                    Text("Powered by ChatGPT")
+                    Text("Powered by StyleMatch Pro AI")
                         .font(.headline)
                         .fontWeight(.bold)
                         .foregroundStyle(.green)
@@ -1276,11 +1243,11 @@ struct StableAIFallbackView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("ChatGPT Awareness")
+                    Text("StyleMatch Pro AI Awareness")
                         .font(.title3)
                         .fontWeight(.bold)
 
-                    Text("ChatGPT can use your StyleMatch Pro memory, closet, sizes, weather, saved scans, and style preferences when helping you.")
+                    Text("StyleMatch Pro AI can use your StyleMatch Pro memory, closet, sizes, weather, saved scans, and style preferences when helping you.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineSpacing(3)
@@ -1288,7 +1255,7 @@ struct StableAIFallbackView: View {
             }
 
             Toggle(isOn: $shareAppContextWithChatGPT) {
-                Text(shareAppContextWithChatGPT ? "ChatGPT Awareness On" : "ChatGPT Awareness Off")
+                Text(shareAppContextWithChatGPT ? "StyleMatch Pro AI Awareness On" : "StyleMatch Pro AI Awareness Off")
                     .font(.headline)
             }
             .tint(AppTab.ai.palette.accent)
@@ -1320,7 +1287,7 @@ struct StableAIFallbackView: View {
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 aiSmallAction(shareAppContextWithChatGPT ? "Pause Memory" : "Resume Memory", shareAppContextWithChatGPT ? "pause.circle.fill" : "play.circle.fill") {
                     shareAppContextWithChatGPT.toggle()
-                    message = shareAppContextWithChatGPT ? "ChatGPT Awareness resumed." : "ChatGPT Awareness paused."
+                    message = shareAppContextWithChatGPT ? "StyleMatch Pro AI Awareness resumed." : "StyleMatch Pro AI Awareness paused."
                 }
 
                 aiSmallAction("View Stored Preferences", "list.bullet.rectangle") {
@@ -1329,7 +1296,7 @@ struct StableAIFallbackView: View {
 
                 aiSmallAction("Clear AI Memory", "trash") {
                     shareAppContextWithChatGPT = false
-                    message = "ChatGPT Awareness memory was cleared for AI use. Profile fields remain editable in Profile."
+                    message = "StyleMatch Pro AI memory was cleared for AI use. Profile fields remain editable in Profile."
                 }
 
                 aiSmallAction("Reset Style Profile", "arrow.counterclockwise") {
@@ -1340,12 +1307,12 @@ struct StableAIFallbackView: View {
                 }
             }
 
-            Button {
-                message = shareAppContextWithChatGPT
-                    ? "ChatGPT Awareness test completed."
-                    : "ChatGPT Awareness is off. Turn it on to let StyleMatch Pro AI use your style context."
-                showAwarenessDetail = true
-            } label: {
+                Button {
+                    message = shareAppContextWithChatGPT
+                        ? "StyleMatch Pro AI Awareness test completed."
+                        : "StyleMatch Pro AI Awareness is off. Turn it on to let StyleMatch Pro AI use your style context."
+                    showAwarenessDetail = true
+                } label: {
                 Label("Test Awareness", systemImage: "sparkles")
                     .frame(maxWidth: .infinity)
             }
@@ -1613,11 +1580,11 @@ struct StableAIFallbackView: View {
 
     private var appAwarenessTestMessage: String {
         if !shareAppContextWithChatGPT {
-            return "ChatGPT Awareness is off. Turn it on so StyleMatch Pro AI can use your style context."
+            return "StyleMatch Pro AI Awareness is off. Turn it on so StyleMatch Pro AI can use your style context."
         }
 
         return """
-        ChatGPT Awareness is on.
+        StyleMatch Pro AI Awareness is on.
 
         StyleMatch Pro AI can use:
         Sizes: \(shirtSize) shirt, \(pantsSize), shoe \(shoeSize)
@@ -1643,7 +1610,7 @@ struct StableAIFallbackView: View {
                         .font(.title2)
                         .fontWeight(.bold)
 
-                    Text("ChatGPT suggests a polished smart-casual look from your saved style profile.")
+                    Text("StyleMatch Pro AI suggests a polished smart-casual look from your saved style profile.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
@@ -1965,7 +1932,6 @@ struct StableAIFallbackView: View {
             StyleMatch Pro AI Stylist chat.
             Closet items: \(savedClosetCount)
             Saved scans: \(savedScanCount)
-            Preferred assistant: \(selectedAssistantDisplayName)
             Recent scan context: \(latestScanContextForAI)
             """
         )
@@ -2582,7 +2548,7 @@ struct StableAIFallbackView: View {
                     .font(.title2)
                     .fontWeight(.bold)
 
-                Text("Powered by \(selectedAssistantDisplayName)")
+                Text("Powered by StyleMatch Pro AI")
                     .font(.headline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
@@ -2597,14 +2563,9 @@ struct StableAIFallbackView: View {
             .background(Color(.secondarySystemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 14))
 
-            Button {
-                showAISettings = true
-            } label: {
-                Label("Switch AI", systemImage: "arrow.triangle.2.circlepath")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
+            Label("Model routing is managed securely by StyleMatch Pro.", systemImage: "lock.shield")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .background(AppTab.ai.palette.accent.opacity(0.08))
@@ -2615,90 +2576,16 @@ struct StableAIFallbackView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
-    private var aiSettingsScreen: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Choose AI Assistant", systemImage: "sparkles")
-                    .font(.title2)
-                    .fontWeight(.bold)
-
-                Text("StyleMatch Pro stays the main experience. You can choose which assistant powers your stylist.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-            }
-
-            ForEach(PreferredAIAssistant.allCases) { assistant in
-                aiAssistantChoiceRow(assistant)
-            }
-
-            Label("You can change this anytime. Personal Style Memory stays controlled by you.", systemImage: "lock.shield")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .appCard(.ai)
-    }
-
-    private func aiAssistantChoiceRow(_ assistant: PreferredAIAssistant) -> some View {
-        let isSelected = assistant.rawValue == preferredAIAssistant
-        let isConnected = connectedAssistantSet.contains(assistant.rawValue) || isSelected
-
-        return Button {
-            preferredAIAssistant = assistant.rawValue
-            var connected = connectedAssistantSet
-            connected.insert(assistant.rawValue)
-            connectedAIAssistants = connected.sorted().joined(separator: ",")
-            message = "\(assistantDisplayName(assistant)) selected for StyleMatch Pro AI."
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: assistantIcon(assistant))
-                    .font(.title3)
-                    .foregroundStyle(assistantTint(assistant))
-                    .frame(width: 30)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(assistantDisplayName(assistant))
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.primary)
-
-                    Text(isSelected ? "Active" : (isConnected ? "Available" : "Set up when ready"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(isSelected ? .green : .secondary)
-            }
-            .padding(12)
-            .background(isSelected ? AppTab.ai.palette.accent.opacity(0.12) : Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var selectedAssistant: PreferredAIAssistant {
-        PreferredAIAssistant(rawValue: preferredAIAssistant) ?? .chatGPT
-    }
-
-    private var selectedAssistantDisplayName: String {
-        assistantDisplayName(selectedAssistant)
-    }
-
     private var betaChatGPTSubtitle: String {
         if betaAIConnectionVerified {
-            return "ChatGPT Live is active on this phone."
+            return "StyleMatch Pro AI is active on this phone."
         }
 
         if openAIKeyIsSaved {
-            return "ChatGPT key is saved. Tap Activate ChatGPT to test the live connection."
+            return "Founder test key is saved. Tap Activate StyleMatch Pro AI to test the live connection."
         }
 
-        return "Paste your private OpenAI API key to test live ChatGPT."
+        return "Paste your private OpenAI API key to test StyleMatch Pro AI."
     }
 
     private func loadBetaOpenAIKey() {
@@ -2708,28 +2595,24 @@ struct StableAIFallbackView: View {
         if openAIModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || openAIModel == "gpt-5.5" {
             openAIModel = "gpt-4o-mini"
         }
-        betaAIStatus = openAIKeyIsSaved ? "Key saved. Tap Activate ChatGPT to test ChatGPT Live." : ""
+        betaAIStatus = openAIKeyIsSaved ? "Key saved. Tap Activate StyleMatch Pro AI to test the live connection." : ""
     }
 
     private func saveBetaOpenAIKey() {
         do {
             try OpenAIKeychain.saveAPIKey(openAIKeyInput)
-            preferredAIAssistant = PreferredAIAssistant.chatGPT.rawValue
-            var connected = connectedAssistantSet
-            connected.insert(PreferredAIAssistant.chatGPT.rawValue)
-            connectedAIAssistants = connected.sorted().joined(separator: ",")
             openAIKeyInput = OpenAIKeychain.loadAPIKey() ?? openAIKeyInput
             openAIKeyIsSaved = !openAIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             betaAIConnectionVerified = false
-            betaAIStatus = openAIKeyIsSaved ? "Testing ChatGPT Live connection..." : "Paste your key and tap Activate ChatGPT."
+            betaAIStatus = openAIKeyIsSaved ? "Testing StyleMatch Pro AI connection..." : "Paste your key and tap Activate StyleMatch Pro AI."
             verifyBetaOpenAIConnection()
         } catch {
             #if DEBUG
-            print("[Founder Beta ChatGPT Save] \(error.localizedDescription)")
+            print("[Founder Beta AI Save] \(error.localizedDescription)")
             #endif
             openAIKeyIsSaved = false
             betaAIConnectionVerified = false
-            betaAIStatus = "Could not activate ChatGPT right now. Please check the key and try again."
+            betaAIStatus = "Could not activate StyleMatch Pro AI right now. Please check the key and try again."
         }
     }
 
@@ -2737,7 +2620,7 @@ struct StableAIFallbackView: View {
         guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
               !savedKey.isEmpty else {
             betaAIConnectionVerified = false
-            betaAIStatus = "Paste your key and tap Activate ChatGPT."
+            betaAIStatus = "Paste your key and tap Activate StyleMatch Pro AI."
             return
         }
 
@@ -2761,26 +2644,26 @@ struct StableAIFallbackView: View {
             favoriteOutfits: favoriteOutfits,
             closetInventory: closetItems.prefix(12).map { "\($0.color) \($0.name)" }.joined(separator: ", "),
             appContextSharingEnabled: false,
-            appContext: "ChatGPT connection test."
+            appContext: "StyleMatch Pro AI connection test."
         )
 
         Task {
             do {
                 _ = try await client.askStylist(
                     profile: profile,
-                    question: "Reply with one short sentence confirming StyleMatch Pro ChatGPT is connected."
+                    question: "Reply with one short sentence confirming StyleMatch Pro AI is connected."
                 )
                 await MainActor.run {
                     betaAIConnectionVerified = true
-                    betaAIStatus = "ChatGPT Live tested successfully. Ask My Stylist will now use it."
+                    betaAIStatus = "StyleMatch Pro AI tested successfully. Ask My Stylist is ready."
                 }
             } catch {
                 #if DEBUG
-                print("[Founder Beta ChatGPT Verify] \(error.localizedDescription)")
+                print("[Founder Beta AI Verify] \(error.localizedDescription)")
                 #endif
                 await MainActor.run {
                     betaAIConnectionVerified = false
-                    betaAIStatus = "Key saved, but ChatGPT could not answer yet. Please try Activate ChatGPT again."
+                    betaAIStatus = "Key saved, but StyleMatch Pro AI could not answer yet. Please try again."
                 }
             }
         }
@@ -2792,58 +2675,9 @@ struct StableAIFallbackView: View {
             openAIKeyInput = ""
             openAIKeyIsSaved = false
             betaAIConnectionVerified = false
-            betaAIStatus = "ChatGPT key removed from this phone."
+            betaAIStatus = "Founder test key removed from this phone."
         } catch {
             betaAIStatus = "Could not remove key: \(error.localizedDescription)"
-        }
-    }
-
-    private var connectedAssistantSet: Set<String> {
-        Set(connectedAIAssistants.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) })
-    }
-
-    private func assistantDisplayName(_ assistant: PreferredAIAssistant) -> String {
-        switch assistant {
-        case .siri:
-            return "Siri AI"
-        case .chatGPT:
-            return "ChatGPT"
-        case .gemini:
-            return "Gemini AI"
-        case .claude:
-            return "Claude AI"
-        case .perplexity:
-            return "Perplexity AI"
-        }
-    }
-
-    private func assistantIcon(_ assistant: PreferredAIAssistant) -> String {
-        switch assistant {
-        case .siri:
-            return "waveform.circle.fill"
-        case .chatGPT:
-            return "bubble.left.and.bubble.right.fill"
-        case .gemini:
-            return "sparkles"
-        case .claude:
-            return "text.bubble.fill"
-        case .perplexity:
-            return "magnifyingglass.circle.fill"
-        }
-    }
-
-    private func assistantTint(_ assistant: PreferredAIAssistant) -> Color {
-        switch assistant {
-        case .siri:
-            return .blue
-        case .chatGPT:
-            return .black
-        case .gemini:
-            return .purple
-        case .claude:
-            return .orange
-        case .perplexity:
-            return .teal
         }
     }
 

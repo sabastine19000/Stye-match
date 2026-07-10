@@ -13,6 +13,16 @@ struct FeatureFlags {
     static var alternateAIProvidersEnabled = false
 }
 
+enum DeprecatedAIAssistantPreferenceRepair {
+    static let preferredKey = "preferredAIAssistant"
+    static let connectedKey = "connectedAIAssistants"
+
+    static func run(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: preferredKey)
+        defaults.removeObject(forKey: connectedKey)
+    }
+}
+
 extension StylistProfile {
     var topPreferences: TopStylePreferences {
         let positive = stylePreferencesLearned

@@ -43,7 +43,6 @@ struct ProfileView: View {
     @AppStorage("clothingPreferences") private var clothingPreferences = ""
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("closetItemsData") private var closetItemsData = Data()
-    @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.siri.rawValue
     @AppStorage("shareAppContextWithChatGPT") private var shareAppContextWithChatGPT = true
     @AppStorage(VoiceAssistantSettings.enabledKey) private var voiceAssistantEnabled = VoiceAssistantSettings.defaultEnabled
     @AppStorage("voiceStylistDefaultVoiceHintDismissed") private var voiceStylistDefaultVoiceHintDismissed = false
@@ -65,10 +64,6 @@ struct ProfileView: View {
     @State private var pantsSizeLastEditSource: PantsSizeEditSource = .manual
     @State private var showsAdditionalMeasurements = false
     @StateObject private var voiceAssistant = VoiceStylistService()
-
-    private var selectedAssistant: PreferredAIAssistant {
-        PreferredAIAssistant(rawValue: preferredAIAssistant) ?? .siri
-    }
 
     private var selectedAccountMode: CustomerAccountMode {
         CustomerAccountMode(rawValue: customerAccountMode) ?? .guest
@@ -173,28 +168,14 @@ struct ProfileView: View {
                     profileInfoRow("Email", cleanValue(resolvedAccountEmail, fallback: "Hidden or not shared"), icon: "envelope.fill")
                     profileInfoRow("Account Type", selectedAccountMode.accountStatusTitle, icon: accountIcon)
                     profileInfoRow("Preferred Weather City", cleanValue(weatherCity, fallback: "Not set"), icon: "mappin.and.ellipse")
-                    profileInfoRow("Preferred AI Assistant", selectedAssistant.rawValue, icon: "sparkles")
 
                     Label("Private tokens, passwords, API keys, and developer credentials are not shown in StyleMatch Pro.", systemImage: "lock.shield")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                if FeatureGate.shared.isCustomerVisible(.aiAssistantChoice) {
-                    Section("AI Assistant") {
-                        Picker("Choose assistant", selection: $preferredAIAssistant) {
-                            ForEach(PreferredAIAssistant.allCases) { assistant in
-                                Text(assistant.rawValue).tag(assistant.rawValue)
-                            }
-                        }
-
-                        Label(selectedAssistant.description, systemImage: "sparkles")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
                 Section("AI Stylist Settings") {
-                    profileInfoRow("StyleMatch Pro AI Stylist", "Powered by ChatGPT", icon: "sparkles")
+                    profileInfoRow("StyleMatch Pro AI Stylist", "Powered by StyleMatch Pro AI", icon: "sparkles")
 
                     Button {
                         selectedTab = .ai
@@ -1404,7 +1385,6 @@ struct ProfileView: View {
         pastPurchases = ""
         favoriteOutfits = ""
         closetInventory = ""
-        preferredAIAssistant = PreferredAIAssistant.siri.rawValue
         shareAppContextWithChatGPT = false
         outfitDislikes = ""
         clothingPreferences = ""

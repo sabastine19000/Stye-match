@@ -39,6 +39,7 @@ enum StyleMatchDataKey: String, CaseIterable {
     case closetItemsData
     case wishlistProductNamesData
     case preferredAIAssistant
+    case connectedAIAssistants
     case openAIModel
     case openAIAPIKeyForBetaTesting
     case shareAppContextWithChatGPT

@@ -29,7 +29,6 @@ struct HomeView: View {
     var onFeedbackDislikeReason: (ScheduledFeedbackPrompt, DislikeReason) -> Void = { _, _ in }
     var onFeedbackDismiss: () -> Void = {}
     var onFeedbackComplete: () -> Void = {}
-    @AppStorage("preferredAIAssistant") private var preferredAIAssistant = PreferredAIAssistant.siri.rawValue
     @AppStorage("profileName") private var profileName = ""
     @AppStorage("weather") private var weather = ""
     @AppStorage("weatherCondition") private var weatherCondition = ""
@@ -45,10 +44,6 @@ struct HomeView: View {
     @AppStorage("wishlistProductNamesData") private var wishlistProductNamesData = Data()
     @State private var navigationQuery = ""
     @State private var outfitHistoryQuery = ""
-
-    private var selectedAssistant: PreferredAIAssistant {
-        PreferredAIAssistant(rawValue: preferredAIAssistant) ?? .siri
-    }
 
     var body: some View {
         NavigationStack {
@@ -83,31 +78,6 @@ struct HomeView: View {
 
                     outfitHistorySection
 
-                    if FeatureGate.shared.isCustomerVisible(.aiAssistantChoice) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Label("AI assistant", systemImage: "sparkles")
-                                .font(.headline)
-
-                            Text(selectedAssistant.rawValue)
-                                .font(.title2)
-                                .fontWeight(.bold)
-
-                            Text(selectedAssistant.description)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineSpacing(4)
-
-                            Button {
-                                selectedTab = .ai
-                            } label: {
-                                Label("Choose AI Assistant", systemImage: "sparkles")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                        }
-                        .padding()
-                        .appCard(.ai)
-                    }
                 }
                 .padding()
                 .padding(.bottom, 120)
@@ -1137,16 +1107,6 @@ struct HomeView: View {
                 icon: "bag.fill",
                 tint: AppTab.shop.palette.accent,
                 tab: .shop
-            )
-        }
-
-        if selectedAssistant == .chatGPT {
-            return HomeContinueTask(
-                title: "Open AI conversation",
-                detail: "ChatGPT is ready to help build, improve, or shop your next outfit.",
-                icon: "sparkles",
-                tint: AppTab.ai.palette.accent,
-                tab: .ai
             )
         }
 

@@ -3902,6 +3902,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         defaults.set(["wishlist-name"], forKey: "wishlistProductNamesData")
         defaults.set(Data("scan-history".utf8), forKey: "outfitScanHistoryData")
         defaults.set("ChatGPT", forKey: "preferredAIAssistant")
+        defaults.set("ChatGPT,Gemini", forKey: "connectedAIAssistants")
         defaults.set("gpt-test", forKey: "openAIModel")
         defaults.set(true, forKey: "shareAppContextWithChatGPT")
 
@@ -3925,6 +3926,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             "wishlistProductNamesData",
             "outfitScanHistoryData",
             "preferredAIAssistant",
+            "connectedAIAssistants",
             "openAIModel",
             "shareAppContextWithChatGPT"
         ] {
@@ -3943,6 +3945,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "wishlistProductNamesData"))
         XCTAssertNil(defaults.object(forKey: "outfitScanHistoryData"))
         XCTAssertNil(defaults.object(forKey: "preferredAIAssistant"))
+        XCTAssertNil(defaults.object(forKey: "connectedAIAssistants"))
         XCTAssertNil(defaults.object(forKey: "openAIModel"))
         XCTAssertNil(defaults.object(forKey: "shareAppContextWithChatGPT"))
 
@@ -3956,6 +3959,65 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNotNil(defaults.object(forKey: PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyMemoriesKey, userID: userB)))
         XCTAssertEqual(ShoppingLocalStore(defaults: defaults, userID: userB).savedFavorites, ["favorite-b"])
         XCTAssertEqual(ShoppingLocalStore(defaults: defaults, userID: userB).wishlistProductIDs, ["wishlist-b"])
+    }
+
+    func testDeprecatedAIAssistantPreferenceRepairClearsLegacyProviderState() {
+        defaults.set("ChatGPT", forKey: DeprecatedAIAssistantPreferenceRepair.preferredKey)
+        defaults.set("ChatGPT,Gemini", forKey: DeprecatedAIAssistantPreferenceRepair.connectedKey)
+        defaults.set("tester@example.com", forKey: "customerAccountEmail")
+
+        DeprecatedAIAssistantPreferenceRepair.run(defaults: defaults)
+
+        XCTAssertNil(defaults.object(forKey: DeprecatedAIAssistantPreferenceRepair.preferredKey))
+        XCTAssertNil(defaults.object(forKey: DeprecatedAIAssistantPreferenceRepair.connectedKey))
+        XCTAssertEqual(defaults.string(forKey: "customerAccountEmail"), "tester@example.com")
+    }
+
+    func testThirdPartyAssistantProviderCopyIsRemovedFromPublicAISurfaces() throws {
+        let surfaces = [
+            "StyleMatchAI/ProfileView.swift",
+            "StyleMatchAI/HomeView.swift",
+            "StyleMatchAI/ContentView.swift",
+            "StyleMatchAI/AIAssistantsView.swift"
+        ]
+        let forbiddenPhrases = [
+            "Preferred AI Assistant",
+            "Choose AI Assistant",
+            "Choose Your AI Stylist",
+            "Switch AI",
+            "Powered by ChatGPT",
+            "ChatGPT powers",
+            "Sign in with ChatGPT",
+            "ChatGPT Awareness",
+            "ChatGPT App Awareness",
+            "ChatGPT Live Assistant",
+            "ChatGPT Subscription Access",
+            "Open ChatGPT",
+            "Message ChatGPT",
+            "Ask ChatGPT Stylist",
+            "Siri AI",
+            "Gemini AI",
+            "Claude AI",
+            "Perplexity AI",
+            "Preferred assistant:"
+        ]
+
+        for file in surfaces {
+            let source = try projectSource(file)
+            for phrase in forbiddenPhrases {
+                XCTAssertFalse(source.contains(phrase), "\(file) still contains \(phrase)")
+            }
+        }
+    }
+
+    func testPromptContextDoesNotIncludePreferredAssistantLine() throws {
+        for file in [
+            "StyleMatchAI/ContentView.swift",
+            "StyleMatchAI/PersonalStylist/StylistContextBuilder.swift",
+            "StyleMatchAI/AIAssistantsView.swift"
+        ] {
+            XCTAssertFalse(try projectSource(file).contains("Preferred assistant:"))
+        }
     }
 
     func testLegacyProfileKeyMigrationPurgesGlobalKeysOnlyOnce() {

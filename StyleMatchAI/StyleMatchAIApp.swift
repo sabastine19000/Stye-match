@@ -24,7 +24,7 @@ private enum StartupDataRepair {
         repairDataValue("aiStylistConversationData", defaults: defaults)
         repairDataValue("aiStylistArchivedConversationsData", defaults: defaults)
         repairDataValue("aiInsightConversationData", defaults: defaults)
-        repairStringValue("preferredAIAssistant", allowed: PreferredAIAssistant.allCases.map(\.rawValue), fallback: PreferredAIAssistant.chatGPT.rawValue, defaults: defaults)
+        DeprecatedAIAssistantPreferenceRepair.run(defaults: defaults)
         repairStringValue("customerAccountMode", allowed: CustomerAccountMode.allCases.map(\.rawValue), fallback: CustomerAccountMode.guest.rawValue, defaults: defaults)
         repairStringValue("selectedAppTheme", allowed: StyleMatchAppTheme.allCases.map(\.rawValue), fallback: StyleMatchAppTheme.system.rawValue, defaults: defaults)
         repairDoubleValue("selectedThemeIntensity", fallback: 0.42, closedRange: 0.18...0.82, defaults: defaults)
