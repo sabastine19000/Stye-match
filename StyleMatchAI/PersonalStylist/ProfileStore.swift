@@ -18,7 +18,12 @@ final class ProfileStore: ObservableObject {
         self.userID = PersonalStylistStorage.normalizedUserID(activeUserID)
         self.profileKey = PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyProfileKey, userID: self.userID)
         self.feedbackCountKey = PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyFeedbackCountKey, userID: self.userID)
-        currentProfile = Self.loadProfile(from: defaults, key: profileKey, userID: self.userID) ?? Self.makeDefaultProfile(defaults: defaults, userID: self.userID)
+        let loadedProfile = Self.loadProfile(from: defaults, key: profileKey, userID: self.userID) ?? Self.makeDefaultProfile(defaults: defaults, userID: self.userID)
+        let reconciled = PantsSizeProfileReconciliation.reconcile(defaults: defaults, userID: self.userID, profile: loadedProfile)
+        currentProfile = reconciled.profile
+        if reconciled.didChangeProfile {
+            saveProfile(reconciled.profile)
+        }
     }
 
     func save() {
@@ -26,7 +31,7 @@ final class ProfileStore: ObservableObject {
         defer { mutationLock.unlock() }
 
         var profile = currentProfile
-        profile.givenName = StyleMatchGreetingBuilder.firstName(from: profile.givenName)
+        profile.givenName = StyleMatchAccountNameResolver.profileGivenName(from: profile.givenName)
         profile.lastUpdatedAt = Date()
         currentProfile = profile
         saveProfile(profile)
@@ -38,7 +43,7 @@ final class ProfileStore: ObservableObject {
 
         var profile = currentProfile
         profile.userId = userID
-        profile.givenName = StyleMatchGreetingBuilder.firstName(from: givenName)
+        profile.givenName = StyleMatchAccountNameResolver.profileGivenName(from: givenName)
         profile.lastUpdatedAt = Date()
         currentProfile = profile
         saveProfile(profile)
@@ -198,7 +203,7 @@ final class ProfileStore: ObservableObject {
             favoriteColors: splitList(defaults.string(forKey: "favoriteColors") ?? ""),
             dislikedColors: [],
             favoriteBrands: splitList(defaults.string(forKey: "favoriteBrands") ?? ""),
-            preferredFit: FitPreference(rawValue: (cleanOptional(defaults.string(forKey: "fitPreference")) ?? "").lowercased()) ?? .regular,
+            preferredFit: FitPreference.fromProfileInput(defaults.string(forKey: "fitPreference")),
             budgetRange: parseBudget(defaults.string(forKey: "shoppingBudget") ?? ""),
             climate: cleanOptional(defaults.string(forKey: "weatherCondition")) ?? "",
             workDressCode: cleanOptional(defaults.string(forKey: "dressCode")) ?? "",
@@ -227,7 +232,7 @@ final class ProfileStore: ObservableObject {
             favoriteColors: [],
             dislikedColors: [],
             favoriteBrands: [],
-            preferredFit: .regular,
+            preferredFit: .unset,
             budgetRange: .neutral,
             climate: "",
             workDressCode: "",

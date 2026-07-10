@@ -200,6 +200,10 @@ enum CustomerAccountMode: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var accountStatusTitle: String {
+        StyleMatchAccountModeDisplay.accountStatusTitle(for: rawValue)
+    }
+
     var description: String {
         switch self {
         case .guest:

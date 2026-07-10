@@ -2432,7 +2432,7 @@ struct StableAIFallbackView: View {
 
     private var expectedStyleScore: Int {
         guard latestStoredScan != nil else { return 0 }
-        min(98, max(82, recentStyleScore + (shareAppContextWithChatGPT ? 2 : 0)))
+        return min(98, max(82, recentStyleScore + (shareAppContextWithChatGPT ? 2 : 0)))
     }
 
     private var expectedStyleScoreText: String {

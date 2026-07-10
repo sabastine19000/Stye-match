@@ -1255,9 +1255,10 @@ struct ClosetView: View {
                 .pickerStyle(.menu)
             }
 
-            labeledControl("Pants size") {
-                Text(pantsSize)
+            labeledControl("Generated pants size") {
+                Text(generatedPantsDisplay ?? "Add waist and inseam")
                     .font(.headline)
+                    .foregroundStyle(generatedPantsDisplay == nil ? .secondary : .primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                     .background(Color(.secondarySystemBackground))
@@ -1734,7 +1735,7 @@ struct ClosetView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Size Profile")
                         .font(.headline)
-                    Text("Sizes: \(shirtSize) · \(pantsSize.replacingOccurrences(of: "Men ", with: "")) · Shoe \(shoeSize) · \(fitPreference)")
+                    Text(closetSizeSummaryLine)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -2478,25 +2479,56 @@ struct ClosetView: View {
         }
     }
 
+    private var generatedPantsDisplay: String? {
+        PantsSizeSync.displayValue(waist: waistSize, inseam: inseamLength)
+    }
+
+    private var closetSizeSummaryLine: String {
+        let rows = sizeSummaryRows()
+        guard !rows.isEmpty else { return "No sizes saved yet" }
+        return rows.map { "\($0.label): \($0.value)" }.joined(separator: " · ")
+    }
+
+    private func sizeSummaryRows() -> [(label: String, value: String)] {
+        var rows: [(String, String)] = []
+        let cleanCategory = sizeCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let category = cleanCategory.isEmpty ? "Men" : cleanCategory
+        if !shirtSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Shirt", shirtSize))
+        }
+        if PantsSizeSync.categoryUsesGeneratedPants(category), let generatedPantsDisplay {
+            rows.append(("Pants", generatedPantsDisplay))
+        } else if !pantsSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Bottoms", pantsSize))
+        }
+        if !shoeSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Shoes", shoeSize))
+        }
+        if !fitPreference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Fit", fitPreference))
+        }
+        return rows
+    }
+
     private func updateSizeProfileSummary() {
         sizeSaveConfirmation = ""
-        let neck = neckSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "not set" : neckSize
-        let sleeve = sleeveLength.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "not set" : sleeveLength
-        let waist = waistSize.trimmingCharacters(in: .whitespacesAndNewlines)
-        let inseam = inseamLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedWaist = waist.isEmpty ? "36" : waist
-        let resolvedInseam = inseam.isEmpty ? "36" : inseam
-        switch sizeCategory {
-        case "Women":
-            pantsSize = "Women \(resolvedWaist) / \(resolvedInseam)L"
-        case "Kids/Youth":
-            pantsSize = "Youth \(resolvedWaist) / \(resolvedInseam)L"
-        case "Unisex":
-            pantsSize = "Unisex \(resolvedWaist)x\(resolvedInseam)"
-        default:
-            pantsSize = "Men \(resolvedWaist)x\(resolvedInseam)"
+        let category = sizeCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if PantsSizeSync.categoryUsesGeneratedPants(category.isEmpty ? "Men" : category) {
+            let reconciled = PantsSizeSync.reconciledValues(
+                pantsSize: pantsSize,
+                waistSize: waistSize,
+                inseamLength: inseamLength,
+                category: category.isEmpty ? "Men" : category
+            )
+            pantsSize = reconciled.pantsSize
+            waistSize = reconciled.waistSize
+            inseamLength = reconciled.inseamLength
+        } else {
+            waistSize = ""
+            inseamLength = ""
         }
-        sizeProfile = "Category: \(sizeCategory); Top: \(shirtSize); Bottom: \(pantsSize); Waist: \(waistSize); Inseam: \(inseamLength); Neck: \(neck); Sleeve: \(sleeve); Shoes: \(shoeSize); Fit: \(fitPreference)"
+        let rows = sizeSummaryRows()
+        sizeProfile = rows.isEmpty ? "No sizes saved yet" : rows.map { "\($0.label): \($0.value)" }.joined(separator: "; ")
     }
 
     private func iconName(for category: String) -> String {
@@ -3257,8 +3289,9 @@ struct SizeProfileView: View {
                     ForEach(shirtSizes, id: \.self) { Text($0).tag($0) }
                 }
 
-                Text(pantsSize)
+                Text(generatedPantsDisplay ?? "Add waist and inseam")
                     .font(.headline)
+                    .foregroundStyle(generatedPantsDisplay == nil ? .secondary : .primary)
             } header: {
                 Text("Core Sizes")
             } footer: {
@@ -3312,25 +3345,50 @@ struct SizeProfileView: View {
         .styleMatchOnChange(of: fitPreference) { _ in updateSizeProfileSummary() }
     }
 
+    private var generatedPantsDisplay: String? {
+        PantsSizeSync.displayValue(waist: waistSize, inseam: inseamLength)
+    }
+
+    private func sizeSummaryRows() -> [(label: String, value: String)] {
+        var rows: [(String, String)] = []
+        let cleanCategory = sizeCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+        let category = cleanCategory.isEmpty ? "Men" : cleanCategory
+        if !shirtSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Shirt", shirtSize))
+        }
+        if PantsSizeSync.categoryUsesGeneratedPants(category), let generatedPantsDisplay {
+            rows.append(("Pants", generatedPantsDisplay))
+        } else if !pantsSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Bottoms", pantsSize))
+        }
+        if !shoeSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Shoes", shoeSize))
+        }
+        if !fitPreference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            rows.append(("Fit", fitPreference))
+        }
+        return rows
+    }
+
     private func updateSizeProfileSummary() {
         saveConfirmation = ""
-        let neck = neckSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "not set" : neckSize
-        let sleeve = sleeveLength.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "not set" : sleeveLength
-        let waist = waistSize.trimmingCharacters(in: .whitespacesAndNewlines)
-        let inseam = inseamLength.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedWaist = waist.isEmpty ? "36" : waist
-        let resolvedInseam = inseam.isEmpty ? "36" : inseam
-        switch sizeCategory {
-        case "Women":
-            pantsSize = "Women \(resolvedWaist) / \(resolvedInseam)L"
-        case "Kids/Youth":
-            pantsSize = "Youth \(resolvedWaist) / \(resolvedInseam)L"
-        case "Unisex":
-            pantsSize = "Unisex \(resolvedWaist)x\(resolvedInseam)"
-        default:
-            pantsSize = "Men \(resolvedWaist)x\(resolvedInseam)"
+        let category = sizeCategory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if PantsSizeSync.categoryUsesGeneratedPants(category.isEmpty ? "Men" : category) {
+            let reconciled = PantsSizeSync.reconciledValues(
+                pantsSize: pantsSize,
+                waistSize: waistSize,
+                inseamLength: inseamLength,
+                category: category.isEmpty ? "Men" : category
+            )
+            pantsSize = reconciled.pantsSize
+            waistSize = reconciled.waistSize
+            inseamLength = reconciled.inseamLength
+        } else {
+            waistSize = ""
+            inseamLength = ""
         }
-        sizeProfile = "Category: \(sizeCategory); Top: \(shirtSize); Bottom: \(pantsSize); Waist: \(waistSize); Inseam: \(inseamLength); Neck: \(neck); Sleeve: \(sleeve); Shoes: \(shoeSize); Fit: \(fitPreference)"
+        let rows = sizeSummaryRows()
+        sizeProfile = rows.isEmpty ? "No sizes saved yet" : rows.map { "\($0.label): \($0.value)" }.joined(separator: "; ")
     }
 }
 

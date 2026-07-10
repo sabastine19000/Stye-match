@@ -174,6 +174,18 @@ struct LoginWelcomeView: View {
         hasChosenAccessMode = true
     }
 
+    private func logProfileNameEvent(
+        stage: String,
+        source: StyleMatchAccountNameResolver.Source,
+        appleNameProvided: Bool,
+        localNamePresent: Bool,
+        storedNamePresent: Bool
+    ) {
+        #if DEBUG
+        print("[ProfileName] welcome-\(stage) source=\(source.rawValue) appleNameProvided=\(appleNameProvided) localNamePresent=\(localNamePresent) storedNamePresent=\(storedNamePresent)")
+        #endif
+    }
+
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
         switch result {
         case .success(let authorization):
@@ -187,23 +199,26 @@ struct LoginWelcomeView: View {
             customerAppleUserID = signedInUserID
             accountSyncEnabled = true
 
-            if let email = credential.email {
+            let appliedProfile = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+                userID: signedInUserID,
+                email: credential.email,
+                appleGivenName: credential.fullName?.givenName,
+                appleFamilyName: credential.fullName?.familyName,
+                localDisplayName: profileName
+            )
+            logProfileNameEvent(
+                stage: "sign-in",
+                source: appliedProfile.source,
+                appleNameProvided: credential.fullName?.givenName != nil || credential.fullName?.familyName != nil,
+                localNamePresent: StyleMatchAccountNameResolver.clean(profileName) != nil,
+                storedNamePresent: appliedProfile.givenName != nil
+            )
+
+            if let email = appliedProfile.email {
                 customerAccountEmail = email
             }
-
-            let givenName = StyleMatchGreetingBuilder.firstName(from: credential.fullName?.givenName)
-            if let givenName {
-                ProfileStore(userId: signedInUserID).updateGivenName(givenName)
-            }
-
-            let fullName = [givenName, credential.fullName?.familyName]
-                .compactMap { $0 }
-                .joined(separator: " ")
-
-            if !fullName.isEmpty {
-                profileName = fullName
-            } else {
-                profileName = ProfileStore(userId: signedInUserID).currentProfile.givenName ?? ""
+            if let displayName = appliedProfile.displayName {
+                profileName = displayName
             }
 
             if hasTransferableGuestData {
@@ -253,7 +268,7 @@ struct LoginWelcomeView: View {
         }
 
         if hasIntentionalProfileSave,
-           StyleMatchGreetingBuilder.firstName(from: profileName) != nil {
+           StyleMatchAccountNameResolver.profileGivenName(from: profileName) != nil {
             transferred.append("profile")
         }
 

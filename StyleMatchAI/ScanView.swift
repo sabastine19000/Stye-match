@@ -1186,6 +1186,36 @@ struct ScanView: View {
         return "\(recommendation.severity.rawValue): \(recommendation.recommendation) Why: \(recommendation.rationale)"
     }
 
+    private var hasSavedSizeProfileForFitCopy: Bool {
+        guard FounderProfileDefaultsMigration.hasIntentionalProfileSave() else { return false }
+        return [
+            sizeProfile,
+            shirtSize,
+            pantsSize,
+            waistSize,
+            inseamLength,
+            shoeSize,
+            fitPreference
+        ].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private var savedSizeProfileSummaryForFitCopy: String {
+        let parts = [
+            ("shirt", shirtSize),
+            ("pants", pantsSize),
+            ("waist", waistSize),
+            ("inseam", inseamLength),
+            ("shoes", shoeSize),
+            ("fit", fitPreference)
+        ].compactMap { label, value -> String? in
+            let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : "\(label) \(clean)"
+        }
+        if !parts.isEmpty { return parts.joined(separator: ", ") }
+        let cleanProfile = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanProfile.isEmpty ? "your saved size profile" : cleanProfile
+    }
+
     private var scannerInsightText: String {
         switch selectedScannerInsight {
         case "Colors":
@@ -1202,9 +1232,14 @@ struct ScanView: View {
             return "After a scan, this checks whether prints, solids, and statement pieces feel balanced."
         case "Fit":
             if let result {
-                return "Current fit score: \(result.score) \(scoreRatingTitle(for: result.score)). Uses your size profile: shirt \(shirtSize), pants \(pantsSize), shoes \(shoeSize), fit \(fitPreference)."
+                if hasSavedSizeProfileForFitCopy {
+                    return "Current fit score: \(result.score) \(scoreRatingTitle(for: result.score)). Uses your saved size profile: \(savedSizeProfileSummaryForFitCopy)."
+                }
+                return "Current fit score: \(result.score) \(scoreRatingTitle(for: result.score)). No saved sizes yet; add them in Profile for tailored fit guidance."
             }
-            return "After a scan, this uses your saved sizes to explain fit, tailoring, and size-up or size-down suggestions."
+            return hasSavedSizeProfileForFitCopy
+                ? "After a scan, this uses your saved size profile to explain fit, tailoring, and size-up or size-down suggestions."
+                : "After a scan, this checks visible fit. Add your sizes in Profile for tailored size-up or size-down suggestions."
         case "Accessories":
             if let result {
                 let footwearVisible = hasVisibleFootwear(in: result)
@@ -4373,7 +4408,10 @@ struct ScanView: View {
 
     private func fitRecommendationNote(for detectedItems: [String]) -> String {
         let items = detectedItems.isEmpty ? "the visible outfit" : detectedItems.joined(separator: ", ").lowercased()
-        return "Fit check: using your saved sizes (\(sizeProfile)), review \(items) for pulling, extra bunching, dragging hems, or sleeves that pass the wrist. If needed, size up, size down, tailor the inseam, adjust the waist, or shorten the sleeve."
+        if hasSavedSizeProfileForFitCopy {
+            return "Fit check: using your saved size profile (\(savedSizeProfileSummaryForFitCopy)), review \(items) for pulling, extra bunching, dragging hems, or sleeves that pass the wrist. If needed, size up, size down, tailor the inseam, adjust the waist, or shorten the sleeve."
+        }
+        return "Fit check: no saved sizes yet. Review \(items) for pulling, extra bunching, dragging hems, or sleeves that pass the wrist. Add your sizes in Profile for tailored fit guidance."
     }
 
     private func weatherRecommendationNote(environment: String) -> String {

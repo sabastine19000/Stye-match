@@ -73,7 +73,199 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         state.applyManualInseam("34")
 
         XCTAssertEqual(state.lastEditSource, .manual)
-        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 36x32", waistSize: "36", inseamLength: "34"))
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 36x34", waistSize: "36", inseamLength: "34"))
+    }
+
+    func testGeneratedPantsSizeComesFromWaistAndInseam() {
+        XCTAssertEqual(PantsSizeSync.displayValue(waist: "36", inseam: "32"), "36 × 32")
+        XCTAssertEqual(PantsSizeSync.storageValue(category: "Men", waist: "36", inseam: "32"), "Men 36x32")
+        XCTAssertEqual(PantsSizeSync.storageValue(category: "Unisex", waist: "34", inseam: "30"), "Unisex 34x30")
+    }
+
+    func testChangingWaistOrInseamUpdatesGeneratedPantsSize() {
+        var state = PantsSizeFieldState(pantsSize: "Men 34x30", waistSize: "34", inseamLength: "30")
+
+        state.applyManualWaist("36")
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 36x30", waistSize: "36", inseamLength: "30"))
+
+        state.applyManualInseam("32")
+        XCTAssertEqual(state.visibleValuesForSave, PantsSizeVisibleValues(pantsSize: "Men 36x32", waistSize: "36", inseamLength: "32"))
+    }
+
+    func testLegacyCombinedPantsSizeBackfillsMissingMeasurements() {
+        let reconciled = PantsSizeSync.reconciledValues(
+            pantsSize: "Men 36 × 32",
+            waistSize: "",
+            inseamLength: "",
+            category: "Men"
+        )
+
+        XCTAssertEqual(reconciled.pantsSize, "Men 36x32")
+        XCTAssertEqual(reconciled.waistSize, "36")
+        XCTAssertEqual(reconciled.inseamLength, "32")
+    }
+
+    func testSeparateMeasurementsOverrideStaleCombinedPantsSize() {
+        let reconciled = PantsSizeSync.reconciledValues(
+            pantsSize: "Men 24x27",
+            waistSize: "36",
+            inseamLength: "32",
+            category: "Men"
+        )
+
+        XCTAssertEqual(reconciled.pantsSize, "Men 36x32")
+        XCTAssertEqual(reconciled.waistSize, "36")
+        XCTAssertEqual(reconciled.inseamLength, "32")
+    }
+
+    func testBlankPantsMeasurementsDoNotCreateFakeDefault() {
+        let reconciled = PantsSizeSync.reconciledValues(
+            pantsSize: "",
+            waistSize: "",
+            inseamLength: "",
+            category: "Men"
+        )
+
+        XCTAssertEqual(reconciled.pantsSize, "")
+        XCTAssertEqual(reconciled.waistSize, "")
+        XCTAssertEqual(reconciled.inseamLength, "")
+        XCTAssertNil(PantsSizeSync.displayValue(waist: reconciled.waistSize, inseam: reconciled.inseamLength))
+    }
+
+    func testWomenCategoryDoesNotGenerateMensPantsSizeFromStaleMeasurements() {
+        XCTAssertFalse(PantsSizeSync.categoryUsesGeneratedPants("Women"))
+        XCTAssertNil(PantsSizeSync.storageValue(category: "Women", waist: "36", inseam: "32"))
+    }
+
+    func testProfileAndClosetCanShareGeneratedPantsDisplayValue() {
+        let reconciled = PantsSizeSync.reconciledValues(
+            pantsSize: "Men 36x36",
+            waistSize: "36",
+            inseamLength: "32",
+            category: "Men"
+        )
+
+        let generatedDisplay = PantsSizeSync.displayValue(
+            waist: reconciled.waistSize,
+            inseam: reconciled.inseamLength
+        )
+
+        XCTAssertEqual(reconciled.pantsSize, "Men 36x32")
+        XCTAssertEqual(generatedDisplay, "36 × 32")
+    }
+
+    func testPantsSizeProfileReconciliationPrefersWaistInseamOverStaleCombined() {
+        defaults.set("Men", forKey: "sizeCategory")
+        defaults.set("Men 24x27", forKey: "pantsSize")
+        defaults.set("36", forKey: "waistSize")
+        defaults.set("32", forKey: "inseamLength")
+        defaults.set("Category: Men; Bottom: Men 24x27", forKey: "sizeProfile")
+
+        var profile = makeStylistProfile(userId: userA)
+        profile.clothingSizes = ClothingSizes(pantSize: "Men 24x27")
+
+        let result = PantsSizeProfileReconciliation.reconcile(
+            defaults: defaults,
+            userID: userA,
+            profile: profile
+        )
+
+        XCTAssertTrue(result.didChangeProfile)
+        XCTAssertEqual(result.profile.clothingSizes.pantSize, "Men 36x32")
+        XCTAssertEqual(defaults.string(forKey: "pantsSize"), "Men 36x32")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "32")
+        XCTAssertNil(defaults.string(forKey: "sizeProfile"))
+        XCTAssertTrue(defaults.bool(forKey: PantsSizeProfileReconciliation.migrationKey(userID: userA)))
+    }
+
+    func testPantsSizeProfileReconciliationParsesPantsSizeOnly() {
+        defaults.set("Men", forKey: "sizeCategory")
+        defaults.set("Men 34x30", forKey: "pantsSize")
+
+        var profile = makeStylistProfile(userId: userA)
+        profile.clothingSizes = ClothingSizes(pantSize: "Men 34x30")
+
+        let result = PantsSizeProfileReconciliation.reconcile(
+            defaults: defaults,
+            userID: userA,
+            profile: profile
+        )
+
+        XCTAssertFalse(result.didChangeProfile)
+        XCTAssertEqual(result.profile.clothingSizes.pantSize, "Men 34x30")
+        XCTAssertEqual(defaults.string(forKey: "pantsSize"), "Men 34x30")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "34")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "30")
+    }
+
+    func testPantsSizeProfileReconciliationGeneratesFromWaistInseamOnly() {
+        defaults.set("Men", forKey: "sizeCategory")
+        defaults.set("36", forKey: "waistSize")
+        defaults.set("32", forKey: "inseamLength")
+
+        let profile = makeStylistProfile(userId: userA)
+
+        let result = PantsSizeProfileReconciliation.reconcile(
+            defaults: defaults,
+            userID: userA,
+            profile: profile
+        )
+
+        XCTAssertTrue(result.didChangeProfile)
+        XCTAssertEqual(result.profile.clothingSizes.pantSize, "Men 36x32")
+        XCTAssertEqual(defaults.string(forKey: "pantsSize"), "Men 36x32")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "32")
+    }
+
+    func testPantsSizeProfileReconciliationLeavesBlankSizesBlankAndRunsOnce() {
+        let profile = makeStylistProfile(userId: userA)
+
+        let first = PantsSizeProfileReconciliation.reconcile(
+            defaults: defaults,
+            userID: userA,
+            profile: profile
+        )
+
+        XCTAssertFalse(first.didChangeProfile)
+        XCTAssertNil(first.profile.clothingSizes.pantSize)
+        XCTAssertNil(defaults.string(forKey: "pantsSize"))
+        XCTAssertNil(defaults.string(forKey: "waistSize"))
+        XCTAssertNil(defaults.string(forKey: "inseamLength"))
+        XCTAssertTrue(defaults.bool(forKey: PantsSizeProfileReconciliation.migrationKey(userID: userA)))
+
+        defaults.set("Men", forKey: "sizeCategory")
+        defaults.set("Men 36x32", forKey: "pantsSize")
+        defaults.set("36", forKey: "waistSize")
+        defaults.set("32", forKey: "inseamLength")
+
+        let second = PantsSizeProfileReconciliation.reconcile(
+            defaults: defaults,
+            userID: userA,
+            profile: first.profile
+        )
+
+        XCTAssertFalse(second.didChangeProfile)
+        XCTAssertNil(second.profile.clothingSizes.pantSize)
+    }
+
+    func testBlankClothingSizesDoNotReachAIContext() {
+        var profile = makeStylistProfile(userId: userA)
+        profile.clothingSizes = ClothingSizes(
+            shirtSize: " ",
+            pantSize: " ",
+            shoeSize: "",
+            jacketSize: nil,
+            dressSize: nil
+        )
+
+        let context = PersonalizationContextBuilder.buildContext(profile: profile, recentMemories: [])
+
+        XCTAssertFalse(context.contains("Sizes"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("pants"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("shoes"))
+        XCTAssertFalse(context.contains("36"))
     }
 
     // MARK: - Phase 3 feedback loop tests
@@ -3506,6 +3698,14 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(profile.clothingSizes.shirtSize)
         XCTAssertNil(profile.clothingSizes.pantSize)
         XCTAssertNil(profile.clothingSizes.shoeSize)
+        XCTAssertNil(profile.clothingSizes.jacketSize)
+        XCTAssertNil(profile.clothingSizes.dressSize)
+        XCTAssertEqual(profile.preferredFit, .unset)
+        XCTAssertEqual(profile.budgetRange.minPrice, BudgetRange.neutral.minPrice)
+        XCTAssertEqual(profile.budgetRange.maxPrice, BudgetRange.neutral.maxPrice)
+        XCTAssertEqual(profile.budgetRange.preferredTier, BudgetRange.neutral.preferredTier)
+        XCTAssertTrue(profile.climate.isEmpty)
+        XCTAssertTrue(profile.workDressCode.isEmpty)
         XCTAssertEqual(ProfileStore.profileCompletenessPercentage(profile), 0)
     }
 
@@ -3522,6 +3722,67 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "sizeCategory"), "Men")
         XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
         XCTAssertEqual(defaults.string(forKey: "inseamLength"), "36")
+    }
+
+    func testProfileStoreSavedSizeMutationPersistsAcrossReload() {
+        defaults.set("2026-07-09T09:00:00Z", forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey)
+
+        let store = ProfileStore(defaults: defaults, userId: userA)
+        var profile = store.currentProfile
+        profile.clothingSizes = ClothingSizes(shirtSize: "L", pantSize: "Men 36x36", shoeSize: "10")
+        profile.preferredFit = .regular
+        store.currentProfile = profile
+        store.save()
+
+        var reloaded = ProfileStore(defaults: defaults, userId: userA).currentProfile
+        XCTAssertEqual(reloaded.clothingSizes.pantSize, "Men 36x36")
+
+        reloaded.clothingSizes = ClothingSizes(shirtSize: "L", pantSize: "Men 34x34", shoeSize: "10")
+        reloaded.preferredFit = .tailored
+        let mutationStore = ProfileStore(defaults: defaults, userId: userA)
+        mutationStore.currentProfile = reloaded
+        mutationStore.save()
+
+        let finalProfile = ProfileStore(defaults: defaults, userId: userA).currentProfile
+        XCTAssertEqual(finalProfile.clothingSizes.pantSize, "Men 34x34")
+        XCTAssertEqual(finalProfile.clothingSizes.shirtSize, "L")
+        XCTAssertEqual(finalProfile.clothingSizes.shoeSize, "10")
+        XCTAssertEqual(finalProfile.preferredFit, .tailored)
+        XCTAssertEqual(defaults.string(forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey), "2026-07-09T09:00:00Z")
+    }
+
+    func testClearProfilePreferenceDefaultsReturnsToBlankAfterRelaunch() {
+        seedFounderSizeDefaults()
+        defaults.set("2026-07-09T09:00:00Z", forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey)
+
+        let store = ProfileStore(defaults: defaults, userId: userA)
+        var profile = store.currentProfile
+        profile.clothingSizes = ClothingSizes(shirtSize: "L", pantSize: "Men 36x36", shoeSize: "10")
+        profile.preferredFit = .regular
+        profile.favoriteColors = ["black"]
+        store.currentProfile = profile
+        store.save()
+
+        FounderProfileDefaultsMigration.clearProfilePreferenceDefaults(defaults: defaults, userID: userA)
+
+        XCTAssertNil(defaults.object(forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey))
+        let reloaded = ProfileStore(defaults: defaults, userId: userA).currentProfile
+        XCTAssertNil(reloaded.clothingSizes.shirtSize)
+        XCTAssertNil(reloaded.clothingSizes.pantSize)
+        XCTAssertNil(reloaded.clothingSizes.shoeSize)
+        XCTAssertEqual(reloaded.preferredFit, .unset)
+        XCTAssertTrue(reloaded.favoriteColors.isEmpty)
+        XCTAssertEqual(ProfileStore.profileCompletenessPercentage(reloaded), 0)
+    }
+
+    func testScanFitCopyDoesNotClaimSavedSizesWithoutSavedProfile() throws {
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertTrue(scanSource.contains("hasSavedSizeProfileForFitCopy"))
+        XCTAssertTrue(scanSource.contains("No saved sizes yet"))
+        XCTAssertTrue(scanSource.contains("Fit check: no saved sizes yet"))
+        XCTAssertFalse(scanSource.contains("After a scan, this uses your saved sizes"))
+        XCTAssertFalse(scanSource.contains("Fit check: using your saved sizes ("))
     }
 
     func testLoginWelcomeProfileDataRequiresIntentionalSaveMarker() {
@@ -3593,6 +3854,108 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             "Deleting user A should not remove user B's profile."
         )
         XCTAssertEqual(ShoppingLocalStore(defaults: defaults, userID: userB).savedFavorites, ["sale-b"])
+    }
+
+
+    func testPrivacyDeletionContractClearsProfileAssistantClosetWishlistAndScanHistoryForActiveUser() throws {
+        let profileSource = try projectSource("StyleMatchAI/ProfileView.swift")
+        let privacySource = try projectSource("StyleMatchAI/PrivacyDataManager.swift")
+        XCTAssertTrue(profileSource.contains("PrivacyDataManager.shared.deleteAllLocalCustomerData()"))
+        XCTAssertTrue(privacySource.contains("let activeUserID = PersonalStylistStorage.activeUserID(defaults: defaults)"))
+        XCTAssertTrue(privacySource.contains("ChatConversationStore().deleteAll()"))
+        XCTAssertTrue(privacySource.contains("PersonalStylistStorage.deletePersonalization(for: activeUserID, defaults: defaults)"))
+        XCTAssertTrue(privacySource.contains("ShoppingLocalStore.deleteShoppingData(for: activeUserID, defaults: defaults)"))
+        XCTAssertTrue(privacySource.contains("try? OpenAIKeychain.deleteAPIKey()"))
+
+        defaults.set(userA, forKey: "customerAppleUserID")
+        defaults.set("apple", forKey: "customerAccountMode")
+        defaults.set("tester@example.com", forKey: "customerAccountEmail")
+        defaults.set("2026-07-10T09:00:00Z", forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey)
+
+        let profileA = ProfileStore(defaults: defaults, userId: userA)
+        profileA.currentProfile.favoriteColors = ["black"]
+        profileA.save()
+
+        let profileB = ProfileStore(defaults: defaults, userId: userB)
+        profileB.currentProfile.favoriteColors = ["white"]
+        profileB.save()
+
+        let memoryA = OutfitMemoryStore(defaults: defaults, userId: userA)
+        memoryA.addOrMergeScan(makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "privacy-user-a")))
+
+        let memoryB = OutfitMemoryStore(defaults: defaults, userId: userB)
+        memoryB.addOrMergeScan(makeOutfitMemory(userId: userB, record: makeGarmentRecord(fingerprint: "privacy-user-b")))
+
+        let closetData = try JSONEncoder().encode([
+            ClosetItem(
+                name: "White Shirt",
+                category: "Shirt",
+                color: "White",
+                brand: "Test Brand",
+                size: "M",
+                occasion: "Work",
+                notes: "Seed item"
+            )
+        ])
+        defaults.set(closetData, forKey: "closetItemsData")
+        defaults.set("White Shirt", forKey: "closetInventory")
+        defaults.set(["wishlist-name"], forKey: "wishlistProductNamesData")
+        defaults.set(Data("scan-history".utf8), forKey: "outfitScanHistoryData")
+        defaults.set("ChatGPT", forKey: "preferredAIAssistant")
+        defaults.set("gpt-test", forKey: "openAIModel")
+        defaults.set(true, forKey: "shareAppContextWithChatGPT")
+
+        let shoppingA = ShoppingLocalStore(defaults: defaults, userID: userA)
+        shoppingA.savedFavorites = ["favorite-a"]
+        shoppingA.wishlistProductIDs = ["wishlist-a"]
+        shoppingA.cartProductIDs = ["cart-a"]
+
+        let shoppingB = ShoppingLocalStore(defaults: defaults, userID: userB)
+        shoppingB.savedFavorites = ["favorite-b"]
+        shoppingB.wishlistProductIDs = ["wishlist-b"]
+
+        let activeUserID = PersonalStylistStorage.activeUserID(defaults: defaults)
+        for key in [
+            "customerAppleUserID",
+            "customerAccountMode",
+            "customerAccountEmail",
+            FounderProfileDefaultsMigration.profileLastSavedAtKey,
+            "closetItemsData",
+            "closetInventory",
+            "wishlistProductNamesData",
+            "outfitScanHistoryData",
+            "preferredAIAssistant",
+            "openAIModel",
+            "shareAppContextWithChatGPT"
+        ] {
+            defaults.removeObject(forKey: key)
+        }
+        PersonalStylistStorage.deletePersonalization(for: activeUserID, defaults: defaults)
+        ShoppingLocalStore.deleteShoppingData(for: activeUserID, defaults: defaults)
+
+        XCTAssertEqual(activeUserID, PersonalStylistStorage.normalizedUserID(userA))
+        XCTAssertNil(defaults.object(forKey: "customerAppleUserID"))
+        XCTAssertNil(defaults.object(forKey: "customerAccountMode"))
+        XCTAssertNil(defaults.object(forKey: "customerAccountEmail"))
+        XCTAssertNil(defaults.object(forKey: FounderProfileDefaultsMigration.profileLastSavedAtKey))
+        XCTAssertNil(defaults.object(forKey: "closetItemsData"))
+        XCTAssertNil(defaults.object(forKey: "closetInventory"))
+        XCTAssertNil(defaults.object(forKey: "wishlistProductNamesData"))
+        XCTAssertNil(defaults.object(forKey: "outfitScanHistoryData"))
+        XCTAssertNil(defaults.object(forKey: "preferredAIAssistant"))
+        XCTAssertNil(defaults.object(forKey: "openAIModel"))
+        XCTAssertNil(defaults.object(forKey: "shareAppContextWithChatGPT"))
+
+        XCTAssertNil(defaults.object(forKey: PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyProfileKey, userID: userA)))
+        XCTAssertNil(defaults.object(forKey: PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyMemoriesKey, userID: userA)))
+        XCTAssertTrue(ShoppingLocalStore(defaults: defaults, userID: userA).savedFavorites.isEmpty)
+        XCTAssertTrue(ShoppingLocalStore(defaults: defaults, userID: userA).wishlistProductIDs.isEmpty)
+        XCTAssertTrue(ShoppingLocalStore(defaults: defaults, userID: userA).cartProductIDs.isEmpty)
+
+        XCTAssertNotNil(defaults.object(forKey: PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyProfileKey, userID: userB)))
+        XCTAssertNotNil(defaults.object(forKey: PersonalStylistStorage.scopedKey(PersonalStylistStorage.legacyMemoriesKey, userID: userB)))
+        XCTAssertEqual(ShoppingLocalStore(defaults: defaults, userID: userB).savedFavorites, ["favorite-b"])
+        XCTAssertEqual(ShoppingLocalStore(defaults: defaults, userID: userB).wishlistProductIDs, ["wishlist-b"])
     }
 
     func testLegacyProfileKeyMigrationPurgesGlobalKeysOnlyOnce() {
@@ -3671,6 +4034,138 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         )
         XCTAssertEqual(defaults.data(forKey: scopedProfileKey), scopedProfileData)
         XCTAssertEqual(defaults.data(forKey: scopedMemoryKey), scopedMemoryData)
+    }
+
+
+    func testAppleSignInNameResolverUsesAppleNameWhenProvided() {
+        let resolved = StyleMatchAccountNameResolver.resolve(
+            appleGivenName: " Sabastine ",
+            appleFamilyName: " Esisorigho ",
+            localDisplayName: "Old Local Name",
+            storedProfileGivenName: "OldStored"
+        )
+
+        XCTAssertEqual(resolved.displayName, "Sabastine Esisorigho")
+        XCTAssertEqual(resolved.givenName, "Sabastine")
+        XCTAssertEqual(resolved.source, .appleCredential)
+    }
+
+    func testAppleSignInNameResolverPreservesLocalNameWhenAppleReturnsNoName() {
+        let resolved = StyleMatchAccountNameResolver.resolve(
+            appleGivenName: nil,
+            appleFamilyName: nil,
+            localDisplayName: "Saved Local Name",
+            storedProfileGivenName: nil
+        )
+
+        XCTAssertEqual(resolved.displayName, "Saved Local Name")
+        XCTAssertEqual(resolved.givenName, "Saved")
+        XCTAssertEqual(resolved.source, .localDisplayName)
+    }
+
+    func testAppleSignInNameResolverRestoresStoredProfileNameWhenLocalNameIsBlank() {
+        let resolved = StyleMatchAccountNameResolver.resolve(
+            appleGivenName: nil,
+            appleFamilyName: nil,
+            localDisplayName: "  ",
+            storedProfileGivenName: "Sabastine"
+        )
+
+        XCTAssertEqual(resolved.displayName, "Sabastine")
+        XCTAssertEqual(resolved.givenName, "Sabastine")
+        XCTAssertEqual(resolved.source, .storedProfile)
+    }
+
+    func testAppleSignInNameResolverDoesNotInventNameWhenNothingExists() {
+        let resolved = StyleMatchAccountNameResolver.resolve(
+            appleGivenName: nil,
+            appleFamilyName: nil,
+            localDisplayName: "",
+            storedProfileGivenName: nil
+        )
+
+        XCTAssertNil(resolved.displayName)
+        XCTAssertNil(resolved.givenName)
+        XCTAssertEqual(resolved.source, .unavailable)
+    }
+
+    func testBlankProfileDraftNameMergesStoredProfileNameWithoutClearingIt() {
+        XCTAssertEqual(
+            StyleMatchAccountNameResolver.mergeDraftName("", storedProfileGivenName: "Sabastine"),
+            "Sabastine"
+        )
+        XCTAssertEqual(
+            StyleMatchAccountNameResolver.mergeDraftName("Manually Entered", storedProfileGivenName: "Sabastine"),
+            "Manually Entered"
+        )
+    }
+
+    func testAppleCredentialApplierPersistsFirstAuthFullNameToPerUserProfile() {
+        let result = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+            userID: userA,
+            email: "tester@example.com",
+            appleGivenName: "Sabastine",
+            appleFamilyName: "Esisorigho",
+            localDisplayName: nil,
+            defaults: defaults
+        )
+
+        XCTAssertEqual(result.displayName, "Sabastine Esisorigho")
+        XCTAssertEqual(result.givenName, "Sabastine")
+        XCTAssertEqual(result.email, "tester@example.com")
+        XCTAssertEqual(result.source, .appleCredential)
+        XCTAssertEqual(ProfileStore(defaults: defaults, userId: userA).currentProfile.givenName, "Sabastine")
+        XCTAssertEqual(
+            defaults.string(forKey: StyleMatchAppleCredentialProfileApplier.scopedEmailKey(userID: userA)),
+            "tester@example.com"
+        )
+    }
+
+    func testAppleCredentialApplierNilFullNameDoesNotClobberSavedName() {
+        ProfileStore(defaults: defaults, userId: userA).updateGivenName("Saved")
+
+        let result = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+            userID: userA,
+            email: nil,
+            appleGivenName: nil,
+            appleFamilyName: nil,
+            localDisplayName: "Local Other",
+            defaults: defaults
+        )
+
+        XCTAssertEqual(result.displayName, "Saved")
+        XCTAssertEqual(result.givenName, "Saved")
+        XCTAssertEqual(result.source, .storedProfile)
+        XCTAssertEqual(ProfileStore(defaults: defaults, userId: userA).currentProfile.givenName, "Saved")
+    }
+
+    func testAppleCredentialApplierPersistsTrustedNameEvenWhenGreetingBlocksIt() {
+        let trustedName = ["Saba", "stine"].joined()
+        XCTAssertNil(StyleMatchGreetingBuilder.firstName(from: trustedName))
+
+        let result = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+            userID: userA,
+            email: nil,
+            appleGivenName: trustedName,
+            appleFamilyName: nil,
+            localDisplayName: nil,
+            defaults: defaults
+        )
+
+        XCTAssertEqual(result.displayName, trustedName)
+        XCTAssertEqual(result.givenName, trustedName)
+        XCTAssertEqual(result.source, .appleCredential)
+        XCTAssertEqual(ProfileStore(defaults: defaults, userId: userA).currentProfile.givenName, trustedName)
+    }
+
+    func testAccountModeDisplayStatusTitleUsesShortValues() {
+        XCTAssertEqual(StyleMatchAccountModeDisplay.accountStatusTitle(for: "Sign in with Apple"), "Signed in with Apple")
+        XCTAssertEqual(StyleMatchAccountModeDisplay.accountStatusTitle(for: "Guest"), "Guest")
+        XCTAssertEqual(StyleMatchAccountModeDisplay.accountStatusTitle(for: "Email and Password"), "Email account")
+        XCTAssertNotEqual(
+            StyleMatchAccountModeDisplay.accountStatusTitle(for: "Sign in with Apple"),
+            "Recommended for customers who want private account sign-in, cloud sync, wishlist, and future order history."
+        )
     }
 
     // MARK: - Garment-only color palette regression tests

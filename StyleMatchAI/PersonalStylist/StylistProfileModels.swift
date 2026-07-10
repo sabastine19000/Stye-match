@@ -40,6 +40,172 @@ enum StyleMatchGreetingBuilder {
     }
 }
 
+enum StyleMatchAccountNameResolver {
+    enum Source: String {
+        case appleCredential
+        case localDisplayName
+        case storedProfile
+        case unavailable
+    }
+
+    struct Resolution: Equatable {
+        let displayName: String?
+        let givenName: String?
+        let source: Source
+    }
+
+    static func resolve(
+        appleGivenName: String?,
+        appleFamilyName: String?,
+        localDisplayName: String?,
+        storedProfileGivenName: String?
+    ) -> Resolution {
+        let givenName = firstToken(from: appleGivenName)
+        let familyName = clean(appleFamilyName)
+        let appleDisplayName = [givenName, familyName].compactMap { $0 }.joined(separator: " ")
+
+        if let displayName = clean(appleDisplayName) {
+            return Resolution(displayName: displayName, givenName: givenName, source: .appleCredential)
+        }
+
+        if let displayName = clean(localDisplayName) {
+            return Resolution(
+                displayName: displayName,
+                givenName: firstToken(from: displayName),
+                source: .localDisplayName
+            )
+        }
+
+        if let givenName = firstToken(from: storedProfileGivenName) {
+            return Resolution(displayName: givenName, givenName: givenName, source: .storedProfile)
+        }
+
+        return Resolution(displayName: nil, givenName: nil, source: .unavailable)
+    }
+
+    static func resolveStoredProfileThenLocal(
+        storedProfileGivenName: String?,
+        localDisplayName: String?
+    ) -> Resolution {
+        if let givenName = profileGivenName(from: storedProfileGivenName) {
+            return Resolution(displayName: givenName, givenName: givenName, source: .storedProfile)
+        }
+
+        if let displayName = clean(localDisplayName) {
+            return Resolution(
+                displayName: displayName,
+                givenName: profileGivenName(from: displayName),
+                source: .localDisplayName
+            )
+        }
+
+        return Resolution(displayName: nil, givenName: nil, source: .unavailable)
+    }
+
+    static func mergeDraftName(_ draftName: String, storedProfileGivenName: String?) -> String {
+        if let draftName = clean(draftName) {
+            return draftName
+        }
+        return profileGivenName(from: storedProfileGivenName) ?? ""
+    }
+
+    static func profileGivenName(from value: String?) -> String? {
+        firstToken(from: value)
+    }
+
+    static func clean(_ value: String?) -> String? {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func firstToken(from value: String?) -> String? {
+        clean(value)?.components(separatedBy: .whitespacesAndNewlines).first
+    }
+}
+
+enum StyleMatchAppleCredentialProfileApplier {
+    static let accountEmailBaseKey = "customerAccountEmail"
+
+    struct Result: Equatable {
+        let displayName: String?
+        let givenName: String?
+        let email: String?
+        let source: StyleMatchAccountNameResolver.Source
+    }
+
+    @discardableResult
+    static func applyAppleCredential(
+        userID: String,
+        email: String?,
+        appleGivenName: String?,
+        appleFamilyName: String?,
+        localDisplayName: String?,
+        defaults: UserDefaults = .standard
+    ) -> Result {
+        let store = ProfileStore(defaults: defaults, userId: userID)
+
+        if let cleanEmail = StyleMatchAccountNameResolver.clean(email) {
+            defaults.set(cleanEmail, forKey: scopedEmailKey(userID: userID))
+        }
+        let resolvedEmail = storedEmail(defaults: defaults, userID: userID)
+
+        let appleResolution = StyleMatchAccountNameResolver.resolve(
+            appleGivenName: appleGivenName,
+            appleFamilyName: appleFamilyName,
+            localDisplayName: nil,
+            storedProfileGivenName: nil
+        )
+
+        if let appleGivenName = appleResolution.givenName {
+            store.updateGivenName(appleGivenName)
+            return Result(
+                displayName: appleResolution.displayName,
+                givenName: appleGivenName,
+                email: resolvedEmail,
+                source: .appleCredential
+            )
+        }
+
+        let fallbackResolution = StyleMatchAccountNameResolver.resolveStoredProfileThenLocal(
+            storedProfileGivenName: store.currentProfile.givenName,
+            localDisplayName: localDisplayName
+        )
+
+        if fallbackResolution.source == .localDisplayName,
+           let givenName = fallbackResolution.givenName {
+            store.updateGivenName(givenName)
+        }
+
+        return Result(
+            displayName: fallbackResolution.displayName,
+            givenName: fallbackResolution.givenName,
+            email: resolvedEmail,
+            source: fallbackResolution.source
+        )
+    }
+
+    static func storedEmail(defaults: UserDefaults = .standard, userID: String) -> String? {
+        StyleMatchAccountNameResolver.clean(defaults.string(forKey: scopedEmailKey(userID: userID)))
+    }
+
+    static func scopedEmailKey(userID: String) -> String {
+        PersonalStylistStorage.scopedKey(accountEmailBaseKey, userID: userID)
+    }
+}
+
+enum StyleMatchAccountModeDisplay {
+    static func accountStatusTitle(for rawValue: String) -> String {
+        switch rawValue {
+        case "Sign in with Apple", "apple":
+            return "Signed in with Apple"
+        case "Email and Password", "email":
+            return "Email account"
+        default:
+            return "Guest"
+        }
+    }
+}
+
 struct StylistProfile: Codable, Identifiable {
     let id: UUID
     var userId: String
@@ -80,7 +246,7 @@ struct StylistProfile: Codable, Identifiable {
     ) {
         self.id = id
         self.userId = userId
-        self.givenName = StyleMatchGreetingBuilder.firstName(from: givenName)
+        self.givenName = StyleMatchAccountNameResolver.profileGivenName(from: givenName)
         self.favoriteColors = favoriteColors
         self.dislikedColors = dislikedColors
         self.favoriteBrands = favoriteBrands
@@ -102,11 +268,11 @@ struct StylistProfile: Codable, Identifiable {
         let now = Date()
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         userId = try container.decodeIfPresent(String.self, forKey: .userId) ?? "guest"
-        givenName = StyleMatchGreetingBuilder.firstName(from: try container.decodeIfPresent(String.self, forKey: .givenName))
+        givenName = StyleMatchAccountNameResolver.profileGivenName(from: try container.decodeIfPresent(String.self, forKey: .givenName))
         favoriteColors = try container.decodeIfPresent([String].self, forKey: .favoriteColors) ?? []
         dislikedColors = try container.decodeIfPresent([String].self, forKey: .dislikedColors) ?? []
         favoriteBrands = try container.decodeIfPresent([String].self, forKey: .favoriteBrands) ?? []
-        preferredFit = try container.decodeIfPresent(FitPreference.self, forKey: .preferredFit) ?? .regular
+        preferredFit = try container.decodeIfPresent(FitPreference.self, forKey: .preferredFit) ?? .unset
         budgetRange = try container.decodeIfPresent(BudgetRange.self, forKey: .budgetRange) ?? .neutral
         climate = try container.decodeIfPresent(String.self, forKey: .climate) ?? ""
         workDressCode = try container.decodeIfPresent(String.self, forKey: .workDressCode) ?? ""
@@ -129,12 +295,23 @@ struct TopStylePreferences: Codable, Equatable {
 }
 
 enum FitPreference: String, Codable, CaseIterable {
+    case unset = ""
     case slim
     case relaxed
     case oversized
     case tailored
     case athletic
     case regular
+
+    static func fromProfileInput(_ value: String?) -> FitPreference {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return .unset }
+        return FitPreference(rawValue: trimmed.lowercased()) ?? .unset
+    }
+
+    var isSet: Bool {
+        self != .unset
+    }
 }
 
 struct BudgetRange: Codable {
@@ -190,6 +367,10 @@ enum PantsSizeEditSource: String {
 }
 
 enum PantsSizeSync {
+    static func cleaned(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func measurements(from selection: String) -> PantsSizeMeasurements? {
         let pattern = #"(?i)(\d{1,3})\s*[x×]\s*(\d{1,3})"#
         guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
@@ -205,6 +386,134 @@ enum PantsSizeSync {
             waist: String(selection[waistRange]),
             inseam: String(selection[inseamRange])
         )
+    }
+
+    static func displayValue(waist: String, inseam: String) -> String? {
+        let waist = cleaned(waist)
+        let inseam = cleaned(inseam)
+        guard !waist.isEmpty, !inseam.isEmpty else { return nil }
+        return "\(waist) × \(inseam)"
+    }
+
+    static func categoryUsesGeneratedPants(_ category: String) -> Bool {
+        let category = cleaned(category)
+        return category.caseInsensitiveCompare("Men") == .orderedSame
+            || category.caseInsensitiveCompare("Unisex") == .orderedSame
+            || category.caseInsensitiveCompare("Unisex / Prefer not to say") == .orderedSame
+    }
+
+    static func storageValue(category: String, waist: String, inseam: String) -> String? {
+        let waist = cleaned(waist)
+        let inseam = cleaned(inseam)
+        guard !waist.isEmpty, !inseam.isEmpty, categoryUsesGeneratedPants(category) else { return nil }
+        let category = cleaned(category)
+        if category.caseInsensitiveCompare("Men") == .orderedSame {
+            return "Men \(waist)x\(inseam)"
+        }
+        return "Unisex \(waist)x\(inseam)"
+    }
+
+    static func reconciledValues(
+        pantsSize: String,
+        waistSize: String,
+        inseamLength: String,
+        category: String
+    ) -> PantsSizeVisibleValues {
+        var waist = cleaned(waistSize)
+        var inseam = cleaned(inseamLength)
+        let legacyPants = cleaned(pantsSize)
+
+        if (waist.isEmpty || inseam.isEmpty),
+           let measurements = measurements(from: legacyPants) {
+            if waist.isEmpty {
+                waist = measurements.waist
+            }
+            if inseam.isEmpty {
+                inseam = measurements.inseam
+            }
+        }
+
+        let generated = storageValue(category: category, waist: waist, inseam: inseam)
+        return PantsSizeVisibleValues(
+            pantsSize: generated ?? legacyPants,
+            waistSize: waist,
+            inseamLength: inseam
+        )
+    }
+}
+
+enum PantsSizeProfileReconciliation {
+    static let migrationFlag = "didRunPantsSizeProfileReconciliation_v1"
+
+    static func migrationKey(userID: String) -> String {
+        PersonalStylistStorage.scopedKey(migrationFlag, userID: userID)
+    }
+
+    @discardableResult
+    static func reconcile(
+        defaults: UserDefaults = .standard,
+        userID: String,
+        profile: StylistProfile
+    ) -> (profile: StylistProfile, didChangeProfile: Bool) {
+        let key = migrationKey(userID: userID)
+        guard defaults.bool(forKey: key) == false else {
+            return (profile, false)
+        }
+        defer { defaults.set(true, forKey: key) }
+
+        var updated = profile
+        var didChangeProfile = false
+
+        let category = clean(defaults.string(forKey: "sizeCategory")) ?? "Men"
+        let defaultsPantsSize = clean(defaults.string(forKey: "pantsSize"))
+        let profilePantsSize = clean(profile.clothingSizes.pantSize)
+        let sourcePantsSize = defaultsPantsSize ?? profilePantsSize ?? ""
+        let sourceWaist = clean(defaults.string(forKey: "waistSize")) ?? ""
+        let sourceInseam = clean(defaults.string(forKey: "inseamLength")) ?? ""
+
+        let canReconcile = PantsSizeSync.categoryUsesGeneratedPants(category)
+            || PantsSizeSync.measurements(from: sourcePantsSize) != nil
+            || !sourceWaist.isEmpty
+            || !sourceInseam.isEmpty
+
+        if canReconcile {
+            let values = PantsSizeSync.reconciledValues(
+                pantsSize: sourcePantsSize,
+                waistSize: sourceWaist,
+                inseamLength: sourceInseam,
+                category: category
+            )
+
+            write(values.pantsSize, forKey: "pantsSize", defaults: defaults)
+            write(values.waistSize, forKey: "waistSize", defaults: defaults)
+            write(values.inseamLength, forKey: "inseamLength", defaults: defaults)
+
+            let reconciledPantsSize = clean(values.pantsSize)
+            if updated.clothingSizes.pantSize != reconciledPantsSize {
+                updated.clothingSizes.pantSize = reconciledPantsSize
+                didChangeProfile = true
+            }
+        }
+
+        if defaults.object(forKey: "sizeProfile") != nil {
+            defaults.removeObject(forKey: "sizeProfile")
+        }
+
+        return (updated, didChangeProfile)
+    }
+
+    private static func clean(_ value: String?) -> String? {
+        let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func write(_ value: String, forKey key: String, defaults: UserDefaults) {
+        let trimmed = PantsSizeSync.cleaned(value)
+        if trimmed.isEmpty {
+            defaults.removeObject(forKey: key)
+        } else {
+            defaults.set(trimmed, forKey: key)
+        }
     }
 }
 
@@ -236,11 +545,13 @@ struct PantsSizeFieldState: Equatable {
 
     mutating func applyManualWaist(_ value: String) {
         waistSize = value
+        pantsSize = PantsSizeSync.storageValue(category: "Men", waist: waistSize, inseam: inseamLength) ?? ""
         lastEditSource = .manual
     }
 
     mutating func applyManualInseam(_ value: String) {
         inseamLength = value
+        pantsSize = PantsSizeSync.storageValue(category: "Men", waist: waistSize, inseam: inseamLength) ?? ""
         lastEditSource = .manual
     }
 

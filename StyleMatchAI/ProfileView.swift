@@ -63,6 +63,7 @@ struct ProfileView: View {
     @State private var hasLoadedProfileDraft = false
     @State private var dataDeletionMessage: String?
     @State private var pantsSizeLastEditSource: PantsSizeEditSource = .manual
+    @State private var showsAdditionalMeasurements = false
     @StateObject private var voiceAssistant = VoiceStylistService()
 
     private var selectedAssistant: PreferredAIAssistant {
@@ -73,20 +74,30 @@ struct ProfileView: View {
         CustomerAccountMode(rawValue: customerAccountMode) ?? .guest
     }
 
+    private var activeAccountUserID: String {
+        StyleMatchAccountNameResolver.clean(customerAppleUserID)
+        ?? StyleMatchAccountNameResolver.clean(customerAccountEmail)
+        ?? "guest"
+    }
+
+    private var resolvedProfileDisplayName: String {
+        let storedName = ProfileStore(userId: activeAccountUserID).currentProfile.givenName
+        return StyleMatchAccountNameResolver.profileGivenName(from: storedName)
+        ?? StyleMatchAccountNameResolver.clean(name)
+        ?? ""
+    }
+
+    private var resolvedAccountEmail: String {
+        StyleMatchAppleCredentialProfileApplier.storedEmail(userID: activeAccountUserID)
+        ?? StyleMatchAccountNameResolver.clean(customerAccountEmail)
+        ?? ""
+    }
+
     private let shirtSizeOptions = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "2XL", "3XL", "4XL", "5XL", "6XL", "7XL", "8XL"]
     private let womenTopSizeOptions = ["XXS", "XS", "S", "M", "L", "XL", "1X", "2X", "3X", "4X", "5X", "6X"]
     private let womenBottomSizeOptions = ["000", "00"] + (0...34).map { "\($0)" } + ["XXS", "XS", "S", "M", "L", "XL", "1X", "2X", "3X", "4X", "5X", "6X"]
     private let dressSizeOptions = ["000", "00"] + (0...34).map { "\($0)" } + ["XXS", "XS", "S", "M", "L", "XL", "1X", "2X", "3X", "4X", "5X", "6X"]
     private let kidsYouthSizeOptions = ["2T", "3T", "4T", "5", "6", "7", "8", "10", "12", "14", "16", "18", "Youth XS", "Youth S", "Youth M", "Youth L", "Youth XL"]
-    private let pantSizeOptions: [String] = {
-        let menPants = (24...60).flatMap { waist in
-            (26...40).map { length in
-                "Men \(waist)x\(length)"
-            }
-        }
-        let womenPants = ["Women 000", "Women 00"] + (0...34).map { "Women \($0)" } + ["Women XXS", "Women XS", "Women S", "Women M", "Women L", "Women XL", "Women 2XL", "Women 3XL", "Women 4XL", "Women 5XL", "Women 6XL"]
-        return menPants + womenPants
-    }()
     private let shoeSizeOptions = (5...18).map { "\($0)" }
     private let womenShoeSizeOptions = ["4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "13"]
     private let youthShoeSizeOptions = ["Toddler 5", "Toddler 6", "Toddler 7", "Toddler 8", "Toddler 9", "Toddler 10", "Little Kid 11", "Little Kid 12", "Little Kid 13", "Big Kid 1", "Big Kid 2", "Big Kid 3", "Big Kid 4", "Big Kid 5", "Big Kid 6", "Big Kid 7"]
@@ -147,13 +158,7 @@ struct ProfileView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-
-                        Button {
-                            dataDeletionMessage = "Account management is handled through Apple ID settings. StyleMatch Pro does not display passwords or private credentials."
-                        } label: {
-                            Label("Manage Account", systemImage: "person.crop.circle.badge.gearshape")
-                        }
-
+                        // Manage Account screen deferred to 1.6 — data actions live in the Data & Privacy section below.
                         Button {
                             useGuestMode()
                         } label: {
@@ -164,9 +169,9 @@ struct ProfileView: View {
                 }
 
                 Section("Personal Information") {
-                    profileInfoRow("Name", cleanValue(name, fallback: "Not set"), icon: "person.fill")
-                    profileInfoRow("Email", cleanValue(customerAccountEmail, fallback: "Hidden or not shared"), icon: "envelope.fill")
-                    profileInfoRow("Account Type", selectedAccountMode.description, icon: accountIcon)
+                    profileInfoRow("Name", cleanValue(resolvedProfileDisplayName, fallback: "Not set"), icon: "person.fill")
+                    profileInfoRow("Email", cleanValue(resolvedAccountEmail, fallback: "Hidden or not shared"), icon: "envelope.fill")
+                    profileInfoRow("Account Type", selectedAccountMode.accountStatusTitle, icon: accountIcon)
                     profileInfoRow("Preferred Weather City", cleanValue(weatherCity, fallback: "Not set"), icon: "mappin.and.ellipse")
                     profileInfoRow("Preferred AI Assistant", selectedAssistant.rawValue, icon: "sparkles")
 
@@ -311,7 +316,7 @@ struct ProfileView: View {
                 }
 
                 Section("Size Profile") {
-                    Picker("Size category", selection: draftBinding(\.sizeCategory)) {
+                    Picker("Size category", selection: sizeCategoryBinding()) {
                         ForEach(SizeProfileCategory.allCases) { category in
                             Text(category.rawValue).tag(category.rawValue)
                         }
@@ -319,9 +324,7 @@ struct ProfileView: View {
 
                     sizeFields(for: selectedDraftSizeCategory)
 
-                    Text(profileDraftSizeSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    sizeProfileSummaryCard(for: profileDraft)
 
                     Label("Saved privately on this phone and used only for fit, sizing, and clothing recommendations.", systemImage: "lock.shield")
                         .font(.caption)
@@ -660,12 +663,34 @@ struct ProfileView: View {
         }
     }
 
-    private func pantsSizePickerBinding() -> Binding<String> {
+    private func sizeCategoryBinding() -> Binding<String> {
         Binding {
-            profileDraft.pantsSize
+            profileDraft.sizeCategory
         } set: { newValue in
-            applyPantsSizePickerSelection(newValue)
+            let previousCategory = SizeProfileCategory.resolvedIfSet(from: profileDraft.sizeCategory)
+            profileDraft.sizeCategory = newValue
+            let newCategory = SizeProfileCategory.resolvedIfSet(from: newValue)
+            if previousCategory != newCategory {
+                resetSizeFieldsForCategorySwitch()
+            } else {
+                profileDraft.reconcileGeneratedPantsSize()
+            }
+            updateProfileDirtyState()
         }
+    }
+
+    private func resetSizeFieldsForCategorySwitch() {
+        profileDraft.shirtSize = ""
+        profileDraft.pantsSize = ""
+        profileDraft.dressSize = ""
+        profileDraft.waistSize = ""
+        profileDraft.inseamLength = ""
+        profileDraft.neckSize = ""
+        profileDraft.sleeveLength = ""
+        profileDraft.shoeSize = ""
+        profileDraft.fitPreference = ""
+        pantsSizeLastEditSource = .manual
+        showsAdditionalMeasurements = false
     }
 
     private func pantsMeasurementBinding(
@@ -707,7 +732,9 @@ struct ProfileView: View {
             lastEditSource: pantsSizeLastEditSource
         )
         state.applyManualWaist(value)
+        profileDraft.pantsSize = state.pantsSize
         profileDraft.waistSize = state.waistSize
+        profileDraft.inseamLength = state.inseamLength
         pantsSizeLastEditSource = state.lastEditSource
         updateProfileDirtyState()
     }
@@ -720,6 +747,8 @@ struct ProfileView: View {
             lastEditSource: pantsSizeLastEditSource
         )
         state.applyManualInseam(value)
+        profileDraft.pantsSize = state.pantsSize
+        profileDraft.waistSize = state.waistSize
         profileDraft.inseamLength = state.inseamLength
         pantsSizeLastEditSource = state.lastEditSource
         updateProfileDirtyState()
@@ -758,23 +787,18 @@ struct ProfileView: View {
                 }
             }
 
-            Picker("Men's pants size", selection: pantsSizePickerBinding()) {
-                ForEach(optionsIncludingCurrent(pantSizeOptions, current: profileDraft.pantsSize), id: \.self) { size in
-                    Text(size).tag(size)
-                }
-            }
-            .styleMatchOnChange(of: profileDraft.pantsSize) { newValue in
-                logPantsPickerChange(newValue)
-            }
+            profileDraftField("Waist", text: pantsMeasurementBinding(\.waistSize, field: .waist), prompt: "e.g. 36")
+                .keyboardType(.numbersAndPunctuation)
+            profileDraftField("Inseam / Length", text: pantsMeasurementBinding(\.inseamLength, field: .inseam), prompt: "e.g. 32")
+                .keyboardType(.numbersAndPunctuation)
+            generatedPantsSizeRow(for: profileDraft)
 
-            profileDraftField("Waist", text: pantsMeasurementBinding(\.waistSize, field: .waist), prompt: "36")
-                .keyboardType(.numbersAndPunctuation)
-            profileDraftField("Inseam / Length", text: pantsMeasurementBinding(\.inseamLength, field: .inseam), prompt: "36")
-                .keyboardType(.numbersAndPunctuation)
-            profileDraftField("Neck Size", text: draftBinding(\.neckSize), prompt: "Optional")
-                .keyboardType(.numbersAndPunctuation)
-            profileDraftField("Sleeve Length", text: draftBinding(\.sleeveLength), prompt: "Optional")
-                .keyboardType(.numbersAndPunctuation)
+            DisclosureGroup("Additional Measurements", isExpanded: $showsAdditionalMeasurements) {
+                profileDraftField("Neck Size", text: draftBinding(\.neckSize), prompt: "Optional")
+                    .keyboardType(.numbersAndPunctuation)
+                profileDraftField("Sleeve Length", text: draftBinding(\.sleeveLength), prompt: "Optional")
+                    .keyboardType(.numbersAndPunctuation)
+            }
 
             Picker("Men's shoe size", selection: draftBinding(\.shoeSize)) {
                 ForEach(optionsIncludingCurrent(shoeSizeOptions, current: profileDraft.shoeSize), id: \.self) { size in
@@ -790,13 +814,10 @@ struct ProfileView: View {
                 }
             }
 
-            Picker("Women's bottoms size", selection: pantsSizePickerBinding()) {
+            Picker("Women's bottoms size", selection: draftBinding(\.pantsSize)) {
                 ForEach(optionsIncludingCurrent(womenBottomSizeOptions, current: profileDraft.pantsSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
-            }
-            .styleMatchOnChange(of: profileDraft.pantsSize) { newValue in
-                logPantsPickerChange(newValue)
             }
 
             Picker("Dress size", selection: draftBinding(\.dressSize)) {
@@ -819,11 +840,11 @@ struct ProfileView: View {
                 }
             }
 
-            profileDraftField("Unisex bottoms / pants", text: draftBinding(\.pantsSize), prompt: "M, L, 36x36, or brand size")
             profileDraftField("Waist", text: pantsMeasurementBinding(\.waistSize, field: .waist), prompt: "Optional")
                 .keyboardType(.numbersAndPunctuation)
             profileDraftField("Inseam / Length", text: pantsMeasurementBinding(\.inseamLength, field: .inseam), prompt: "Optional")
                 .keyboardType(.numbersAndPunctuation)
+            generatedPantsSizeRow(for: profileDraft)
 
             Picker("Shoe size", selection: draftBinding(\.shoeSize)) {
                 ForEach(optionsIncludingCurrent(shoeSizeOptions, current: profileDraft.shoeSize), id: \.self) { size in
@@ -857,6 +878,47 @@ struct ProfileView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private func generatedPantsSizeRow(for draft: ProfileEditDraft) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Generated Pants Size")
+                .foregroundStyle(.primary)
+            Spacer()
+            Text(draft.generatedPantsDisplay ?? "Add waist and inseam")
+                .foregroundStyle(draft.generatedPantsDisplay == nil ? .secondary : .primary)
+                .fontWeight(draft.generatedPantsDisplay == nil ? .regular : .semibold)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func sizeProfileSummaryCard(for draft: ProfileEditDraft) -> some View {
+        let rows = draft.sizeSummaryRows
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Your Size Profile")
+                .font(.headline)
+            if rows.isEmpty {
+                Text("No sizes saved yet")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("Add only the sizes you want StyleMatch Pro to remember.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(row.label)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(row.value)
+                            .fontWeight(.semibold)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .font(.subheadline)
+                }
+            }
+        }
+        .padding(.vertical, 6)
     }
 
     private var fitPicker: some View {
@@ -898,9 +960,7 @@ struct ProfileView: View {
     }
 
     private var profileCompleteness: Int {
-        let total = 50
-        let completed = total - missingProfileFields.count
-        return min(100, max(0, Int((Double(completed) / Double(total) * 100).rounded())))
+        ProfileStore.profileCompletenessPercentage(ProfileStore().currentProfile)
     }
 
     private var savedScanCount: Int {
@@ -1023,23 +1083,26 @@ struct ProfileView: View {
             customerAppleUserID = signedInUserID
             accountSyncEnabled = true
 
-            if let email = credential.email {
+            let appliedProfile = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+                userID: signedInUserID,
+                email: credential.email,
+                appleGivenName: credential.fullName?.givenName,
+                appleFamilyName: credential.fullName?.familyName,
+                localDisplayName: name
+            )
+            logProfileNameEvent(
+                stage: "sign-in",
+                source: appliedProfile.source,
+                appleNameProvided: credential.fullName?.givenName != nil || credential.fullName?.familyName != nil,
+                localNamePresent: StyleMatchAccountNameResolver.clean(name) != nil,
+                storedNamePresent: appliedProfile.givenName != nil
+            )
+
+            if let email = appliedProfile.email {
                 customerAccountEmail = email
             }
-
-            let givenName = StyleMatchGreetingBuilder.firstName(from: credential.fullName?.givenName)
-            if let givenName {
-                ProfileStore(userId: signedInUserID).updateGivenName(givenName)
-            }
-
-            let fullName = [givenName, credential.fullName?.familyName]
-                .compactMap { $0 }
-                .joined(separator: " ")
-
-            if !fullName.isEmpty {
-                name = fullName
-            } else {
-                name = ProfileStore(userId: signedInUserID).currentProfile.givenName ?? ""
+            if let displayName = appliedProfile.displayName {
+                name = displayName
             }
 
             if wasGuest && hasTransferableGuestData {
@@ -1089,7 +1152,7 @@ struct ProfileView: View {
         }
 
         if hasIntentionalProfileSave,
-           StyleMatchGreetingBuilder.firstName(from: name) != nil {
+           StyleMatchAccountNameResolver.profileGivenName(from: name) != nil {
             transferred.append("profile")
         }
 
@@ -1116,6 +1179,7 @@ struct ProfileView: View {
 
     private func loadProfileDraft(force: Bool = false) {
         guard force || !hasUnsavedProfileChanges else { return }
+        restoreProfileNameForDraftLoad()
         let draft = currentStoredProfileDraft()
         profileDraft = draft
         savedProfileDraft = draft
@@ -1123,8 +1187,27 @@ struct ProfileView: View {
         hasUnsavedProfileChanges = false
     }
 
+    private func restoreProfileNameForDraftLoad() {
+        let profileStore = ProfileStore(userId: activeAccountUserID)
+        let resolvedName = StyleMatchAccountNameResolver.resolveStoredProfileThenLocal(
+            storedProfileGivenName: profileStore.currentProfile.givenName,
+            localDisplayName: name
+        )
+        logProfileNameEvent(
+            stage: "draft-load",
+            source: resolvedName.source,
+            appleNameProvided: false,
+            localNamePresent: StyleMatchAccountNameResolver.clean(name) != nil,
+            storedNamePresent: profileStore.currentProfile.givenName != nil
+        )
+        if let displayName = resolvedName.displayName,
+           StyleMatchAccountNameResolver.clean(name) != displayName {
+            name = displayName
+        }
+    }
+
     private func currentStoredProfileDraft() -> ProfileEditDraft {
-        ProfileEditDraft(
+        var draft = ProfileEditDraft(
             name: name,
             favoriteColors: favoriteColors,
             favoriteBrands: favoriteBrands,
@@ -1148,6 +1231,8 @@ struct ProfileView: View {
             shoeSize: shoeSize,
             fitPreference: fitPreference
         )
+        draft.reconcileGeneratedPantsSize()
+        return draft
     }
 
     private func updateProfileDirtyState() {
@@ -1157,6 +1242,19 @@ struct ProfileView: View {
     private func saveProfileDraft() {
         var draft = profileDraft
         draft.normalize()
+        draft.reconcileGeneratedPantsSize()
+        let profileStoreForName = ProfileStore(userId: activeAccountUserID)
+        draft.name = StyleMatchAccountNameResolver.mergeDraftName(
+            draft.name,
+            storedProfileGivenName: profileStoreForName.currentProfile.givenName
+        )
+        logProfileNameEvent(
+            stage: "save",
+            source: StyleMatchAccountNameResolver.clean(draft.name) == nil ? .unavailable : .localDisplayName,
+            appleNameProvided: false,
+            localNamePresent: StyleMatchAccountNameResolver.clean(draft.name) != nil,
+            storedNamePresent: profileStoreForName.currentProfile.givenName != nil
+        )
         logPantsSave(draft)
 
         name = draft.name
@@ -1206,14 +1304,27 @@ struct ProfileView: View {
         #endif
     }
 
+
+    private func logProfileNameEvent(
+        stage: String,
+        source: StyleMatchAccountNameResolver.Source,
+        appleNameProvided: Bool,
+        localNamePresent: Bool,
+        storedNamePresent: Bool
+    ) {
+        #if DEBUG
+        print("[ProfileName] \(stage) source=\(source.rawValue) appleNameProvided=\(appleNameProvided) localNamePresent=\(localNamePresent) storedNamePresent=\(storedNamePresent)")
+        #endif
+    }
+
     private func syncPersonalStylistProfile(from draft: ProfileEditDraft) {
-        let store = ProfileStore()
+        let store = ProfileStore(userId: activeAccountUserID)
         var profile = store.currentProfile
-        profile.givenName = StyleMatchGreetingBuilder.firstName(from: draft.name)
+        profile.givenName = StyleMatchAccountNameResolver.profileGivenName(from: draft.name) ?? profile.givenName
         profile.favoriteColors = splitProfileList(draft.favoriteColors)
         profile.dislikedColors = splitProfileList(draft.outfitDislikes)
         profile.favoriteBrands = splitProfileList(draft.favoriteBrands)
-        profile.preferredFit = FitPreference(rawValue: draft.fitPreference.lowercased()) ?? .regular
+        profile.preferredFit = FitPreference.fromProfileInput(draft.fitPreference)
         profile.budgetRange = budgetRange(from: draft.budget)
         profile.climate = cleanOptional(weatherCondition) ?? ""
         profile.workDressCode = cleanOptional(dressCode) ?? ""
@@ -1230,31 +1341,9 @@ struct ProfileView: View {
     }
 
     private func summaryText(for draft: ProfileEditDraft) -> String {
-        let category = SizeProfileCategory.resolvedIfSet(from: draft.sizeCategory)
-        var parts: [String] = [
-            "Category: \(category?.rawValue ?? "not set")",
-            "Top: \(cleanValue(draft.shirtSize, fallback: "not set"))",
-            "Bottom: \(cleanValue(draft.pantsSize, fallback: "not set"))"
-        ]
-
-        if category == .women {
-            parts.append("Dress: \(cleanValue(draft.dressSize, fallback: "not set"))")
-        }
-
-        if category != .women,
-           category != .kidsYouth {
-            parts.append("Waist: \(cleanValue(draft.waistSize, fallback: "not set"))")
-            parts.append("Inseam: \(cleanValue(draft.inseamLength, fallback: "not set"))")
-        }
-
-        if category == .men {
-            parts.append("Neck: \(cleanValue(draft.neckSize, fallback: "not set"))")
-            parts.append("Sleeve: \(cleanValue(draft.sleeveLength, fallback: "not set"))")
-        }
-
-        parts.append("Shoes: \(cleanValue(draft.shoeSize, fallback: "not set"))")
-        parts.append("Fit: \(cleanValue(draft.fitPreference, fallback: "not set"))")
-        return parts.joined(separator: "; ")
+        let rows = draft.sizeSummaryRows
+        guard !rows.isEmpty else { return "No sizes saved yet" }
+        return rows.map { "\($0.label): \($0.value)" }.joined(separator: "; ")
     }
 
     private func splitProfileList(_ text: String) -> [String] {
@@ -1330,7 +1419,6 @@ struct ProfileView: View {
         fitPreference = ""
         profileLastSavedAt = ""
         profileNeedsCloudSync = false
-        updateSizeProfileSummary()
         loadProfileDraft(force: true)
         dataDeletionMessage = "Saved data was deleted from this phone."
     }
@@ -1428,6 +1516,81 @@ private struct ProfileEditDraft: Equatable {
         sleeveLength = normalized(sleeveLength, fallback: "")
         shoeSize = normalized(shoeSize, fallback: "")
         fitPreference = normalized(fitPreference, fallback: "")
+    }
+
+    mutating func reconcileGeneratedPantsSize() {
+        normalize()
+        let category = SizeProfileCategory.resolvedIfSet(from: sizeCategory)
+        switch category {
+        case .men, .unisex:
+            let values = PantsSizeSync.reconciledValues(
+                pantsSize: pantsSize,
+                waistSize: waistSize,
+                inseamLength: inseamLength,
+                category: category?.rawValue ?? sizeCategory
+            )
+            pantsSize = values.pantsSize
+            waistSize = values.waistSize
+            inseamLength = values.inseamLength
+        case .women, .kidsYouth:
+            waistSize = ""
+            inseamLength = ""
+            neckSize = ""
+            sleeveLength = ""
+        case nil:
+            if !waistSize.isEmpty || !inseamLength.isEmpty || PantsSizeSync.measurements(from: pantsSize) != nil {
+                let values = PantsSizeSync.reconciledValues(
+                    pantsSize: pantsSize,
+                    waistSize: waistSize,
+                    inseamLength: inseamLength,
+                    category: SizeProfileCategory.men.rawValue
+                )
+                pantsSize = values.pantsSize
+                waistSize = values.waistSize
+                inseamLength = values.inseamLength
+            }
+        }
+    }
+
+    var generatedPantsDisplay: String? {
+        PantsSizeSync.displayValue(waist: waistSize, inseam: inseamLength)
+    }
+
+    var sizeSummaryRows: [(label: String, value: String)] {
+        var rows: [(String, String)] = []
+        let category = SizeProfileCategory.resolvedIfSet(from: sizeCategory)
+        if let category {
+            rows.append(("Category", category.rawValue))
+        }
+        if !shirtSize.isEmpty {
+            rows.append((category == .women ? "Top" : "Shirt", shirtSize))
+        }
+        switch category {
+        case .men, .unisex:
+            if let generatedPantsDisplay {
+                rows.append(("Pants", generatedPantsDisplay))
+            }
+        case .women, .kidsYouth:
+            if !pantsSize.isEmpty {
+                rows.append((category == .kidsYouth ? "Bottoms" : "Bottoms", pantsSize))
+            }
+        case nil:
+            if let generatedPantsDisplay {
+                rows.append(("Pants", generatedPantsDisplay))
+            } else if !pantsSize.isEmpty {
+                rows.append(("Bottoms", pantsSize))
+            }
+        }
+        if category == .women, !dressSize.isEmpty {
+            rows.append(("Dress", dressSize))
+        }
+        if !shoeSize.isEmpty {
+            rows.append(("Shoes", shoeSize))
+        }
+        if !fitPreference.isEmpty {
+            rows.append(("Preferred Fit", fitPreference))
+        }
+        return rows
     }
 
     private func normalized(_ text: String, fallback: String) -> String {

@@ -1933,7 +1933,7 @@ struct AIAssistantsView: View {
             StylistFeature(title: "Fashion Analytics", icon: "chart.bar", detail: "AI insights on colors, brands, gaps, habits, and wardrobe balance."),
             StylistFeature(title: "Fashion Journal", icon: "book.closed", detail: "Review outfits worn, scores, favorite combinations, compliments, purchases, seasonal trends, and progress over time."),
             StylistFeature(title: "Style Progress Reports", icon: "chart.line.uptrend.xyaxis", detail: "Weekly scores, closet growth, savings, brands, and most-worn pieces."),
-            StylistFeature(title: "Size Profile", icon: "ruler", detail: sizeProfile)
+            StylistFeature(title: "Size Profile", icon: "ruler", detail: sizeProfileDisplayText)
         ]
     }
 
@@ -2516,7 +2516,7 @@ struct AIAssistantsView: View {
     private func planRecommendation(for timeFrame: String, occasion: String, tone: String) -> String {
         let weatherText = weatherPlanAdvice.lowercased()
         let closetText = compactClosetSummary.lowercased()
-        let sizeText = sizeProfile.isEmpty ? "your saved sizes" : sizeProfile.lowercased()
+        let sizeText = sizeProfileInlineText
         return "For \(timeFrame), choose a \(tone.lowercased()) \(occasion.lowercased()) look using \(closetText). Adjust for \(weatherText). Fit uses \(sizeText)."
     }
 
@@ -2641,7 +2641,10 @@ struct AIAssistantsView: View {
         case "Style Progress Reports":
             return "See your style statistics with graphs for weekly score, confidence, color matching, wardrobe growth, savings, shopping history, brands, and most-worn pieces."
         case "Size Profile":
-            return "Use saved sizes for recommendations: \(sizeProfile)."
+            let trimmed = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty
+                ? "No sizes saved yet. Add sizes in Profile for better recommendations."
+                : "Use saved sizes for recommendations: \(trimmed)."
         default:
             return feature.detail
         }
@@ -2676,7 +2679,9 @@ struct AIAssistantsView: View {
         case "Style Progress Reports":
             return "Create a statistics-based style progress report using weekly score, confidence score, color matching, wardrobe growth, money saved, shopping history, favorite brands, and most-worn pieces."
         case "Size Profile":
-            return "Use my saved size profile to recommend the right shirt, pants, and shoe sizes."
+            return sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "Help me set up my size profile before recommending shirt, pants, and shoe sizes."
+                : "Use my saved size profile to recommend the right shirt, pants, and shoe sizes."
         default:
             return "Help me with \(feature.title.lowercased())."
         }
@@ -2699,7 +2704,10 @@ struct AIAssistantsView: View {
         case "Style Progress Reports":
             return "Style stats: weekly score \(averageStyleScore), confidence \(confidenceScore), color matching \(colorMatchingScore), wardrobe \(decodedClosetItems.count) pieces, saved $\(moneySavedEstimate)."
         case "Size Profile":
-            return "Saved size profile: \(sizeProfile)."
+            let trimmed = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty
+                ? "No sizes saved yet."
+                : "Saved size profile: \(trimmed)."
         default:
             return "\(feature.title) is ready. Tap Ask AI Stylist for personalized help."
         }
@@ -3347,7 +3355,7 @@ struct AIAssistantsView: View {
         Styling rules:
         - Check existing closet pieces before recommending new purchases.
         - Stay inside budget when possible: \(budget).
-        - Respect size profile: \(sizeProfile).
+        - \(sizeProfileContextRule)
         - Respect preferred fit: \(fitPreference).
         - Use weather context: \(weatherLocationText).
         - Match occasion: \(plannedOccasionSummary).
@@ -3366,7 +3374,7 @@ struct AIAssistantsView: View {
         Wishlist and shopping: \(wishlistSummaryForChatGPT)
         Style memory: \(styleMemorySummary)
         Privacy rules: use outfit/profile facts only for styling. Do not infer race, ethnicity, nationality, religion, age, gender, identity, or body judgment.
-        Styling rules: use closet first, explain why, respect \(sizeProfile), fit \(fitPreference), budget \(budget), weather \(weatherLocationText), occasion \(plannedOccasionSummary), favorite colors \(favoriteColors), and favorite brands \(favoriteBrands).
+        Styling rules: use closet first, explain why, respect \(sizeProfileInlineText), fit \(fitPreference), budget \(budget), weather \(weatherLocationText), occasion \(plannedOccasionSummary), favorite colors \(favoriteColors), and favorite brands \(favoriteBrands).
         """
     }
 
@@ -3388,6 +3396,21 @@ struct AIAssistantsView: View {
         decodedClosetItems.isEmpty ? "148" : "\(decodedClosetItems.count)"
     }
 
+    private var sizeProfileDisplayText: String {
+        let trimmed = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No sizes saved yet" : trimmed
+    }
+
+    private var sizeProfileInlineText: String {
+        let trimmed = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "no saved size profile yet" : trimmed.lowercased()
+    }
+
+    private var sizeProfileContextRule: String {
+        let trimmed = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "No saved size profile yet." : "Respect size profile: \(trimmed)."
+    }
+
     private var shirtSizeDisplayText: String {
         let trimmed = shirtSize.trimmingCharacters(in: .whitespacesAndNewlines)
         switch trimmed.uppercased() {
@@ -3404,7 +3427,7 @@ struct AIAssistantsView: View {
         case "XXL", "2XL":
             return "XXL"
         default:
-            return trimmed.isEmpty ? "Large" : trimmed
+            return trimmed.isEmpty ? "No shirt size saved" : trimmed
         }
     }
 
@@ -3425,7 +3448,7 @@ struct AIAssistantsView: View {
                 .replacingOccurrences(of: " ", with: "")
         }
 
-        return "36x36"
+        return "No pants size saved"
     }
 
     private var favoriteColorsDisplayText: String {

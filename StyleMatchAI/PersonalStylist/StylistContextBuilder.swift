@@ -133,7 +133,7 @@ struct PersonalizationContextBuilder {
         appendLine("Favorite colors", list(profile.favoriteColors), to: &lines)
         appendLine("Avoid colors", list(profile.dislikedColors), to: &lines)
         appendLine("Favorite brands", list(profile.favoriteBrands), to: &lines)
-        if profile.preferredFit != .regular {
+        if profile.preferredFit.isSet && profile.preferredFit != .regular {
             lines.append("- Preferred fit: \(profile.preferredFit.rawValue)")
         }
         if isMeaningfulBudget(profile.budgetRange) {
@@ -452,12 +452,20 @@ struct PersonalizationContextBuilder {
     }
 
     private static func sizeSummary(_ sizes: ClothingSizes) -> String? {
+        func line(_ label: String, _ value: String?) -> String? {
+            guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty else {
+                return nil
+            }
+            return "\(label) \(value)"
+        }
+
         let values = [
-            sizes.shirtSize.map { "shirt \($0)" },
-            sizes.pantSize.map { "pants \($0)" },
-            sizes.shoeSize.map { "shoes \($0)" },
-            sizes.jacketSize.map { "jacket \($0)" },
-            sizes.dressSize.map { "dress \($0)" }
+            line("shirt", sizes.shirtSize),
+            line("pants", sizes.pantSize),
+            line("shoes", sizes.shoeSize),
+            line("jacket", sizes.jacketSize),
+            line("dress", sizes.dressSize)
         ].compactMap { $0 }
 
         return values.isEmpty ? nil : values.joined(separator: ", ")
