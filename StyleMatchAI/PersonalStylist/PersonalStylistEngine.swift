@@ -14,6 +14,7 @@ struct PersonalStylistEngineInput {
     let profile: StylistProfile
     let dealMatches: [PersonalStylistDealMatch]
     let outfitFingerprint: String?
+    let imageDigest: String?
 
     init(
         score: Int,
@@ -28,7 +29,8 @@ struct PersonalStylistEngineInput {
         memories: [OutfitMemory],
         profile: StylistProfile,
         dealMatches: [PersonalStylistDealMatch] = [],
-        outfitFingerprint: String? = nil
+        outfitFingerprint: String? = nil,
+        imageDigest: String? = nil
     ) {
         self.score = score
         self.scoreTier = scoreTier
@@ -43,6 +45,7 @@ struct PersonalStylistEngineInput {
         self.profile = profile
         self.dealMatches = dealMatches
         self.outfitFingerprint = outfitFingerprint
+        self.imageDigest = imageDigest
     }
 }
 
@@ -132,7 +135,8 @@ enum PersonalStylistEngine {
             memories: input.memories,
             profile: input.profile,
             dealMatches: input.dealMatches,
-            outfitFingerprint: input.outfitFingerprint
+            outfitFingerprint: input.outfitFingerprint,
+            imageDigest: input.imageDigest
         )
 
         var sections = PersonalStylistIntelligenceBuilder.buildMessage(

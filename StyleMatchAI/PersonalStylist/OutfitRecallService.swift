@@ -1,4 +1,41 @@
+import CryptoKit
 import Foundation
+
+enum ScanImageIdentity {
+    static let fingerprintVersion = "outfit-v4"
+
+    static func sha256Hex<S: Sequence>(bytes: S) -> String where S.Element == UInt8 {
+        SHA256.hash(data: Data(bytes)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func isExactMatch(
+        storedFingerprint: String?,
+        storedImageDigest: String?,
+        currentFingerprint: String?,
+        currentImageDigest: String?
+    ) -> Bool {
+        guard let storedFingerprint = cleanIdentity(storedFingerprint),
+              let storedImageDigest = cleanIdentity(storedImageDigest),
+              let currentFingerprint = cleanIdentity(currentFingerprint),
+              let currentImageDigest = cleanIdentity(currentImageDigest),
+              storedFingerprint.hasPrefix("\(fingerprintVersion)|"),
+              currentFingerprint.hasPrefix("\(fingerprintVersion)|") else {
+            return false
+        }
+        return storedFingerprint == currentFingerprint && storedImageDigest == currentImageDigest
+    }
+
+    static func debugDigestPrefix(_ digest: String?, length: Int = 16) -> String {
+        guard let digest = cleanIdentity(digest) else { return "none" }
+        return String(digest.prefix(max(12, min(16, length))))
+    }
+
+    private static func cleanIdentity(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+}
 
 struct OutfitRecallFact: Equatable {
     let text: String
@@ -11,19 +48,22 @@ struct OutfitRecallScanContext {
     let detectedStyle: String
     let garmentRecords: [GarmentRecord]
     let outfitFingerprint: String?
+    let imageDigest: String?
 
     init(
         detectedGarments: [String],
         colors: [String],
         detectedStyle: String,
         garmentRecords: [GarmentRecord] = [],
-        outfitFingerprint: String? = nil
+        outfitFingerprint: String? = nil,
+        imageDigest: String? = nil
     ) {
         self.detectedGarments = detectedGarments
         self.colors = colors
         self.detectedStyle = detectedStyle
         self.garmentRecords = garmentRecords
         self.outfitFingerprint = outfitFingerprint
+        self.imageDigest = imageDigest
     }
 }
 
@@ -96,9 +136,17 @@ enum OutfitRecallService {
     }
 
     private static func bestMatch(for context: OutfitRecallScanContext, memories: [OutfitMemory]) -> OutfitMemory? {
-        guard let fingerprint = cleanOptional(context.outfitFingerprint) else { return nil }
+        guard let fingerprint = cleanOptional(context.outfitFingerprint),
+              let imageDigest = cleanOptional(context.imageDigest) else { return nil }
         return memories
-            .filter { cleanOptional($0.outfitFingerprint) == fingerprint }
+            .filter {
+                ScanImageIdentity.isExactMatch(
+                    storedFingerprint: $0.outfitFingerprint,
+                    storedImageDigest: $0.imageDigest,
+                    currentFingerprint: fingerprint,
+                    currentImageDigest: imageDigest
+                )
+            }
             .map { memory in
                 (memory: memory, score: matchScore(context: context, memory: memory))
             }

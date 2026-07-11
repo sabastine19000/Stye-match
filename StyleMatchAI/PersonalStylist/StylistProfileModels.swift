@@ -1156,6 +1156,7 @@ struct OutfitMemory: Codable, Identifiable {
     var timesWorn: Int
     var garmentRecords: [GarmentRecord]
     var outfitFingerprint: String?
+    var imageDigest: String?
 
     init(
         id: UUID,
@@ -1179,7 +1180,8 @@ struct OutfitMemory: Codable, Identifiable {
         isFavorite: Bool,
         timesWorn: Int,
         garmentRecords: [GarmentRecord] = [],
-        outfitFingerprint: String? = nil
+        outfitFingerprint: String? = nil,
+        imageDigest: String? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -1203,6 +1205,7 @@ struct OutfitMemory: Codable, Identifiable {
         self.timesWorn = max(0, timesWorn)
         self.garmentRecords = garmentRecords
         self.outfitFingerprint = outfitFingerprint
+        self.imageDigest = imageDigest
     }
 
     init(from decoder: Decoder) throws {
@@ -1245,6 +1248,7 @@ struct OutfitMemory: Codable, Identifiable {
             lastWorn: wasWorn == true ? scanDate : nil
         )
         outfitFingerprint = try container.decodeIfPresent(String.self, forKey: .outfitFingerprint)
+        imageDigest = try container.decodeIfPresent(String.self, forKey: .imageDigest)
     }
 
     private static func makeLegacyGarmentRecords(

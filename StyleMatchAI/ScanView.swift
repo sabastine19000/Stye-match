@@ -55,6 +55,7 @@ struct ScanView: View {
     @State private var scanMessage: ScanMessage?
     @State private var activeScanSessionID: UUID?
     @State private var activeScanFingerprint: String?
+    @State private var activeScanImageDigest: String?
     @State private var selectedScannerInsight = "Colors"
     @State private var scannerExampleIndex = 0
     @State private var selectedTryNextRecommendation: ClothingRecommendation?
@@ -4021,7 +4022,13 @@ struct ScanView: View {
         isPreparingCamera = false
         result = scan.analysis
         preparedAnalysis = scan.analysis
-        ensureOutfitMemory(for: scan.analysis)
+        activeScanFingerprint = scan.id
+        activeScanImageDigest = scan.imageDigest
+        ensureOutfitMemory(
+            for: scan.analysis,
+            outfitFingerprint: scan.id,
+            imageDigest: scan.imageDigest
+        )
         isShowingFullAnalysis = false
         scanMessage = ScanMessage(
             title: "Saved score opened",
@@ -4055,7 +4062,13 @@ struct ScanView: View {
             invalidateActiveScanSession()
             result = scan.analysis
             preparedAnalysis = scan.analysis
-            ensureOutfitMemory(for: scan.analysis)
+            activeScanFingerprint = scan.id
+            activeScanImageDigest = scan.imageDigest
+            ensureOutfitMemory(
+                for: scan.analysis,
+                outfitFingerprint: scan.id,
+                imageDigest: scan.imageDigest
+            )
             isShowingFullAnalysis = false
             scanMessage = ScanMessage(
                 title: "Comparison ready",
@@ -4087,7 +4100,8 @@ struct ScanView: View {
     private func ensureOutfitMemory(
         for analysis: OutfitAnalysisResult,
         store: OutfitMemoryStore = OutfitMemoryStore(),
-        outfitFingerprint: String? = nil
+        outfitFingerprint: String? = nil,
+        imageDigest: String? = nil
     ) -> OutfitMemory {
         let signature = outfitMemorySignature(for: analysis)
         let scanID = UUID().uuidString
@@ -4095,6 +4109,7 @@ struct ScanView: View {
         if let existing = store.memories.first(where: {
             outfitMemorySignature(for: $0) == signature
                 && (outfitFingerprint == nil || $0.outfitFingerprint == outfitFingerprint)
+                && (imageDigest == nil || $0.imageDigest == imageDigest)
         }) {
             return store.mergeGarmentRecords(garmentRecords, into: existing.id) ?? existing
         }
@@ -4118,7 +4133,8 @@ struct ScanView: View {
             isFavorite: false,
             timesWorn: 0,
             garmentRecords: garmentRecords,
-            outfitFingerprint: outfitFingerprint
+            outfitFingerprint: outfitFingerprint,
+            imageDigest: imageDigest
         )
         store.addOrMergeScan(memory)
         ProfileStore().updateProfile(from: memory)
@@ -4683,11 +4699,13 @@ struct ScanView: View {
                 }
 
                 guard validation.isAccepted else {
+                    let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
                     logScanDebug(
                         source: scanSource,
                         validation: validation,
                         labels: validation.labels,
                         fingerprint: "rejected",
+                        imageDigest: imageDigest,
                         cacheSource: "rejected"
                     )
                     preparedAnalysis = nil
@@ -4721,12 +4739,15 @@ struct ScanView: View {
                     labels: labels,
                     colorPalette: colorDetection.garmentColors
                 )
+                let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
                 activeScanFingerprint = fingerprint
+                activeScanImageDigest = imageDigest
                 logScanDebug(
                     source: scanSource,
                     validation: validation,
                     labels: labels,
                     fingerprint: fingerprint,
+                    imageDigest: imageDigest,
                     cacheSource: forceReanalyze ? "reanalyze" : "pending"
                 )
 
@@ -4736,6 +4757,7 @@ struct ScanView: View {
                     labels: labels,
                     scanSource: scanSource,
                     fingerprint: fingerprint,
+                    imageDigest: imageDigest,
                     forceReanalyze: forceReanalyze,
                     colorDetection: colorDetection
                 )
@@ -4744,7 +4766,11 @@ struct ScanView: View {
 
                 preparedAnalysis = displayAnalysis
                 result = displayAnalysis
-                ensureOutfitMemory(for: analysis, outfitFingerprint: fingerprint)
+                ensureOutfitMemory(
+                    for: analysis,
+                    outfitFingerprint: fingerprint,
+                    imageDigest: imageDigest
+                )
                 let confidence = confidenceLevel(for: validation, labels: labels)
                 let message = ScanMessage(
                     title: confidence == .low ? "Clearer photo recommended" : savedResult.title(defaultNewTitle: "Outfit score saved", repeatTitle: "Previous score restored"),
@@ -4973,15 +4999,31 @@ struct ScanView: View {
         labels: [DetectedLabel],
         scanSource: ScanSource,
         fingerprint: String,
+        imageDigest: String,
         forceReanalyze: Bool,
         colorDetection: GarmentColorDetection
     ) -> SavedScanResult {
         var history = loadScanHistory()
+        let exactStoredScan = history[fingerprint].flatMap { storedScan in
+            ScanImageIdentity.isExactMatch(
+                storedFingerprint: fingerprint,
+                storedImageDigest: storedScan.imageDigest,
+                currentFingerprint: fingerprint,
+                currentImageDigest: imageDigest
+            ) ? storedScan : nil
+        }
 
-        if let storedScan = history[fingerprint],
+        if let storedScan = exactStoredScan,
            !forceReanalyze,
            let cachedAnalysis = storedScan.analysis {
-            logScanDebug(source: scanSource, validation: validation, labels: labels, fingerprint: fingerprint, cacheSource: "saved analysis")
+            logScanDebug(
+                source: scanSource,
+                validation: validation,
+                labels: labels,
+                fingerprint: fingerprint,
+                imageDigest: imageDigest,
+                cacheSource: "saved analysis"
+            )
             return SavedScanResult(
                 analysis: cachedAnalysis,
                 isRepeat: true,
@@ -4990,7 +5032,8 @@ struct ScanView: View {
             )
         }
 
-        let storedInputs = history[fingerprint]?.deterministicInputs
+        // Semantic-only matches are not exact images and must be analyzed from current facts.
+        let storedInputs = exactStoredScan?.deterministicInputs
         let colorPalette = storedInputs?.colorPalette ?? colorDetection.garmentColors
         let scoringLabels = storedInputs?.labels ?? labels
         let detectedItems = storedInputs?.detectedItems ?? detectedClothingItems(from: scoringLabels)
@@ -5021,6 +5064,7 @@ struct ScanView: View {
             scanCount: 1,
             thumbnailData: image.scanThumbnailData(),
             occasion: selectedScanOccasion.canonical,
+            imageDigest: imageDigest,
             deterministicInputs: StoredDeterministicScorerInputs(
                 colorPalette: colorPalette,
                 colorPaletteConfidence: storedInputs?.colorPaletteConfidence ?? colorDetection.confidenceLevel,
@@ -5031,7 +5075,14 @@ struct ScanView: View {
         )
         history[fingerprint] = storedScan
         saveScanHistory(history)
-        logScanDebug(source: scanSource, validation: validation, labels: labels, fingerprint: fingerprint, cacheSource: forceReanalyze ? "reanalyze new score" : "new local score")
+        logScanDebug(
+            source: scanSource,
+            validation: validation,
+            labels: labels,
+            fingerprint: fingerprint,
+            imageDigest: imageDigest,
+            cacheSource: forceReanalyze ? "reanalyze new score" : "new local score"
+        )
 
         return SavedScanResult(
             analysis: analysis,
@@ -5108,7 +5159,8 @@ struct ScanView: View {
             memories: OutfitMemoryStore().memories,
             profile: ProfileStore().currentProfile,
             dealMatches: dealMatches,
-            outfitFingerprint: activeScanFingerprint
+            outfitFingerprint: activeScanFingerprint,
+            imageDigest: activeScanImageDigest
         )
         return PersonalStylistEngine.compose(
             input: input,
@@ -5145,7 +5197,8 @@ struct ScanView: View {
             memories: OutfitMemoryStore().memories,
             profile: ProfileStore().currentProfile,
             dealMatches: dealMatches,
-            outfitFingerprint: activeScanFingerprint
+            outfitFingerprint: activeScanFingerprint,
+            imageDigest: activeScanImageDigest
         )
         return PersonalStylistEngine.context(
             input: input,
@@ -5926,6 +5979,7 @@ struct ScanView: View {
 
         var history = loadScanHistory()
         let existing = history[fingerprint]
+        let imageDigest = activeScanImageDigest ?? selectedUIImage.normalizedImageSHA256Digest()
         history[fingerprint] = StoredOutfitScan(
             score: analysis.score,
             analysis: analysis,
@@ -5934,6 +5988,7 @@ struct ScanView: View {
             thumbnailData: existing?.thumbnailData ?? selectedUIImage.scanThumbnailData(),
             customTitle: existing?.customTitle,
             occasion: existing?.occasion?.canonical ?? selectedScanOccasion.canonical,
+            imageDigest: imageDigest,
             deterministicInputs: existing?.deterministicInputs
         )
         saveScanHistory(history)
@@ -5942,6 +5997,7 @@ struct ScanView: View {
     private func invalidateActiveScanSession() {
         activeScanSessionID = nil
         activeScanFingerprint = nil
+        activeScanImageDigest = nil
     }
 
     private func fastOutfitFingerprint(for image: UIImage) -> String {
@@ -5983,7 +6039,7 @@ struct ScanView: View {
         let category = detectedStyleCategorySignal(validation: validation, labels: labels)
         let fabric = inferredFabricSignal(from: labels)
         return [
-            "outfit-v3-classifier-calibrated",
+            ScanImageIdentity.fingerprintVersion,
             scanType,
             clothing.isEmpty ? "clothing" : clothing,
             colors.isEmpty ? "neutral" : colors,
@@ -6057,6 +6113,7 @@ struct ScanView: View {
         validation: ScanValidation,
         labels: [DetectedLabel],
         fingerprint: String,
+        imageDigest: String?,
         cacheSource: String
     ) {
         #if DEBUG
@@ -6065,6 +6122,7 @@ struct ScanView: View {
             validation: validation,
             labels: labels,
             fingerprint: fingerprint,
+            imageDigest: imageDigest,
             cacheSource: cacheSource
         ))
         #endif
@@ -6075,16 +6133,18 @@ struct ScanView: View {
         validation: ScanValidation,
         labels: [DetectedLabel],
         fingerprint: String,
+        imageDigest: String?,
         cacheSource: String
     ) -> String {
         let qualityScore = validation.qualityScore
         let confidence = confidenceLevel(for: validation, labels: labels)
         let detectedCount = detectedClothingItems(from: labels).prefix(8).count
         let reason = validation.isAccepted ? cacheSource : validation.rejectionTitle
-        let fingerprintToken = abs(fingerprint.hashValue % 100_000)
+        let fingerprintVersion = fingerprint.split(separator: "|").first.map(String.init) ?? "none"
+        let imageDigestPrefix = ScanImageIdentity.debugDigestPrefix(imageDigest)
 
         return """
-        [StyleMatch Scan Debug] source=\(source.rawValue); normalized=true; quality=\(qualityScore); confidence=\(confidence.label); fingerprintToken=\(fingerprintToken); scoreSource=\(cacheSource); detectedCount=\(detectedCount); reason=\(reason)
+        [StyleMatch Scan Debug] source=\(source.rawValue); normalized=true; quality=\(qualityScore); confidence=\(confidence.label); fingerprintVersion=\(fingerprintVersion); imageDigestPrefix=\(imageDigestPrefix); scoreSource=\(cacheSource); detectedCount=\(detectedCount); reason=\(reason)
         """
     }
 
@@ -6297,7 +6357,8 @@ struct ScanView: View {
                     scanCount: storedScan.scanCount,
                     thumbnailData: storedScan.thumbnailData,
                     customTitle: storedScan.customTitle,
-                    occasion: storedScan.occasion
+                    occasion: storedScan.occasion,
+                    imageDigest: storedScan.imageDigest
                 )
             }
             .sorted { $0.firstScannedAt > $1.firstScannedAt }
@@ -8306,9 +8367,10 @@ private struct StoredOutfitScan: Codable {
     let thumbnailData: Data?
     var customTitle: String?
     var occasion: Occasion?
+    let imageDigest: String?
     let deterministicInputs: StoredDeterministicScorerInputs?
 
-    init(score: Int, analysis: OutfitAnalysisResult?, firstScannedAt: Date, scanCount: Int, thumbnailData: Data? = nil, customTitle: String? = nil, occasion: Occasion? = nil, deterministicInputs: StoredDeterministicScorerInputs? = nil) {
+    init(score: Int, analysis: OutfitAnalysisResult?, firstScannedAt: Date, scanCount: Int, thumbnailData: Data? = nil, customTitle: String? = nil, occasion: Occasion? = nil, imageDigest: String? = nil, deterministicInputs: StoredDeterministicScorerInputs? = nil) {
         self.score = score
         self.analysis = analysis
         self.firstScannedAt = firstScannedAt
@@ -8316,6 +8378,7 @@ private struct StoredOutfitScan: Codable {
         self.thumbnailData = thumbnailData
         self.customTitle = customTitle
         self.occasion = occasion
+        self.imageDigest = imageDigest
         self.deterministicInputs = deterministicInputs
     }
 
@@ -8332,6 +8395,7 @@ private struct StoredOutfitScan: Codable {
         } else {
             occasion = nil
         }
+        imageDigest = try container.decodeIfPresent(String.self, forKey: .imageDigest)
         deterministicInputs = try container.decodeIfPresent(StoredDeterministicScorerInputs.self, forKey: .deterministicInputs)
     }
 }
@@ -8353,6 +8417,7 @@ private struct RecentOutfitScore: Identifiable {
     let thumbnailData: Data?
     let customTitle: String?
     let occasion: Occasion?
+    let imageDigest: String?
 
     var title: String {
         if let customTitle,
@@ -9711,6 +9776,18 @@ private extension UIImage {
         return stride(from: 0, to: pixels.count, by: 4).map { index in
             RGBPixel(red: pixels[index], green: pixels[index + 1], blue: pixels[index + 2])
         }
+    }
+
+    func normalizedImageSHA256Digest() -> String {
+        let pixels = sampledRGB(width: 64, height: 64)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(pixels.count * 3)
+        for pixel in pixels {
+            bytes.append(pixel.red)
+            bytes.append(pixel.green)
+            bytes.append(pixel.blue)
+        }
+        return ScanImageIdentity.sha256Hex(bytes: bytes)
     }
 }
 

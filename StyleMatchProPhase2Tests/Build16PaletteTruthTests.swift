@@ -55,7 +55,7 @@ final class Build16PaletteTruthTests: XCTestCase {
     func testExactFingerprintReusesStoredDeterministicInputsWithMigrationSafeDecode() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
-        XCTAssertTrue(source.contains("let storedInputs = history[fingerprint]?.deterministicInputs"))
+        XCTAssertTrue(source.contains("let storedInputs = exactStoredScan?.deterministicInputs"))
         XCTAssertTrue(source.contains("let colorPalette = storedInputs?.colorPalette ?? colorDetection.garmentColors"))
         XCTAssertTrue(source.contains("let scoringLabels = storedInputs?.labels ?? labels"))
         XCTAssertTrue(source.contains("decodeIfPresent(StoredDeterministicScorerInputs.self"))
@@ -65,9 +65,10 @@ final class Build16PaletteTruthTests: XCTestCase {
         let recallSource = try projectSource("StyleMatchAI/PersonalStylist/OutfitRecallService.swift")
         let modelSource = try projectSource("StyleMatchAI/PersonalStylist/StylistProfileModels.swift")
 
-        XCTAssertTrue(recallSource.contains("guard let fingerprint = cleanOptional(context.outfitFingerprint) else { return nil }"))
-        XCTAssertTrue(recallSource.contains("filter { cleanOptional($0.outfitFingerprint) == fingerprint }"))
+        XCTAssertTrue(recallSource.contains("guard let fingerprint = cleanOptional(context.outfitFingerprint)"))
+        XCTAssertTrue(recallSource.contains("ScanImageIdentity.isExactMatch("))
         XCTAssertTrue(modelSource.contains("outfitFingerprint = try container.decodeIfPresent(String.self"))
+        XCTAssertTrue(modelSource.contains("imageDigest = try container.decodeIfPresent(String.self"))
     }
 
     func testRecallRejectsDifferentFingerprintEvenWhenGarmentFactsMatch() {
@@ -89,14 +90,16 @@ final class Build16PaletteTruthTests: XCTestCase {
             isFavorite: false,
             timesWorn: 1
         )
-        memory.outfitFingerprint = "scan-a"
+        memory.outfitFingerprint = "outfit-v4|scan-a"
+        memory.imageDigest = "digest-a"
 
         let fact = OutfitRecallService.recallFact(
             for: OutfitRecallScanContext(
                 detectedGarments: ["shirt"],
                 colors: ["blue"],
                 detectedStyle: "Casual",
-                outfitFingerprint: "scan-b"
+                outfitFingerprint: "outfit-v4|scan-b",
+                imageDigest: "digest-a"
             ),
             memories: [memory]
         )
