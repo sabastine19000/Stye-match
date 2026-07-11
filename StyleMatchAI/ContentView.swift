@@ -342,9 +342,6 @@ struct ContentView: View {
         wasWorn: Bool
     ) {
         outfitMemoryStore.recordWornAnswer(for: prompt.id, wasWorn: wasWorn)
-        if !wasWorn {
-            FeedbackPromptScheduler(store: outfitMemoryStore).recordFeedbackCompleted()
-        }
     }
 
     private func answerFeedbackLiked(
@@ -352,7 +349,6 @@ struct ContentView: View {
         wasLiked: Bool
     ) {
         outfitMemoryStore.recordLikedAnswer(for: prompt.id, wasLiked: wasLiked)
-        FeedbackPromptScheduler(store: outfitMemoryStore).recordFeedbackCompleted()
     }
 
     private func answerFeedbackDislikeReason(
@@ -360,13 +356,11 @@ struct ContentView: View {
         reason: DislikeReason
     ) {
         outfitMemoryStore.recordDislikeReason(for: prompt.id, reason: reason)
-        FeedbackPromptScheduler(store: outfitMemoryStore).recordFeedbackCompleted()
     }
 
     private func dismissActiveFeedbackPrompt() {
         guard let prompt = pendingFeedbackPrompt else { return }
         outfitMemoryStore.dismissFeedbackPrompt(for: prompt.id)
-        FeedbackPromptScheduler(store: outfitMemoryStore).recordPromptSkipped()
         pendingFeedbackPrompt = nil
     }
 

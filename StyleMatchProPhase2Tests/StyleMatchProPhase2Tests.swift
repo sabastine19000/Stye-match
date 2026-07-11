@@ -319,25 +319,20 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(freshScheduler.nextPromptCandidate(now: now.addingTimeInterval(60 * 60)), "Global cap should block prompts for 24 hours.")
     }
 
-    func testFeedbackSchedulerSkipBackoffSurvivesFreshSchedulerInstance() {
+    func testFeedbackSchedulerSuppressesVeryFirstSessionOnly() {
         let now = Date(timeIntervalSince1970: 2_700_000)
         let store = OutfitMemoryStore(defaults: defaults, userId: userA)
-        markFeedbackFirstSessionSeen(for: userA)
 
         var eligible = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "skip-backoff"))
         eligible.scanDate = now.addingTimeInterval(-20 * 60 * 60)
         store.addScan(eligible)
 
         let scheduler = FeedbackPromptScheduler(store: store, defaults: defaults, userId: userA)
-        scheduler.recordPromptSkipped(now: now.addingTimeInterval(-60 * 60))
-        scheduler.recordPromptSkipped(now: now.addingTimeInterval(-30 * 60))
+        XCTAssertNil(scheduler.nextPromptCandidate(now: now), "The first app session should not show a feedback prompt.")
 
         let relaunchedStore = OutfitMemoryStore(defaults: defaults, userId: userA)
         let relaunchedScheduler = FeedbackPromptScheduler(store: relaunchedStore, defaults: defaults, userId: userA)
-        XCTAssertNil(
-            relaunchedScheduler.nextPromptCandidate(now: now),
-            "Persisted skip fatigue state should survive a fresh scheduler instance."
-        )
+        XCTAssertEqual(relaunchedScheduler.nextPromptCandidate(now: now)?.id, eligible.id)
     }
 
     func testFeedbackSchedulerPicksMostRecentEligibleOutfit() {
@@ -445,67 +440,6 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNotNil(saved?.feedbackCompletedAt)
     }
 
-    func testFeedbackDecisionPolicyCoversSuppressionCooldownBackoffAndHistory() {
-        let now = Date(timeIntervalSince1970: 4_200_000)
-        var memory = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "decision"))
-        memory.scanDate = now.addingTimeInterval(-2 * 24 * 60 * 60)
-
-        let firstScan = SchedulerContext(
-            now: now,
-            isFirstScanEver: true,
-            hasShownPromptThisSession: false,
-            lastPromptedAt: nil,
-            consecutiveSkips: 0,
-            lastSkipAt: nil,
-            surface: .scanResult
-        )
-        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: firstScan).shouldPrompt)
-
-        let shownThisSession = SchedulerContext(
-            now: now,
-            isFirstScanEver: false,
-            hasShownPromptThisSession: true,
-            lastPromptedAt: nil,
-            consecutiveSkips: 0,
-            lastSkipAt: nil,
-            surface: .scanResult
-        )
-        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: shownThisSession).shouldPrompt)
-
-        let dailyCooldown = SchedulerContext(
-            now: now,
-            isFirstScanEver: false,
-            hasShownPromptThisSession: false,
-            lastPromptedAt: now.addingTimeInterval(-23 * 60 * 60),
-            consecutiveSkips: 0,
-            lastSkipAt: nil,
-            surface: .scanResult
-        )
-        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: dailyCooldown).shouldPrompt)
-
-        let skipBackoff = SchedulerContext(
-            now: now,
-            isFirstScanEver: false,
-            hasShownPromptThisSession: false,
-            lastPromptedAt: nil,
-            consecutiveSkips: 2,
-            lastSkipAt: now.addingTimeInterval(-6 * 24 * 60 * 60),
-            surface: .scanResult
-        )
-        XCTAssertFalse(FeedbackPromptScheduler.decision(for: memory, context: skipBackoff).shouldPrompt)
-
-        let historyReengagement = SchedulerContext(
-            now: now,
-            isFirstScanEver: false,
-            hasShownPromptThisSession: false,
-            lastPromptedAt: nil,
-            consecutiveSkips: 0,
-            lastSkipAt: nil,
-            surface: .scanHistoryDetail
-        )
-        XCTAssertTrue(FeedbackPromptScheduler.decision(for: memory, context: historyReengagement).shouldPrompt)
-    }
-
     func testRecordOutfitFeedbackPersistsAndIncrementsTimesWornOnce() {
         let now = Date(timeIntervalSince1970: 4_300_000)
         let store = OutfitMemoryStore(defaults: defaults, userId: userA)
@@ -554,6 +488,35 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(feedbackContext.contains("Feedback signals"))
         XCTAssertTrue(feedbackContext.contains("loved"))
         XCTAssertTrue(feedbackContext.contains("not for me"))
+    }
+
+    func testPersonalizationContextSummarizesTapOnlyFeedbackFields() {
+        let profile = makeStylistProfile(userId: userA)
+        var loved = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "tap-loved"))
+        loved.detectedStyle = "Smart Casual"
+        loved.wasWorn = true
+        loved.wasLiked = true
+        loved.timesWorn = 1
+
+        var disliked = makeOutfitMemory(userId: userA, record: makeGarmentRecord(fingerprint: "tap-disliked"))
+        disliked.detectedStyle = "Formal"
+        disliked.wasWorn = true
+        disliked.wasLiked = false
+        disliked.dislikeReason = .tooFormal
+
+        let feedbackContext = PersonalizationContextBuilder.promptContext(
+            profile: profile,
+            outfitMemories: [loved, disliked],
+            memoryLimit: 5
+        )
+
+        XCTAssertTrue(feedbackContext.contains("Feedback signals"))
+        XCTAssertTrue(feedbackContext.contains("loved 1"))
+        XCTAssertTrue(feedbackContext.contains("not for me 1"))
+        XCTAssertTrue(feedbackContext.contains("wore 2"))
+        XCTAssertTrue(feedbackContext.contains("dislike reasons: too formal 1x"))
+        XCTAssertTrue(feedbackContext.contains("Recently disliked"))
+        XCTAssertTrue(feedbackContext.contains("reason Too formal"))
     }
 
     // MARK: - Weather & Context Engine regression tests

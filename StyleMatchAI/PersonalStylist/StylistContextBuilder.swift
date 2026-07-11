@@ -344,17 +344,23 @@ struct PersonalizationContextBuilder {
 
     static func feedbackSummary(_ memories: [OutfitMemory], maxCharacters: Int = 220) -> String? {
         let feedbackMemories = memories
-            .filter { $0.feedback != nil }
+            .filter { memory in
+                memory.feedback != nil
+                    || memory.wasWorn != nil
+                    || memory.wasLiked != nil
+                    || memory.dislikeReason != nil
+                    || memory.timesWorn > 0
+            }
             .sorted { $0.scanDate > $1.scanDate }
 
         guard !feedbackMemories.isEmpty else {
             return nil
         }
 
-        let lovedCount = feedbackMemories.filter { $0.feedback?.verdict == .loved }.count
+        let lovedCount = feedbackMemories.filter { $0.feedback?.verdict == .loved || $0.wasLiked == true }.count
         let likedCount = feedbackMemories.filter { $0.feedback?.verdict == .liked }.count
-        let notForMeCount = feedbackMemories.filter { $0.feedback?.verdict == .notForMe }.count
-        let wornCount = feedbackMemories.filter { $0.feedback?.woreIt == true }.count
+        let notForMeCount = feedbackMemories.filter { $0.feedback?.verdict == .notForMe || $0.wasLiked == false }.count
+        let wornCount = feedbackMemories.filter { $0.feedback?.woreIt == true || $0.wasWorn == true || $0.timesWorn > 0 }.count
 
         var parts: [String] = []
         if lovedCount > 0 {
@@ -369,12 +375,25 @@ struct PersonalizationContextBuilder {
         if wornCount > 0 {
             parts.append("wore \(wornCount)")
         }
+        let reasonSignals = Dictionary(grouping: feedbackMemories.compactMap(\.dislikeReason), by: { $0 })
+            .mapValues(\.count)
+            .sorted { first, second in
+                if first.value == second.value {
+                    return first.key.rawValue < second.key.rawValue
+                }
+                return first.value > second.value
+            }
+            .prefix(3)
+            .map { "\($0.key.displayName.lowercased()) \($0.value)x" }
+        if !reasonSignals.isEmpty {
+            parts.append("dislike reasons: \(reasonSignals.joined(separator: ", "))")
+        }
 
         let styleSignals = Dictionary(grouping: feedbackMemories, by: { memory in
             clean(memory.detectedStyle, fallback: "outfit").lowercased()
         })
         .mapValues { memories in
-            memories.compactMap { $0.feedback?.verdict }.reduce(into: [OutfitFeedback.Verdict: Int]()) { counts, verdict in
+            memories.compactMap { feedbackVerdict(for: $0) }.reduce(into: [OutfitFeedback.Verdict: Int]()) { counts, verdict in
                 counts[verdict, default: 0] += 1
             }
         }
@@ -403,7 +422,7 @@ struct PersonalizationContextBuilder {
 
         let occasionSignals = Dictionary(grouping: feedbackMemories.compactMap { memory -> (Occasion, OutfitFeedback.Verdict)? in
             guard let occasion = memory.occasion?.canonical,
-                  let verdict = memory.feedback?.verdict else {
+                  let verdict = feedbackVerdict(for: memory) else {
                 return nil
             }
             return (occasion, verdict)
@@ -449,6 +468,19 @@ struct PersonalizationContextBuilder {
 
         let end = summary.index(summary.startIndex, offsetBy: max(0, maxCharacters - 1))
         return String(summary[..<end]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+
+    private static func feedbackVerdict(for memory: OutfitMemory) -> OutfitFeedback.Verdict? {
+        if let verdict = memory.feedback?.verdict {
+            return verdict
+        }
+        if memory.wasLiked == true {
+            return .loved
+        }
+        if memory.wasLiked == false {
+            return .notForMe
+        }
+        return nil
     }
 
     private static func sizeSummary(_ sizes: ClothingSizes) -> String? {
