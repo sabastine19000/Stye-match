@@ -141,6 +141,7 @@ struct GarmentPalettePixel: Equatable {
     let y: Double
     let isInsidePersonMask: Bool
     let isLikelySkinZone: Bool
+    let isStrongForegroundEvidence: Bool
 
     init(
         red: UInt8,
@@ -149,7 +150,8 @@ struct GarmentPalettePixel: Equatable {
         x: Double = 0.5,
         y: Double = 0.5,
         isInsidePersonMask: Bool = true,
-        isLikelySkinZone: Bool = false
+        isLikelySkinZone: Bool = false,
+        isStrongForegroundEvidence: Bool = false
     ) {
         self.red = red
         self.green = green
@@ -158,6 +160,7 @@ struct GarmentPalettePixel: Equatable {
         self.y = y
         self.isInsidePersonMask = isInsidePersonMask
         self.isLikelySkinZone = isLikelySkinZone
+        self.isStrongForegroundEvidence = isStrongForegroundEvidence
     }
 }
 
@@ -172,6 +175,7 @@ struct GarmentPaletteDebugSnapshot {
     let whiteBalanceGains: (red: Double, green: Double, blue: Double)
     let backgroundReferences: [(name: String, share: Double)]
     let downWeightedSamples: Int
+    let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
     let confidenceReason: String
 
     var debugDescription: String {
@@ -185,7 +189,12 @@ struct GarmentPaletteDebugSnapshot {
         let backgroundText = backgroundReferences
             .map { "\($0.name)=\(String(format: "%.1f", $0.share * 100))%" }
             .joined(separator: ", ")
-        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
+        let decisionText = clusterWeightDecisions
+            .map {
+                "\($0.name):foregroundConcentration=\(String(format: "%.2f", $0.foregroundConcentration)):downWeighted=\($0.downWeighted)"
+            }
+            .joined(separator: ", ")
+        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), clusterDecisions=[\(decisionText)], confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
     }
 }
 
@@ -539,6 +548,7 @@ enum GarmentColorPaletteEngine {
         let colorWeights: [String: Double]
         let effectiveSampleCount: Double
         let downWeightedSamples: Int
+        let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
     }
 
     static func extractPalette(
@@ -576,6 +586,7 @@ enum GarmentColorPaletteEngine {
                 whiteBalanceGains: (1, 1, 1),
                 backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
                 downWeightedSamples: 0,
+                clusterWeightDecisions: [],
                 confidenceReason: "insufficient garment samples"
             )
             return (["neutral"], 30, .low, debug)
@@ -629,6 +640,7 @@ enum GarmentColorPaletteEngine {
             whiteBalanceGains: (correction.redGain, correction.greenGain, correction.blueGain),
             backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
             downWeightedSamples: weightedSummary.downWeightedSamples,
+            clusterWeightDecisions: weightedSummary.clusterWeightDecisions,
             confidenceReason: confidenceLevel == .confident ? confidenceReason : lowConfidenceReason(
                 forced: forceLowConfidence,
                 hasEnoughSamples: hasEnoughSamples,
@@ -699,30 +711,39 @@ enum GarmentColorPaletteEngine {
         let named = samples.map { sample in
             (sample: sample, name: everydayGarmentColorName(for: sample))
         }
-        let central = named.filter {
-            $0.sample.x >= 0.20 && $0.sample.x <= 0.80 && $0.sample.y >= 0.20 && $0.sample.y <= 0.80
+        let namedGroups = Dictionary(grouping: named, by: { $0.name })
+        let foregroundConcentrations = namedGroups.mapValues { entries in
+            Double(entries.filter { $0.sample.isStrongForegroundEvidence }.count) / Double(max(1, entries.count))
         }
-        let centralCounts = Dictionary(grouping: central.map { FashionColorFamilyCatalog.family(for: $0.name) }, by: { $0 }).mapValues(\.count)
-        let centralTotal = Double(max(1, central.count))
+        let downWeightedNames = Set(namedGroups.compactMap { name, entries -> String? in
+            let family = FashionColorFamilyCatalog.family(for: name)
+            let backgroundShare = backgroundFamilyShares[family] ?? 0
+            let foregroundConcentration = foregroundConcentrations[name] ?? 0
+            return backgroundShare >= 0.18 && foregroundConcentration < 0.35 ? name : nil
+        })
         var weights: [String: Double] = [:]
         var downWeighted = 0
 
         for entry in named {
-            let family = FashionColorFamilyCatalog.family(for: entry.name)
-            let backgroundShare = backgroundFamilyShares[family] ?? 0
-            let centralShare = Double(centralCounts[family] ?? 0) / centralTotal
-            let hasSpatialGarmentEvidence = source == .garmentCrop
-                || (centralShare >= 0.15 && centralShare >= backgroundShare * 0.75)
-            let shouldDownWeight = backgroundShare >= 0.18 && !hasSpatialGarmentEvidence
+            let shouldDownWeight = downWeightedNames.contains(entry.name)
             let weight = shouldDownWeight ? 0.25 : 1.0
             weights[entry.name, default: 0] += weight
             if shouldDownWeight { downWeighted += 1 }
         }
 
+        let clusterWeightDecisions = namedGroups.keys.sorted().map { name in
+            (
+                name: name,
+                foregroundConcentration: foregroundConcentrations[name] ?? 0,
+                downWeighted: downWeightedNames.contains(name)
+            )
+        }
+
         return WeightedColorSummary(
             colorWeights: weights,
             effectiveSampleCount: weights.values.reduce(0, +),
-            downWeightedSamples: downWeighted
+            downWeightedSamples: downWeighted,
+            clusterWeightDecisions: clusterWeightDecisions
         )
     }
 
@@ -753,7 +774,8 @@ enum GarmentColorPaletteEngine {
                 x: sample.x,
                 y: sample.y,
                 isInsidePersonMask: sample.isInsidePersonMask,
-                isLikelySkinZone: sample.isLikelySkinZone
+                isLikelySkinZone: sample.isLikelySkinZone,
+                isStrongForegroundEvidence: sample.isStrongForegroundEvidence
             )
         }
     }

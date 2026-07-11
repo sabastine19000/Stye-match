@@ -9146,25 +9146,30 @@ private extension UIImage {
                   let bytes = renderedRGBBytes(cgImage: cropped, width: width, height: height) else {
                 return nil
             }
-            let foregroundMask = try? foregroundSubjectMask(
+            let rawForegroundMask = try? foregroundSubjectMask(
                 cgImage: cropped,
                 width: width,
                 height: height
-            )?.eroded(radius: 1)
-            let usableMask: GarmentRegionMask
-            if let foregroundMask,
-               foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount {
-                usableMask = foregroundMask
+            )
+            let foregroundMask = rawForegroundMask?.eroded(radius: 1)
+            guard let foregroundMask,
+                  foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount else {
                 #if DEBUG
-                print("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount)")
+                print("[StyleMatch Color Debug] garmentCrop sampling=skipped reason=noUsableForegroundIntersection")
                 #endif
-            } else {
-                usableMask = centerCropMask(width: width, height: height, fraction: 0.60)
-                #if DEBUG
-                print("[StyleMatch Color Debug] garmentCrop sampling=center60 included=\(usableMask.includedCount)")
-                #endif
+                return nil
             }
-            return paletteSamples(width: width, height: height, rgbBytes: bytes, mask: usableMask)
+            let strongForegroundMask = rawForegroundMask?.eroded(radius: 3)
+            #if DEBUG
+            print("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount), strongForeground=\(strongForegroundMask?.includedCount ?? 0)")
+            #endif
+            return paletteSamples(
+                width: width,
+                height: height,
+                rgbBytes: bytes,
+                mask: foregroundMask,
+                strongForegroundMask: strongForegroundMask
+            )
         }
         let balanced = GarmentCropContributionBalancer.balance(cropSamples)
         let samples = balanced.samples
@@ -9176,24 +9181,6 @@ private extension UIImage {
             source: .garmentCrop,
             cropsMerged: cropSamples.count,
             rawGarmentSampleCount: balanced.rawSampleCount
-        )
-    }
-
-    private func centerCropMask(width: Int, height: Int, fraction: Double) -> GarmentRegionMask {
-        let boundedFraction = min(1, max(0, fraction))
-        let horizontalInset = Int((Double(width) * (1 - boundedFraction) / 2).rounded(.down))
-        let verticalInset = Int((Double(height) * (1 - boundedFraction) / 2).rounded(.down))
-        let included = (0..<height).flatMap { y in
-            (0..<width).map { x in
-                x >= horizontalInset && x < width - horizontalInset &&
-                    y >= verticalInset && y < height - verticalInset
-            }
-        }
-        return GarmentRegionMask(
-            width: width,
-            height: height,
-            included: included,
-            tier: .foregroundSubject
         )
     }
 
@@ -9312,7 +9299,13 @@ private extension UIImage {
         return GarmentRegionMask(width: width, height: height, included: included, tier: tier)
     }
 
-    private func paletteSamples(width: Int, height: Int, rgbBytes: [UInt8], mask: GarmentRegionMask) -> [GarmentPalettePixel] {
+    private func paletteSamples(
+        width: Int,
+        height: Int,
+        rgbBytes: [UInt8],
+        mask: GarmentRegionMask,
+        strongForegroundMask: GarmentRegionMask? = nil
+    ) -> [GarmentPalettePixel] {
         guard rgbBytes.count >= width * height * 4 else {
             return []
         }
@@ -9333,7 +9326,8 @@ private extension UIImage {
                         x: normalizedX,
                         y: normalizedY,
                         isInsidePersonMask: isIncluded,
-                        isLikelySkinZone: isIncluded && likelyExposedSkinZone(x: normalizedX, y: normalizedY)
+                        isLikelySkinZone: isIncluded && likelyExposedSkinZone(x: normalizedX, y: normalizedY),
+                        isStrongForegroundEvidence: strongForegroundMask?.contains(x: x, y: y) == true
                     )
                 )
             }

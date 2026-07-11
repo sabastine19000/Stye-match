@@ -117,13 +117,13 @@ final class Build16PaletteTruthTests: XCTestCase {
         XCTAssertEqual(halves[1].minY, box.minY + 0.4205, accuracy: 0.0001)
     }
 
-    func testGarmentCropSamplingUsesForegroundIntersectionOrCenterSixtyPercent() throws {
+    func testGarmentCropSamplingRequiresErodedForegroundIntersection() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
         XCTAssertTrue(source.contains("foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount"))
-        XCTAssertTrue(source.contains("usableMask = foregroundMask"))
-        XCTAssertTrue(source.contains("centerCropMask(width: width, height: height, fraction: 0.60)"))
-        XCTAssertTrue(source.contains("paletteSamples(width: width, height: height, rgbBytes: bytes, mask: usableMask)"))
+        XCTAssertTrue(source.contains("strongForegroundMask = rawForegroundMask?.eroded(radius: 3)"))
+        XCTAssertTrue(source.contains("garmentCrop sampling=skipped reason=noUsableForegroundIntersection"))
+        XCTAssertFalse(source.contains("centerCropMask(width: width, height: height, fraction: 0.60)"))
     }
 
     func testPaleTintNamingPreservesBlueAndPinkWithoutMisnamingGray() {
@@ -339,7 +339,14 @@ final class Build16PaletteTruthTests: XCTestCase {
 
     func testBackgroundDownWeightingProtectsGrayGarmentOnGrayBedding() {
         let tanBorder = Array(repeating: GarmentPalettePixel(red: 190, green: 155, blue: 110, x: 0.02, y: 0.5), count: 600)
-        let grayGarment = Array(repeating: GarmentPalettePixel(red: 125, green: 125, blue: 125, x: 0.5, y: 0.5), count: 600)
+        let grayGarment = Array(repeating: GarmentPalettePixel(
+            red: 125,
+            green: 125,
+            blue: 125,
+            x: 0.5,
+            y: 0.5,
+            isStrongForegroundEvidence: true
+        ), count: 600)
         let result = GarmentColorPaletteEngine.extractPalette(
             from: tanBorder + grayGarment,
             source: .saliencyCrop,
@@ -351,6 +358,52 @@ final class Build16PaletteTruthTests: XCTestCase {
         XCTAssertTrue(result.palette.contains("gray"), "Central gray garment evidence must survive even when the bedding is also gray.")
         XCTAssertGreaterThan(result.debug.downWeightedSamples, 0)
         XCTAssertGreaterThanOrEqual(result.debug.garmentSamples, 500)
+    }
+
+    func testMasklessGarmentCropIsSkippedInsteadOfSamplingCenterSixtyPercent() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertTrue(source.contains("garmentCrop sampling=skipped reason=noUsableForegroundIntersection"))
+        XCTAssertFalse(source.contains("garmentCrop sampling=center60"))
+        XCTAssertFalse(source.contains("private func centerCropMask("))
+    }
+
+    func testBrownPantsSurviveWhileTanWallInSameFamilyIsDownWeighted() {
+        let tanWall = Array(repeating: GarmentPalettePixel(
+            red: 190,
+            green: 155,
+            blue: 110,
+            x: 0.5,
+            y: 0.5
+        ), count: 600)
+        let brownPants = Array(repeating: GarmentPalettePixel(
+            red: 105,
+            green: 72,
+            blue: 48,
+            x: 0.5,
+            y: 0.75,
+            isStrongForegroundEvidence: true
+        ), count: 600)
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: tanWall + brownPants,
+            source: .garmentCrop,
+            backgroundFamilyShares: ["brown": 0.75],
+            confidenceEvidenceSatisfied: true,
+            confidenceReason: "test foreground evidence"
+        )
+
+        XCTAssertTrue(result.palette.contains { FashionColorFamilyCatalog.family(for: $0) == "brown" })
+        let protectedBrown = result.debug.clusterWeightDecisions.first {
+            FashionColorFamilyCatalog.family(for: $0.name) == "brown" &&
+                $0.foregroundConcentration >= 0.35 && !$0.downWeighted
+        }
+        let downWeightedTan = result.debug.clusterWeightDecisions.first {
+            FashionColorFamilyCatalog.family(for: $0.name) == "brown" &&
+                $0.foregroundConcentration < 0.35 && $0.downWeighted
+        }
+        XCTAssertNotNil(protectedBrown, "Strong eroded-foreground evidence must preserve genuinely brown pants.")
+        XCTAssertNotNil(downWeightedTan, "Weak foreground concentration must dethrone the tan wall.")
+        XCTAssertTrue(result.debug.debugDescription.contains("foregroundConcentration="))
     }
 
     func testFlatLayPaletteRegionDiscoveryRunsAfterAcceptanceWithoutChangingGate() throws {
