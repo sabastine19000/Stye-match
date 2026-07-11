@@ -121,15 +121,144 @@ final class Build16PaletteTruthTests: XCTestCase {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
         XCTAssertTrue(source.contains("foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount"))
-        XCTAssertTrue(source.contains("strongForegroundMask = rawForegroundMask?.eroded(radius: 3)"))
+        XCTAssertTrue(source.contains("strongForegroundMask = rawForegroundMask?.adaptivelyErodedStrongMask()"))
         XCTAssertTrue(source.contains("garmentCrop sampling=skipped reason=noUsableForegroundIntersection"))
         XCTAssertFalse(source.contains("centerCropMask(width: width, height: height, fraction: 0.60)"))
     }
 
     func testPaleTintNamingPreservesBlueAndPinkWithoutMisnamingGray() {
         XCTAssertEqual(GarmentColorPaletteEngine.everydayGarmentColorName(for: .init(red: 170, green: 200, blue: 215)), "light blue")
-        XCTAssertEqual(GarmentColorPaletteEngine.everydayGarmentColorName(for: .init(red: 220, green: 185, blue: 195)), "blush")
+        XCTAssertEqual(GarmentColorPaletteEngine.everydayGarmentColorName(for: .init(
+            red: 220,
+            green: 185,
+            blue: 195,
+            isStrongForegroundEvidence: true
+        )), "blush")
         XCTAssertEqual(GarmentColorPaletteEngine.everydayGarmentColorName(for: .init(red: 190, green: 190, blue: 190)), "gray")
+    }
+
+    func testAdaptiveStrongMaskDegradesWithoutCollapsingFragmentedEvidence() {
+        var included = Array(repeating: false, count: 20 * 20)
+        for y in stride(from: 2, to: 18, by: 2) {
+            for x in stride(from: 2, to: 18, by: 2) {
+                included[y * 20 + x] = true
+            }
+        }
+        let mask = GarmentRegionMask(width: 20, height: 20, included: included, tier: .saliencyCrop)
+        let strong = mask.adaptivelyErodedStrongMask()
+
+        XCTAssertNotNil(strong)
+        XCTAssertGreaterThan(strong?.includedCount ?? 0, 0)
+        XCTAssertLessThanOrEqual(strong?.includedCount ?? 0, mask.includedCount)
+    }
+
+    func testEveryMaskedPaletteSourcePropagatesAdaptiveStrongEvidence() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        let candidateFunction = try XCTUnwrap(source.range(of: "private func maskedGarmentPaletteCandidates"))
+        let cropFunction = try XCTUnwrap(source.range(of: "private func garmentCropPaletteSamples"))
+        let candidateBody = source[candidateFunction.lowerBound..<cropFunction.lowerBound]
+
+        XCTAssertTrue(candidateBody.contains("rawMask.adaptivelyErodedStrongMask()"))
+        XCTAssertTrue(candidateBody.contains("strongForegroundMask: strongForegroundMask"))
+        XCTAssertTrue(candidateBody.contains("strongCoverage="))
+    }
+
+    func testUnsupportedChromaticFamilyCannotDethroneEvidencedNeutralLeader() {
+        let unsupportedRed = Array(repeating: GarmentPalettePixel(red: 205, green: 45, blue: 50), count: 700)
+        let evidencedGray = Array(repeating: GarmentPalettePixel(
+            red: 120,
+            green: 120,
+            blue: 120,
+            isStrongForegroundEvidence: true
+        ), count: 500)
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: unsupportedRed + evidencedGray,
+            source: .saliencyCrop,
+            confidenceEvidenceSatisfied: true
+        )
+
+        XCTAssertEqual(FashionColorFamilyCatalog.family(for: result.palette.first ?? ""), "neutral")
+        XCTAssertTrue(result.debug.leadershipDecision.contains("demoted unsupported family"))
+    }
+
+    func testSaturationTransitionBlendsNeutralAndChromaticSharesWithoutChangingStrongColors() {
+        let heather = FashionColorCatalog.nameContributions(
+            red: 95,
+            green: 100,
+            blue: 120,
+            hasSpatialEvidence: true
+        )
+        let royalBlue = FashionColorCatalog.nameContributions(
+            red: 45,
+            green: 78,
+            blue: 180,
+            hasSpatialEvidence: true
+        )
+        let red = FashionColorCatalog.nameContributions(
+            red: 205,
+            green: 45,
+            blue: 50,
+            hasSpatialEvidence: true
+        )
+
+        XCTAssertEqual(heather.count, 2)
+        XCTAssertEqual(heather.reduce(0) { $0 + $1.weight }, 1, accuracy: 0.0001)
+        XCTAssertEqual(royalBlue, [.init(name: "royal blue", weight: 1)])
+        XCTAssertEqual(red, [.init(name: "red", weight: 1)])
+    }
+
+    func testBrightWarmNeutralNeedsSpatialEvidenceToBecomeBlush() {
+        let warmWhite = GarmentPalettePixel(red: 220, green: 185, blue: 195)
+        let blushGarment = GarmentPalettePixel(
+            red: 220,
+            green: 185,
+            blue: 195,
+            isStrongForegroundEvidence: true
+        )
+
+        XCTAssertTrue(["white", "ivory"].contains(GarmentColorPaletteEngine.everydayGarmentColorName(for: warmWhite)))
+        XCTAssertEqual(GarmentColorPaletteEngine.everydayGarmentColorName(for: blushGarment), "blush")
+    }
+
+    func testHeatherFamilyIsStableAcrossNoisePerturbedRuns() {
+        let variants: [(UInt8, UInt8, UInt8)] = [
+            (95, 100, 120), (94, 100, 121), (95, 99, 121), (98, 101, 121)
+        ]
+        let palettes = variants.map { red, green, blue in
+            let darkThreads = Array(repeating: GarmentPalettePixel(
+                red: red,
+                green: green,
+                blue: blue,
+                isStrongForegroundEvidence: true
+            ), count: 500)
+            let paleThreads = Array(repeating: GarmentPalettePixel(
+                red: 120,
+                green: 120,
+                blue: 125,
+                isStrongForegroundEvidence: true
+            ), count: 500)
+            return GarmentColorPaletteEngine.extractPalette(
+                from: darkThreads + paleThreads,
+                source: .garmentCrop,
+                confidenceEvidenceSatisfied: true
+            ).palette.first.map(FashionColorFamilyCatalog.family(for:))
+        }
+
+        XCTAssertEqual(Set(palettes.compactMap { $0 }).count, 1)
+    }
+
+    func testMaroonAndRoyalBlueGarmentsStillLeadWithEvidence() {
+        for (pixel, expectedFamily) in [
+            (GarmentPalettePixel(red: 82, green: 32, blue: 42, isStrongForegroundEvidence: true), "red"),
+            (GarmentPalettePixel(red: 45, green: 78, blue: 180, isStrongForegroundEvidence: true), "blue")
+        ] {
+            let result = GarmentColorPaletteEngine.extractPalette(
+                from: Array(repeating: pixel, count: 700),
+                source: .garmentCrop,
+                confidenceEvidenceSatisfied: true
+            )
+            XCTAssertEqual(FashionColorFamilyCatalog.family(for: result.palette.first ?? ""), expectedFamily)
+        }
     }
 
     func testGrayWorldCorrectionDoesNotNeutralizePaleBlueMajority() {

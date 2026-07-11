@@ -9052,6 +9052,7 @@ private extension UIImage {
             confidenceSampleCount: selectedCandidate?.garmentSampleCount,
             backgroundFamilyShares: backgroundReferences,
             confidenceEvidenceSatisfied: selection.hasConfidenceEvidence,
+            corroboratedFamilies: selection.corroboratedFamilies,
             confidenceReason: selection.confidenceReason
         )
         let finalColors = extraction.palette
@@ -9060,7 +9061,11 @@ private extension UIImage {
         let latencyMs = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
 
         #if DEBUG
-        let candidateSummary = evaluatedCandidates.map { "\($0.source.rawValue):\($0.garmentSampleCount)" }.joined(separator: ", ")
+        let candidateSummary = evaluatedCandidates.map {
+            let strongCount = $0.samples.filter { $0.isInsidePersonMask && $0.isStrongForegroundEvidence }.count
+            let strongCoverage = Double(strongCount) / Double(max(1, $0.samples.filter(\.isInsidePersonMask).count))
+            return "\($0.source.rawValue):\($0.garmentSampleCount):strongCoverage=\(String(format: "%.3f", strongCoverage))"
+        }.joined(separator: ", ")
         let rankedSummary = selection.rankedCandidates.map {
             "\($0.candidate.source.rawValue):score=\(String(format: "%.3f", $0.score)):samples=\($0.candidate.garmentSampleCount):agreement=\(String(format: "%.2f", $0.agreement))"
         }.joined(separator: ", ")
@@ -9070,7 +9075,7 @@ private extension UIImage {
         let backgroundSummary = backgroundReferences.sorted { $0.value > $1.value }.map {
             "\($0.key)=\(String(format: "%.1f", $0.value * 100))%"
         }.joined(separator: ", ")
-        print("[StyleMatch Color Debug] chosenSource=\(maskedSamples.source.rawValue), reason=\(selection.metQualityBar ? "best ranked candidate clearing >=\(GarmentPaletteSourceSelector.minimumReliableGarmentSamples) garment samples" : "largest available tier; no tier cleared quality bar"), garmentSamples=\(selectedCandidate?.garmentSampleCount ?? 0), cropsMerged=\(maskedSamples.cropsMerged), candidates=[\(candidateSummary)], candidatesRanked=[\(rankedSummary)], familyShares=[\(familySummary)], disagreement=\(selection.disagreement), backgroundRefs=[\(backgroundSummary)], downWeighted=\(extraction.debug.downWeightedSamples), confidenceReason=\(extraction.debug.confidenceReason), maskTier=\(maskedSamples.tier.rawValue), maskingApplied=\(maskedSamples.maskingApplied), paletteConfidence=\(extraction.confidenceLevel.rawValue), palette latencyMs=\(latencyMs); \(extraction.debug.debugDescription)")
+        print("[StyleMatch Color Debug] chosenSource=\(maskedSamples.source.rawValue), reason=\(selection.metQualityBar ? "best ranked candidate clearing >=\(GarmentPaletteSourceSelector.minimumReliableGarmentSamples) garment samples" : "largest available tier; no tier cleared quality bar"), garmentSamples=\(selectedCandidate?.garmentSampleCount ?? 0), cropsMerged=\(maskedSamples.cropsMerged), candidates=[\(candidateSummary)], candidatesRanked=[\(rankedSummary)], familyShares=[\(familySummary)], disagreement=\(selection.disagreement), backgroundRefs=[\(backgroundSummary)], downWeighted=\(extraction.debug.downWeightedSamples), leadershipEvidence=\(extraction.debug.leadershipDecision), confidenceReason=\(extraction.debug.confidenceReason), maskTier=\(maskedSamples.tier.rawValue), maskingApplied=\(maskedSamples.maskingApplied), paletteConfidence=\(extraction.confidenceLevel.rawValue), palette latencyMs=\(latencyMs); \(extraction.debug.debugDescription)")
         #endif
 
         let sourceNote = maskedSamples.maskingApplied
@@ -9119,8 +9124,19 @@ private extension UIImage {
                     return nil
                 }
                 let mask = rawMask.eroded(radius: 1)
+                let strongForegroundMask = rawMask.adaptivelyErodedStrongMask()
+                #if DEBUG
+                let strongCoverage = Double(strongForegroundMask?.includedCount ?? 0) / Double(max(1, rawMask.includedCount))
+                print("[StyleMatch Color Debug] source=\(paletteSource(for: tier).rawValue), included=\(mask.includedCount), strongCoverage=\(String(format: "%.3f", strongCoverage))")
+                #endif
                 return MaskedGarmentPaletteSamples(
-                    samples: paletteSamples(width: width, height: height, rgbBytes: rgbBytes, mask: mask),
+                    samples: paletteSamples(
+                        width: width,
+                        height: height,
+                        rgbBytes: rgbBytes,
+                        mask: mask,
+                        strongForegroundMask: strongForegroundMask
+                    ),
                     tier: tier,
                     maskingApplied: true,
                     source: paletteSource(for: tier),
@@ -9159,9 +9175,10 @@ private extension UIImage {
                 #endif
                 return nil
             }
-            let strongForegroundMask = rawForegroundMask?.eroded(radius: 3)
+            let strongForegroundMask = rawForegroundMask?.adaptivelyErodedStrongMask()
             #if DEBUG
-            print("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount), strongForeground=\(strongForegroundMask?.includedCount ?? 0)")
+            let strongCoverage = Double(strongForegroundMask?.includedCount ?? 0) / Double(max(1, rawForegroundMask?.includedCount ?? 0))
+            print("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount), strongForeground=\(strongForegroundMask?.includedCount ?? 0), strongCoverage=\(String(format: "%.3f", strongCoverage))")
             #endif
             return paletteSamples(
                 width: width,

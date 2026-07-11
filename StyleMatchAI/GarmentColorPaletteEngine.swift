@@ -77,29 +77,80 @@ enum FashionColorCatalog {
         Anchor(name: "lavender", red: 188, green: 168, blue: 215)
     ]
 
+    struct NameContribution: Equatable {
+        let name: String
+        let weight: Double
+    }
+
+    private static let neutralAnchorNames: Set<String> = [
+        "white", "ivory", "cream", "gray", "charcoal", "black"
+    ]
+
     static func nearestName(red: UInt8, green: UInt8, blue: UInt8) -> String {
+        nameContributions(red: red, green: green, blue: blue, hasSpatialEvidence: false)
+            .max { $0.weight < $1.weight }?.name ?? "black"
+    }
+
+    static func nameContributions(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        hasSpatialEvidence: Bool
+    ) -> [NameContribution] {
         let sample = hsl(red: red, green: green, blue: blue)
-        return anchors.min { lhs, rhs in
-            distance(from: sample, to: lhs) < distance(from: sample, to: rhs)
+
+        if isUnsupportedBrightWarmTint(sample, hasSpatialEvidence: hasSpatialEvidence) {
+            return [NameContribution(name: sample.lightness >= 0.90 ? "white" : "ivory", weight: 1)]
+        }
+
+        if sample.saturation <= 0.08 {
+            return [NameContribution(name: nearestNeutralName(to: sample), weight: 1)]
+        }
+
+        if sample.saturation < 0.16 {
+            let chromaticWeight = (sample.saturation - 0.08) / 0.08
+            return [
+                NameContribution(name: nearestNeutralName(to: sample), weight: 1 - chromaticWeight),
+                NameContribution(name: nearestChromaticName(to: sample), weight: chromaticWeight)
+            ].filter { $0.weight > 0 }
+        }
+
+        return [NameContribution(name: nearestChromaticName(to: sample), weight: 1)]
+    }
+
+    private static func nearestNeutralName(to sample: HSL) -> String {
+        anchors.filter { neutralAnchorNames.contains($0.name) }.min {
+            neutralDistance(from: sample, to: $0) < neutralDistance(from: sample, to: $1)
+        }?.name ?? "gray"
+    }
+
+    private static func nearestChromaticName(to sample: HSL) -> String {
+        anchors.min {
+            chromaticDistance(from: sample, to: $0) < chromaticDistance(from: sample, to: $1)
         }?.name ?? "black"
     }
 
-    private static func distance(from sample: HSL, to anchor: Anchor) -> Double {
+    private static func neutralDistance(from sample: HSL, to anchor: Anchor) -> Double {
+        let target = hsl(red: anchor.red, green: anchor.green, blue: anchor.blue)
+        let saturationDelta = abs(sample.saturation - target.saturation)
+        let lightnessDelta = abs(sample.lightness - target.lightness)
+        return lightnessDelta * 6 + saturationDelta * 1.5
+    }
+
+    private static func chromaticDistance(from sample: HSL, to anchor: Anchor) -> Double {
         let target = hsl(red: anchor.red, green: anchor.green, blue: anchor.blue)
         let hueDelta = min(abs(sample.hue - target.hue), 1 - abs(sample.hue - target.hue))
         let saturationDelta = abs(sample.saturation - target.saturation)
         let lightnessDelta = abs(sample.lightness - target.lightness)
-
-        if sample.saturation < 0.12 {
-            // Near-neutrals are named primarily by brightness; hue noise from camera
-            // sensors must not turn bedding gray into a pastel color.
-            let channels = [Double(anchor.red), Double(anchor.green), Double(anchor.blue)]
-            let channelSpread = ((channels.max() ?? 0) - (channels.min() ?? 0)) / 255
-            let neutralPenalty = channelSpread > 0.04 ? 2.0 + channelSpread : 0
-            return lightnessDelta * 6 + saturationDelta * 1.5 + neutralPenalty
-        }
-
         return hueDelta * 5 + saturationDelta * 1.25 + lightnessDelta * 1.75
+    }
+
+    private static func isUnsupportedBrightWarmTint(_ sample: HSL, hasSpatialEvidence: Bool) -> Bool {
+        guard !hasSpatialEvidence,
+              sample.lightness >= 0.72,
+              sample.saturation >= 0.08,
+              sample.saturation <= 0.45 else { return false }
+        return sample.hue <= 0.10 || sample.hue >= 0.92
     }
 
     private struct HSL {
@@ -176,6 +227,7 @@ struct GarmentPaletteDebugSnapshot {
     let backgroundReferences: [(name: String, share: Double)]
     let downWeightedSamples: Int
     let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
+    let leadershipDecision: String
     let confidenceReason: String
 
     var debugDescription: String {
@@ -194,7 +246,7 @@ struct GarmentPaletteDebugSnapshot {
                 "\($0.name):foregroundConcentration=\(String(format: "%.2f", $0.foregroundConcentration)):downWeighted=\($0.downWeighted)"
             }
             .joined(separator: ", ")
-        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), clusterDecisions=[\(decisionText)], confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
+        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), clusterDecisions=[\(decisionText)], leadershipDecision=\(leadershipDecision), confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
     }
 }
 
@@ -309,6 +361,14 @@ enum GarmentPaletteSourceSelector {
 
         var hasConfidenceEvidence: Bool {
             metQualityBar && !disagreement && (winnerIsCorroborated || winnerIsStrongStandalone)
+        }
+
+        var corroboratedFamilies: Set<String> {
+            guard let winner = rankedCandidates.first else { return [] }
+            let winnerFamilies = GarmentPaletteSourceSelector.credibleFamilies(winner.candidate)
+            return rankedCandidates.dropFirst().reduce(into: Set<String>()) { result, peer in
+                result.formUnion(winnerFamilies.intersection(GarmentPaletteSourceSelector.credibleFamilies(peer.candidate)))
+            }
         }
 
         var confidenceReason: String {
@@ -495,6 +555,24 @@ struct GarmentRegionMask: Equatable {
 
         return GarmentRegionMask(width: width, height: height, included: eroded, tier: tier)
     }
+
+    func adaptivelyErodedStrongMask(
+        preferredRadius: Int = 3,
+        minimumRetainedFraction: Double = 0.08
+    ) -> GarmentRegionMask? {
+        guard maskingApplied, includedCount > 0 else { return nil }
+        let coverageFloor = max(
+            GarmentColorPaletteEngine.minimumGarmentPixelCount,
+            Int((Double(includedCount) * minimumRetainedFraction).rounded(.up))
+        )
+        for radius in stride(from: max(0, preferredRadius), through: 0, by: -1) {
+            let candidate = radius == 0 ? self : eroded(radius: radius)
+            if candidate.includedCount >= coverageFloor {
+                return candidate
+            }
+        }
+        return nil
+    }
 }
 
 enum GarmentRegionMasker {
@@ -549,6 +627,7 @@ enum GarmentColorPaletteEngine {
         let effectiveSampleCount: Double
         let downWeightedSamples: Int
         let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
+        let familyForegroundConcentrations: [String: Double]
     }
 
     static func extractPalette(
@@ -560,6 +639,7 @@ enum GarmentColorPaletteEngine {
         confidenceSampleCount: Int? = nil,
         backgroundFamilyShares: [String: Double] = [:],
         confidenceEvidenceSatisfied: Bool = false,
+        corroboratedFamilies: Set<String> = [],
         confidenceReason: String = "legacy source confidence rule"
     ) -> (palette: [String], confidence: Int, confidenceLevel: GarmentPaletteConfidence, debug: GarmentPaletteDebugSnapshot) {
         let personSamples = samples.filter(\.isInsidePersonMask)
@@ -587,6 +667,7 @@ enum GarmentColorPaletteEngine {
                 backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
                 downWeightedSamples: 0,
                 clusterWeightDecisions: [],
+                leadershipDecision: "no garment samples available for leadership",
                 confidenceReason: "insufficient garment samples"
             )
             return (["neutral"], 30, .low, debug)
@@ -603,19 +684,42 @@ enum GarmentColorPaletteEngine {
         let familyCounts = FashionColorFamilyCatalog.aggregatedWeights(
             weightedSummary.colorWeights.filter { $0.key != "background" }
         )
-        let sortedFamilies = familyCounts
+        let rawSortedFamilies = familyCounts
             .sorted { lhs, rhs in
                 if lhs.value.weight == rhs.value.weight {
                     return lhs.key < rhs.key
                 }
                 return lhs.value.weight > rhs.value.weight
             }
+        let hasLeadershipEvidence: (String) -> Bool = { family in
+            family == "neutral" || family == "white" ||
+                source == .garmentCrop ||
+                (weightedSummary.familyForegroundConcentrations[family] ?? 0) > 0 ||
+                corroboratedFamilies.contains(family)
+        }
+        let supportedFamilies = rawSortedFamilies.filter { hasLeadershipEvidence($0.key) }
+        let unsupportedFamilies = rawSortedFamilies.filter { !hasLeadershipEvidence($0.key) }
+        let sortedFamilies = supportedFamilies + unsupportedFamilies
+        let rawLeader = rawSortedFamilies.first?.key
+        let finalLeader = sortedFamilies.first?.key
+        let leadershipEvidenceSatisfied = finalLeader.map(hasLeadershipEvidence) ?? false
+        let leadershipDecision: String
+        if let rawLeader, rawLeader != finalLeader {
+            leadershipDecision = "demoted unsupported family \(rawLeader); leader=\(finalLeader ?? "none")"
+        } else if let finalLeader {
+            leadershipDecision = leadershipEvidenceSatisfied
+                ? "leader=\(finalLeader) supported by foreground/crop/corroboration evidence"
+                : "leader=\(finalLeader) lacks positive evidence; palette held low confidence"
+        } else {
+            leadershipDecision = "no retained family leader"
+        }
         let familyShares = sortedFamilies.map { family, entry in
             (name: family, share: entry.weight / total)
         }
         let clusters: [(name: String, count: Int, share: Double)] = sortedFamilies.enumerated().compactMap { index, entry in
             let share = entry.value.weight / total
-            guard index == 0 || share >= minimumRetainedClusterShare else { return nil }
+            let mayUseLeaderException = index == 0 && hasLeadershipEvidence(entry.key)
+            guard mayUseLeaderException || share >= minimumRetainedClusterShare else { return nil }
             return (name: entry.value.representative, count: Int(entry.value.weight.rounded()), share: share)
         }
 
@@ -626,7 +730,7 @@ enum GarmentColorPaletteEngine {
         let hasEnoughSamples = rawSampleCount >= minimumGarmentPixels * 2
             && weightedSummary.effectiveSampleCount >= Double(GarmentPaletteSourceSelector.minimumReliableGarmentSamples)
         let sourceEvidenceIsCredible = confidenceEvidenceSatisfied || source.reliability >= 2
-        let confidenceLevel: GarmentPaletteConfidence = !forceLowConfidence && sourceEvidenceIsCredible && hasEnoughSamples && leadingShare >= 0.18
+        let confidenceLevel: GarmentPaletteConfidence = !forceLowConfidence && sourceEvidenceIsCredible && leadershipEvidenceSatisfied && hasEnoughSamples && leadingShare >= 0.18
             ? .confident
             : .low
         let debug = GarmentPaletteDebugSnapshot(
@@ -641,6 +745,7 @@ enum GarmentColorPaletteEngine {
             backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
             downWeightedSamples: weightedSummary.downWeightedSamples,
             clusterWeightDecisions: weightedSummary.clusterWeightDecisions,
+            leadershipDecision: leadershipDecision,
             confidenceReason: confidenceLevel == .confident ? confidenceReason : lowConfidenceReason(
                 forced: forceLowConfidence,
                 hasEnoughSamples: hasEnoughSamples,
@@ -696,11 +801,20 @@ enum GarmentColorPaletteEngine {
             sample.x <= 0.10 || sample.x >= 0.90 || sample.y <= 0.10 || sample.y >= 0.90
         }
         guard !border.isEmpty else { return [:] }
-        let names = border.map(everydayGarmentColorName)
-        let counts = Dictionary(grouping: names, by: { $0 }).mapValues(\.count)
-        let familyCounts = FashionColorFamilyCatalog.aggregatedCounts(counts)
-        let total = Double(border.count)
-        return familyCounts.mapValues { Double($0.count) / total }
+        var nameWeights: [String: Double] = [:]
+        for sample in border {
+            for contribution in FashionColorCatalog.nameContributions(
+                red: sample.red,
+                green: sample.green,
+                blue: sample.blue,
+                hasSpatialEvidence: false
+            ) {
+                nameWeights[contribution.name, default: 0] += contribution.weight
+            }
+        }
+        let familyWeights = FashionColorFamilyCatalog.aggregatedWeights(nameWeights)
+        let total = max(0.0001, familyWeights.values.reduce(0) { $0 + $1.weight })
+        return familyWeights.mapValues { $0.weight / total }
     }
 
     private static func weightedColorSummary(
@@ -709,11 +823,18 @@ enum GarmentColorPaletteEngine {
         backgroundFamilyShares: [String: Double]
     ) -> WeightedColorSummary {
         let named = samples.map { sample in
-            (sample: sample, name: everydayGarmentColorName(for: sample))
-        }
+            FashionColorCatalog.nameContributions(
+                red: sample.red,
+                green: sample.green,
+                blue: sample.blue,
+                hasSpatialEvidence: sample.isStrongForegroundEvidence
+            ).map { (sample: sample, name: $0.name, contribution: $0.weight) }
+        }.flatMap { $0 }
         let namedGroups = Dictionary(grouping: named, by: { $0.name })
         let foregroundConcentrations = namedGroups.mapValues { entries in
-            Double(entries.filter { $0.sample.isStrongForegroundEvidence }.count) / Double(max(1, entries.count))
+            let total = entries.reduce(0) { $0 + $1.contribution }
+            let foreground = entries.filter { $0.sample.isStrongForegroundEvidence }.reduce(0) { $0 + $1.contribution }
+            return foreground / max(0.0001, total)
         }
         let downWeightedNames = Set(namedGroups.compactMap { name, entries -> String? in
             let family = FashionColorFamilyCatalog.family(for: name)
@@ -726,9 +847,9 @@ enum GarmentColorPaletteEngine {
 
         for entry in named {
             let shouldDownWeight = downWeightedNames.contains(entry.name)
-            let weight = shouldDownWeight ? 0.25 : 1.0
+            let weight = entry.contribution * (shouldDownWeight ? 0.25 : 1.0)
             weights[entry.name, default: 0] += weight
-            if shouldDownWeight { downWeighted += 1 }
+            if shouldDownWeight { downWeighted += Int(entry.contribution.rounded(.up)) }
         }
 
         let clusterWeightDecisions = namedGroups.keys.sorted().map { name in
@@ -739,11 +860,24 @@ enum GarmentColorPaletteEngine {
             )
         }
 
+        var familyTotals: [String: Double] = [:]
+        var familyForegroundTotals: [String: Double] = [:]
+        for entry in named {
+            let family = FashionColorFamilyCatalog.family(for: entry.name)
+            familyTotals[family, default: 0] += entry.contribution
+            if entry.sample.isStrongForegroundEvidence {
+                familyForegroundTotals[family, default: 0] += entry.contribution
+            }
+        }
+
         return WeightedColorSummary(
             colorWeights: weights,
             effectiveSampleCount: weights.values.reduce(0, +),
             downWeightedSamples: downWeighted,
-            clusterWeightDecisions: clusterWeightDecisions
+            clusterWeightDecisions: clusterWeightDecisions,
+            familyForegroundConcentrations: Dictionary(uniqueKeysWithValues: familyTotals.map { family, total in
+                (family, familyForegroundTotals[family, default: 0] / max(0.0001, total))
+            })
         )
     }
 
@@ -819,7 +953,12 @@ enum GarmentColorPaletteEngine {
     }
 
     static func everydayGarmentColorName(for sample: GarmentPalettePixel) -> String {
-        FashionColorCatalog.nearestName(red: sample.red, green: sample.green, blue: sample.blue)
+        FashionColorCatalog.nameContributions(
+            red: sample.red,
+            green: sample.green,
+            blue: sample.blue,
+            hasSpatialEvidence: sample.isStrongForegroundEvidence
+        ).max { $0.weight < $1.weight }?.name ?? "black"
     }
 
     private struct SkinReference {
