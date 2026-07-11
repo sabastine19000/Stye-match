@@ -3269,8 +3269,9 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         memory.styleScore = 93
         memory.wasLiked = true
         memory.wouldWearAgain = true
+        memory.outfitFingerprint = "same-outfit"
 
-        let input = makePersonalStylistInput(score: 86, memories: [memory])
+        let input = makePersonalStylistInput(score: 86, memories: [memory], outfitFingerprint: "same-outfit")
         let message = PersonalStylistIntelligenceBuilder.buildMessage(
             input: input,
             weatherAdviceEnabled: false,
@@ -3293,12 +3294,14 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         memory.colors = ["black"]
         memory.detectedStyle = "Smart Casual"
         memory.styleScore = 85
+        memory.outfitFingerprint = "black-shirt-outfit"
 
         let match = OutfitRecallService.recallFact(
             for: OutfitRecallScanContext(
                 detectedGarments: ["shirt"],
                 colors: ["black"],
-                detectedStyle: "Smart Casual"
+                detectedStyle: "Smart Casual",
+                outfitFingerprint: "black-shirt-outfit"
             ),
             memories: [memory],
             now: now
@@ -3307,7 +3310,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             for: OutfitRecallScanContext(
                 detectedGarments: ["shoe"],
                 colors: ["white"],
-                detectedStyle: "Athletic"
+                detectedStyle: "Athletic",
+                outfitFingerprint: "different-outfit"
             ),
             memories: [memory],
             now: now
@@ -3339,6 +3343,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         memory.detectedGarments = ["shirt"]
         memory.colors = ["black"]
         memory.detectedStyle = "Casual"
+        memory.outfitFingerprint = "counter-outfit"
         store.addOrMergeScan(memory)
 
         let incoming = GarmentRecord(
@@ -3355,7 +3360,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
                 detectedGarments: ["shirt"],
                 colors: ["black"],
                 detectedStyle: "Casual",
-                garmentRecords: [incoming]
+                garmentRecords: [incoming],
+                outfitFingerprint: "counter-outfit"
             ),
             store: store,
             incrementCounters: true
@@ -3368,7 +3374,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         score: Int,
         weather: WeatherContextRecommendation? = nil,
         memories: [OutfitMemory] = [],
-        dealMatches: [PersonalStylistDealMatch] = []
+        dealMatches: [PersonalStylistDealMatch] = [],
+        outfitFingerprint: String? = nil
     ) -> PersonalStylistIntelligenceInput {
         PersonalStylistIntelligenceInput(
             score: score,
@@ -3387,7 +3394,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             weather: weather,
             memories: memories,
             profile: makeStylistProfile(userId: userA),
-            dealMatches: dealMatches
+            dealMatches: dealMatches,
+            outfitFingerprint: outfitFingerprint
         )
     }
 
@@ -4447,6 +4455,7 @@ extension StyleMatchProPhase2Tests {
             receivedCompliments: nil,
             isFavorite: false,
             timesWorn: 0
+            , outfitFingerprint: "sanitized-outfit"
         )
     }
 }
@@ -4597,7 +4606,7 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
     }
 
     func testOutfitRecallDoesNotEchoRawGarmentLabelsFromOldMemories() {
-        let memory = OutfitMemory(
+        var memory = OutfitMemory(
             id: UUID(),
             userId: "test-user",
             scanDate: Date(timeIntervalSince1970: 1_000),
@@ -4615,9 +4624,15 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
             isFavorite: false,
             timesWorn: 0
         )
+        memory.outfitFingerprint = "sanitized-outfit"
 
         let fact = OutfitRecallService.recallFact(
-            for: OutfitRecallScanContext(detectedGarments: ["polo shirt"], colors: ["white"], detectedStyle: "Casual"),
+            for: OutfitRecallScanContext(
+                detectedGarments: ["polo shirt"],
+                colors: ["white"],
+                detectedStyle: "Casual",
+                outfitFingerprint: "sanitized-outfit"
+            ),
             memories: [memory],
             now: Date(timeIntervalSince1970: 1_000)
         )

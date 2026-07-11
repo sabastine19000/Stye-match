@@ -1,5 +1,138 @@
 import Foundation
 
+enum GarmentRegionGeometry {
+    static func subdividedBoxes(
+        of box: CGRect,
+        imageSize: CGSize,
+        oversizedAreaThreshold: CGFloat = 0.60
+    ) -> [CGRect] {
+        guard box.width * box.height > oversizedAreaThreshold else { return [] }
+
+        let pixelWidth = box.width * imageSize.width
+        let pixelHeight = box.height * imageSize.height
+        if pixelWidth >= pixelHeight {
+            let halfWidth = box.width / 2
+            return [
+                CGRect(x: box.minX, y: box.minY, width: halfWidth, height: box.height),
+                CGRect(x: box.minX + halfWidth, y: box.minY, width: halfWidth, height: box.height)
+            ]
+        }
+
+        let halfHeight = box.height / 2
+        return [
+            CGRect(x: box.minX, y: box.minY, width: box.width, height: halfHeight),
+            CGRect(x: box.minX, y: box.minY + halfHeight, width: box.width, height: halfHeight)
+        ]
+    }
+}
+
+enum FashionColorCatalog {
+    struct Anchor: Equatable {
+        let name: String
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
+    }
+
+    static let anchors: [Anchor] = [
+        Anchor(name: "white", red: 248, green: 248, blue: 246),
+        Anchor(name: "ivory", red: 245, green: 240, blue: 220),
+        Anchor(name: "cream", red: 238, green: 225, blue: 190),
+        Anchor(name: "beige", red: 218, green: 200, blue: 170),
+        Anchor(name: "sand", red: 194, green: 178, blue: 140),
+        Anchor(name: "tan", red: 190, green: 155, blue: 110),
+        Anchor(name: "camel", red: 166, green: 123, blue: 82),
+        Anchor(name: "brown", red: 112, green: 72, blue: 45),
+        Anchor(name: "chocolate", red: 67, green: 40, blue: 28),
+        Anchor(name: "taupe", red: 140, green: 126, blue: 112),
+        Anchor(name: "gray", red: 150, green: 150, blue: 150),
+        Anchor(name: "charcoal", red: 54, green: 57, blue: 63),
+        Anchor(name: "black", red: 14, green: 14, blue: 16),
+        Anchor(name: "navy", red: 25, green: 42, blue: 78),
+        Anchor(name: "royal blue", red: 45, green: 78, blue: 180),
+        Anchor(name: "blue", red: 55, green: 120, blue: 200),
+        Anchor(name: "light blue", red: 172, green: 208, blue: 226),
+        Anchor(name: "sky blue", red: 112, green: 185, blue: 225),
+        Anchor(name: "denim", red: 72, green: 104, blue: 145),
+        Anchor(name: "teal", red: 35, green: 125, blue: 132),
+        Anchor(name: "turquoise", red: 62, green: 190, blue: 185),
+        Anchor(name: "mint", red: 172, green: 222, blue: 195),
+        Anchor(name: "green", red: 50, green: 145, blue: 75),
+        Anchor(name: "forest green", red: 35, green: 82, blue: 50),
+        Anchor(name: "olive", red: 115, green: 112, blue: 55),
+        Anchor(name: "lime", red: 145, green: 190, blue: 65),
+        Anchor(name: "yellow", red: 235, green: 205, blue: 55),
+        Anchor(name: "mustard", red: 190, green: 145, blue: 40),
+        Anchor(name: "gold", red: 205, green: 165, blue: 55),
+        Anchor(name: "orange", red: 225, green: 120, blue: 45),
+        Anchor(name: "rust", red: 170, green: 72, blue: 42),
+        Anchor(name: "coral", red: 225, green: 112, blue: 95),
+        Anchor(name: "red", red: 205, green: 45, blue: 50),
+        Anchor(name: "burgundy", red: 105, green: 32, blue: 48),
+        Anchor(name: "maroon", red: 82, green: 32, blue: 42),
+        Anchor(name: "pink", red: 225, green: 125, blue: 165),
+        Anchor(name: "blush", red: 225, green: 184, blue: 190),
+        Anchor(name: "magenta", red: 190, green: 55, blue: 145),
+        Anchor(name: "purple", red: 112, green: 65, blue: 150),
+        Anchor(name: "lavender", red: 188, green: 168, blue: 215)
+    ]
+
+    static func nearestName(red: UInt8, green: UInt8, blue: UInt8) -> String {
+        let sample = hsl(red: red, green: green, blue: blue)
+        return anchors.min { lhs, rhs in
+            distance(from: sample, to: lhs) < distance(from: sample, to: rhs)
+        }?.name ?? "black"
+    }
+
+    private static func distance(from sample: HSL, to anchor: Anchor) -> Double {
+        let target = hsl(red: anchor.red, green: anchor.green, blue: anchor.blue)
+        let hueDelta = min(abs(sample.hue - target.hue), 1 - abs(sample.hue - target.hue))
+        let saturationDelta = abs(sample.saturation - target.saturation)
+        let lightnessDelta = abs(sample.lightness - target.lightness)
+
+        if sample.saturation < 0.12 {
+            // Near-neutrals are named primarily by brightness; hue noise from camera
+            // sensors must not turn bedding gray into a pastel color.
+            let channels = [Double(anchor.red), Double(anchor.green), Double(anchor.blue)]
+            let channelSpread = ((channels.max() ?? 0) - (channels.min() ?? 0)) / 255
+            let neutralPenalty = channelSpread > 0.04 ? 2.0 + channelSpread : 0
+            return lightnessDelta * 6 + saturationDelta * 1.5 + neutralPenalty
+        }
+
+        return hueDelta * 5 + saturationDelta * 1.25 + lightnessDelta * 1.75
+    }
+
+    private struct HSL {
+        let hue: Double
+        let saturation: Double
+        let lightness: Double
+    }
+
+    private static func hsl(red: UInt8, green: UInt8, blue: UInt8) -> HSL {
+        let red = Double(red) / 255
+        let green = Double(green) / 255
+        let blue = Double(blue) / 255
+        let maximum = max(red, green, blue)
+        let minimum = min(red, green, blue)
+        let delta = maximum - minimum
+        let lightness = (maximum + minimum) / 2
+        let saturation = delta == 0 ? 0 : delta / (1 - abs(2 * lightness - 1))
+
+        let hue: Double
+        if delta == 0 {
+            hue = 0
+        } else if maximum == red {
+            hue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6) / 6
+        } else if maximum == green {
+            hue = (((blue - red) / delta) + 2) / 6
+        } else {
+            hue = (((red - green) / delta) + 4) / 6
+        }
+
+        return HSL(hue: hue < 0 ? hue + 1 : hue, saturation: saturation, lightness: lightness)
+    }
+}
+
 struct GarmentPalettePixel: Equatable {
     let red: UInt8
     let green: UInt8
@@ -34,13 +167,240 @@ struct GarmentPaletteDebugSnapshot {
     let skinReferenceSamples: Int
     let garmentSamples: Int
     let clusters: [(name: String, count: Int, share: Double)]
+    let familyShares: [(name: String, share: Double)]
     let finalPalette: [String]
+    let whiteBalanceGains: (red: Double, green: Double, blue: Double)
+    let backgroundReferences: [(name: String, share: Double)]
+    let downWeightedSamples: Int
+    let confidenceReason: String
 
     var debugDescription: String {
         let clusterText = clusters
             .map { "\($0.name)=\(String(format: "%.1f", $0.share * 100))%" }
             .joined(separator: ", ")
-        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), clusters=[\(clusterText)], final=\(finalPalette.joined(separator: ", "))"
+        let gains = "r=\(String(format: "%.2f", whiteBalanceGains.red)), g=\(String(format: "%.2f", whiteBalanceGains.green)), b=\(String(format: "%.2f", whiteBalanceGains.blue))"
+        let familyText = familyShares
+            .map { "\($0.name)=\(String(format: "%.1f", $0.share * 100))%" }
+            .joined(separator: ", ")
+        let backgroundText = backgroundReferences
+            .map { "\($0.name)=\(String(format: "%.1f", $0.share * 100))%" }
+            .joined(separator: ", ")
+        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
+    }
+}
+
+enum FashionColorFamilyCatalog {
+    private static let families: [String: Set<String>] = [
+        "white": ["white", "ivory", "cream"],
+        "brown": ["beige", "sand", "tan", "camel", "brown", "chocolate", "taupe", "khaki"],
+        "neutral": ["gray", "grey", "charcoal", "black"],
+        "blue": ["navy", "royal blue", "blue", "light blue", "sky blue", "denim", "teal", "turquoise", "aqua"],
+        "green": ["green", "forest green", "olive", "lime", "mint"],
+        "yellow": ["yellow", "mustard", "gold"],
+        "orange": ["orange", "rust", "coral"],
+        "red": ["red", "burgundy", "maroon"],
+        "pink": ["pink", "blush", "magenta"],
+        "purple": ["purple", "lavender"]
+    ]
+
+    static func family(for colorName: String) -> String {
+        let normalized = colorName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return families.first(where: { $0.value.contains(normalized) })?.key ?? normalized
+    }
+
+    static func aggregatedCounts(_ colorCounts: [String: Int]) -> [String: (count: Int, representative: String)] {
+        Dictionary(grouping: colorCounts.keys, by: family(for:)).mapValues { names in
+            let representative = names.max { lhs, rhs in
+                let left = colorCounts[lhs] ?? 0
+                let right = colorCounts[rhs] ?? 0
+                return left == right ? lhs > rhs : left < right
+            } ?? names[0]
+            return (names.reduce(0) { $0 + (colorCounts[$1] ?? 0) }, representative)
+        }
+    }
+
+    static func aggregatedWeights(_ colorWeights: [String: Double]) -> [String: (weight: Double, representative: String)] {
+        Dictionary(grouping: colorWeights.keys, by: family(for:)).mapValues { names in
+            let representative = names.max { lhs, rhs in
+                let left = colorWeights[lhs] ?? 0
+                let right = colorWeights[rhs] ?? 0
+                return left == right ? lhs > rhs : left < right
+            } ?? names[0]
+            return (names.reduce(0) { $0 + (colorWeights[$1] ?? 0) }, representative)
+        }
+    }
+}
+
+enum GarmentCropContributionBalancer {
+    static func balance(_ crops: [[GarmentPalettePixel]]) -> (samples: [GarmentPalettePixel], rawSampleCount: Int) {
+        let garmentCrops = crops.map { $0.filter(\.isInsidePersonMask) }.filter { !$0.isEmpty }
+        let rawSampleCount = garmentCrops.reduce(0) { $0 + $1.count }
+        guard let targetCount = garmentCrops.map(\.count).min(), targetCount > 0 else {
+            return ([], rawSampleCount)
+        }
+        return (garmentCrops.flatMap { evenlySample($0, count: targetCount) }, rawSampleCount)
+    }
+
+    private static func evenlySample(_ samples: [GarmentPalettePixel], count: Int) -> [GarmentPalettePixel] {
+        guard count < samples.count else { return samples }
+        guard count > 1 else { return [samples[samples.count / 2]] }
+        let step = Double(samples.count - 1) / Double(count - 1)
+        return (0..<count).map { samples[Int((Double($0) * step).rounded())] }
+    }
+}
+
+struct GarmentPaletteSampleCandidate {
+    let samples: [GarmentPalettePixel]
+    let tier: GarmentMaskTier
+    let source: GarmentPaletteSource
+    let maskingApplied: Bool
+    let garmentSampleCount: Int
+    let familyShares: [String: Double]
+
+    init(
+        samples: [GarmentPalettePixel],
+        tier: GarmentMaskTier,
+        source: GarmentPaletteSource,
+        maskingApplied: Bool,
+        garmentSampleCount: Int,
+        familyShares: [String: Double] = [:]
+    ) {
+        self.samples = samples
+        self.tier = tier
+        self.source = source
+        self.maskingApplied = maskingApplied
+        self.garmentSampleCount = garmentSampleCount
+        self.familyShares = familyShares
+    }
+}
+
+enum GarmentPaletteSourceSelector {
+    static let minimumReliableGarmentSamples = 500
+
+    struct RankedCandidate {
+        let candidate: GarmentPaletteSampleCandidate
+        let score: Double
+        let agreement: Double
+    }
+
+    struct Selection {
+        let candidate: GarmentPaletteSampleCandidate?
+        let metQualityBar: Bool
+        let rankedCandidates: [RankedCandidate]
+        let disagreement: Bool
+
+        var winnerIsCorroborated: Bool {
+            (rankedCandidates.first?.agreement ?? 0) > 0
+        }
+
+        var winnerIsStrongStandalone: Bool {
+            guard let winner = rankedCandidates.first else { return false }
+            return winner.candidate.garmentSampleCount >= 1_500 && winner.score >= 0.80
+        }
+
+        var hasConfidenceEvidence: Bool {
+            metQualityBar && !disagreement && (winnerIsCorroborated || winnerIsStrongStandalone)
+        }
+
+        var confidenceReason: String {
+            if disagreement { return "credible sources disagree" }
+            if !metQualityBar { return "no source cleared 500 effective garment samples" }
+            if winnerIsCorroborated { return "winning families corroborated by another source" }
+            if winnerIsStrongStandalone { return "strong standalone source (samples>=1500, score>=0.80)" }
+            return "winner lacked corroboration and strong standalone evidence"
+        }
+    }
+
+    static func select(
+        _ candidates: [GarmentPaletteSampleCandidate],
+        minimumReliableSamples: Int = minimumReliableGarmentSamples
+    ) -> Selection {
+        let qualified = candidates.filter { $0.garmentSampleCount >= minimumReliableSamples }
+        guard !qualified.isEmpty else {
+            return Selection(
+                candidate: candidates.max { $0.garmentSampleCount < $1.garmentSampleCount },
+                metQualityBar: false,
+                rankedCandidates: [],
+                disagreement: false
+            )
+        }
+
+        let maximumSamples = Double(qualified.map(\.garmentSampleCount).max() ?? 1)
+        let ranked = qualified.map { candidate -> RankedCandidate in
+            let agreement = averageAgreement(for: candidate, among: qualified)
+            let sampleScore = Double(candidate.garmentSampleCount) / maximumSamples
+            let reliabilityScore = Double(candidate.source.reliability) / 3.0
+            let score = sampleScore * 0.55 + reliabilityScore * 0.25 + agreement * 0.20
+            return RankedCandidate(candidate: candidate, score: score, agreement: agreement)
+        }.sorted { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.candidate.garmentSampleCount > rhs.candidate.garmentSampleCount
+            }
+            return lhs.score > rhs.score
+        }
+
+        return Selection(
+            candidate: ranked.first?.candidate,
+            metQualityBar: true,
+            rankedCandidates: ranked,
+            disagreement: containsDisagreement(qualified)
+        )
+    }
+
+    private static func credibleFamilies(_ candidate: GarmentPaletteSampleCandidate) -> Set<String> {
+        Set(candidate.familyShares.filter { $0.value >= GarmentColorPaletteEngine.minimumRetainedClusterShare }.map(\.key))
+    }
+
+    private static func averageAgreement(
+        for candidate: GarmentPaletteSampleCandidate,
+        among candidates: [GarmentPaletteSampleCandidate]
+    ) -> Double {
+        let candidateFamilies = credibleFamilies(candidate)
+        let peers = candidates.filter { $0.source != candidate.source || $0.tier != candidate.tier }
+        guard !candidateFamilies.isEmpty, !peers.isEmpty else { return 0 }
+        let scores = peers.map { peer -> Double in
+            let peerFamilies = credibleFamilies(peer)
+            let union = candidateFamilies.union(peerFamilies)
+            guard !union.isEmpty else { return 0 }
+            return Double(candidateFamilies.intersection(peerFamilies).count) / Double(union.count)
+        }
+        return scores.reduce(0, +) / Double(scores.count)
+    }
+
+    private static func containsDisagreement(_ candidates: [GarmentPaletteSampleCandidate]) -> Bool {
+        for leftIndex in candidates.indices {
+            let left = credibleFamilies(candidates[leftIndex])
+            guard !left.isEmpty else { continue }
+            for rightIndex in candidates.indices where rightIndex > leftIndex {
+                let right = credibleFamilies(candidates[rightIndex])
+                if !right.isEmpty && left.isDisjoint(with: right) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+}
+
+enum GarmentPaletteConfidence: String, Codable, Equatable {
+    case confident
+    case low
+}
+
+enum GarmentPaletteSource: String, Codable, Equatable {
+    case garmentCrop
+    case foregroundSubject
+    case personSegmentation
+    case saliencyCrop
+    case unavailable
+
+    var reliability: Int {
+        switch self {
+        case .garmentCrop: return 3
+        case .personSegmentation, .foregroundSubject: return 2
+        case .saliencyCrop: return 1
+        case .unavailable: return 0
+        }
     }
 }
 
@@ -173,13 +533,29 @@ enum GarmentRegionMasker {
 
 enum GarmentColorPaletteEngine {
     static let minimumGarmentPixelCount = 42
+    static let minimumRetainedClusterShare = 0.15
+
+    private struct WeightedColorSummary {
+        let colorWeights: [String: Double]
+        let effectiveSampleCount: Double
+        let downWeightedSamples: Int
+    }
 
     static func extractPalette(
         from samples: [GarmentPalettePixel],
-        minimumGarmentPixels: Int = minimumGarmentPixelCount
-    ) -> (palette: [String], confidence: Int, debug: GarmentPaletteDebugSnapshot) {
+        minimumGarmentPixels: Int = minimumGarmentPixelCount,
+        source: GarmentPaletteSource = .foregroundSubject,
+        allowsSkinExclusion: Bool = true,
+        forceLowConfidence: Bool = false,
+        confidenceSampleCount: Int? = nil,
+        backgroundFamilyShares: [String: Double] = [:],
+        confidenceEvidenceSatisfied: Bool = false,
+        confidenceReason: String = "legacy source confidence rule"
+    ) -> (palette: [String], confidence: Int, confidenceLevel: GarmentPaletteConfidence, debug: GarmentPaletteDebugSnapshot) {
         let personSamples = samples.filter(\.isInsidePersonMask)
-        let skinReference = coherentSkinReference(from: personSamples.filter(\.isLikelySkinZone))
+        let skinReference = allowsSkinExclusion
+            ? coherentSkinReference(from: personSamples.filter(\.isLikelySkinZone))
+            : nil
 
         let garmentSamples = personSamples.filter { sample in
             guard let reference = skinReference else {
@@ -195,46 +571,221 @@ enum GarmentColorPaletteEngine {
                 skinReferenceSamples: skinReference?.count ?? 0,
                 garmentSamples: garmentSamples.count,
                 clusters: [],
-                finalPalette: ["neutral"]
+                familyShares: [],
+                finalPalette: ["neutral"],
+                whiteBalanceGains: (1, 1, 1),
+                backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
+                downWeightedSamples: 0,
+                confidenceReason: "insufficient garment samples"
             )
-            return (["neutral"], 30, debug)
+            return (["neutral"], 30, .low, debug)
         }
 
-        let colorNames = garmentSamples.compactMap(everydayGarmentColorName)
-        let counts = Dictionary(grouping: colorNames, by: { $0 }).mapValues(\.count)
-        let total = max(1, colorNames.count)
-        let clusters = counts
-            .filter { entry in
-                entry.key != "background" && Double(entry.value) / Double(total) >= 0.06
-            }
+        let correction = grayWorldCorrection(for: garmentSamples)
+        let correctedSamples = garmentSamples.map { correction.correct($0) }
+        let weightedSummary = weightedColorSummary(
+            correctedSamples,
+            source: source,
+            backgroundFamilyShares: backgroundFamilyShares
+        )
+        let total = max(1, weightedSummary.effectiveSampleCount)
+        let familyCounts = FashionColorFamilyCatalog.aggregatedWeights(
+            weightedSummary.colorWeights.filter { $0.key != "background" }
+        )
+        let sortedFamilies = familyCounts
             .sorted { lhs, rhs in
-                if lhs.value == rhs.value {
+                if lhs.value.weight == rhs.value.weight {
                     return lhs.key < rhs.key
                 }
-                return lhs.value > rhs.value
+                return lhs.value.weight > rhs.value.weight
             }
-            .map { (name: $0.key, count: $0.value, share: Double($0.value) / Double(total)) }
+        let familyShares = sortedFamilies.map { family, entry in
+            (name: family, share: entry.weight / total)
+        }
+        let clusters: [(name: String, count: Int, share: Double)] = sortedFamilies.enumerated().compactMap { index, entry in
+            let share = entry.value.weight / total
+            guard index == 0 || share >= minimumRetainedClusterShare else { return nil }
+            return (name: entry.value.representative, count: Int(entry.value.weight.rounded()), share: share)
+        }
 
         let palette = validatedGarmentColors(clusters.map(\.name))
         let leadingShare = clusters.first?.share ?? 0
         let confidence = min(96, max(48, Int((leadingShare * 100).rounded()) + 32))
+        let rawSampleCount = confidenceSampleCount ?? garmentSamples.count
+        let hasEnoughSamples = rawSampleCount >= minimumGarmentPixels * 2
+            && weightedSummary.effectiveSampleCount >= Double(GarmentPaletteSourceSelector.minimumReliableGarmentSamples)
+        let sourceEvidenceIsCredible = confidenceEvidenceSatisfied || source.reliability >= 2
+        let confidenceLevel: GarmentPaletteConfidence = !forceLowConfidence && sourceEvidenceIsCredible && hasEnoughSamples && leadingShare >= 0.18
+            ? .confident
+            : .low
         let debug = GarmentPaletteDebugSnapshot(
             totalSamples: samples.count,
             personSamples: personSamples.count,
             skinReferenceSamples: skinReference?.count ?? 0,
             garmentSamples: garmentSamples.count,
             clusters: clusters,
-            finalPalette: palette
+            familyShares: familyShares,
+            finalPalette: palette,
+            whiteBalanceGains: (correction.redGain, correction.greenGain, correction.blueGain),
+            backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
+            downWeightedSamples: weightedSummary.downWeightedSamples,
+            confidenceReason: confidenceLevel == .confident ? confidenceReason : lowConfidenceReason(
+                forced: forceLowConfidence,
+                hasEnoughSamples: hasEnoughSamples,
+                sourceEvidenceIsCredible: sourceEvidenceIsCredible,
+                leadingShare: leadingShare,
+                requestedReason: confidenceReason
+            )
         )
-        return (palette, confidence, debug)
+        return (palette, confidence, confidenceLevel, debug)
+    }
+
+    static func garmentSampleCount(
+        in samples: [GarmentPalettePixel],
+        allowsSkinExclusion: Bool
+    ) -> Int {
+        let personSamples = samples.filter(\.isInsidePersonMask)
+        guard allowsSkinExclusion,
+              let skinReference = coherentSkinReference(from: personSamples.filter(\.isLikelySkinZone)) else {
+            return personSamples.count
+        }
+        return personSamples.filter { normalizedDistance($0, skinReference) > skinReference.threshold }.count
+    }
+
+    static func colorFamilyShares(
+        in samples: [GarmentPalettePixel],
+        allowsSkinExclusion: Bool,
+        source: GarmentPaletteSource = .foregroundSubject,
+        backgroundFamilyShares: [String: Double] = [:]
+    ) -> [String: Double] {
+        let personSamples = samples.filter(\.isInsidePersonMask)
+        let skinReference = allowsSkinExclusion
+            ? coherentSkinReference(from: personSamples.filter(\.isLikelySkinZone))
+            : nil
+        let garmentSamples = personSamples.filter { sample in
+            guard let skinReference else { return true }
+            return normalizedDistance(sample, skinReference) > skinReference.threshold
+        }
+        guard !garmentSamples.isEmpty else { return [:] }
+
+        let correction = grayWorldCorrection(for: garmentSamples)
+        let weightedSummary = weightedColorSummary(
+            garmentSamples.map { correction.correct($0) },
+            source: source,
+            backgroundFamilyShares: backgroundFamilyShares
+        )
+        let familyCounts = FashionColorFamilyCatalog.aggregatedWeights(weightedSummary.colorWeights)
+        let total = max(1, weightedSummary.effectiveSampleCount)
+        return familyCounts.mapValues { $0.weight / total }
+    }
+
+    static func backgroundFamilyShares(from samples: [GarmentPalettePixel]) -> [String: Double] {
+        let border = samples.filter { sample in
+            sample.x <= 0.10 || sample.x >= 0.90 || sample.y <= 0.10 || sample.y >= 0.90
+        }
+        guard !border.isEmpty else { return [:] }
+        let names = border.map(everydayGarmentColorName)
+        let counts = Dictionary(grouping: names, by: { $0 }).mapValues(\.count)
+        let familyCounts = FashionColorFamilyCatalog.aggregatedCounts(counts)
+        let total = Double(border.count)
+        return familyCounts.mapValues { Double($0.count) / total }
+    }
+
+    private static func weightedColorSummary(
+        _ samples: [GarmentPalettePixel],
+        source: GarmentPaletteSource,
+        backgroundFamilyShares: [String: Double]
+    ) -> WeightedColorSummary {
+        let named = samples.map { sample in
+            (sample: sample, name: everydayGarmentColorName(for: sample))
+        }
+        let central = named.filter {
+            $0.sample.x >= 0.20 && $0.sample.x <= 0.80 && $0.sample.y >= 0.20 && $0.sample.y <= 0.80
+        }
+        let centralCounts = Dictionary(grouping: central.map { FashionColorFamilyCatalog.family(for: $0.name) }, by: { $0 }).mapValues(\.count)
+        let centralTotal = Double(max(1, central.count))
+        var weights: [String: Double] = [:]
+        var downWeighted = 0
+
+        for entry in named {
+            let family = FashionColorFamilyCatalog.family(for: entry.name)
+            let backgroundShare = backgroundFamilyShares[family] ?? 0
+            let centralShare = Double(centralCounts[family] ?? 0) / centralTotal
+            let hasSpatialGarmentEvidence = source == .garmentCrop
+                || (centralShare >= 0.15 && centralShare >= backgroundShare * 0.75)
+            let shouldDownWeight = backgroundShare >= 0.18 && !hasSpatialGarmentEvidence
+            let weight = shouldDownWeight ? 0.25 : 1.0
+            weights[entry.name, default: 0] += weight
+            if shouldDownWeight { downWeighted += 1 }
+        }
+
+        return WeightedColorSummary(
+            colorWeights: weights,
+            effectiveSampleCount: weights.values.reduce(0, +),
+            downWeightedSamples: downWeighted
+        )
+    }
+
+    private static func lowConfidenceReason(
+        forced: Bool,
+        hasEnoughSamples: Bool,
+        sourceEvidenceIsCredible: Bool,
+        leadingShare: Double,
+        requestedReason: String
+    ) -> String {
+        if forced { return requestedReason }
+        if !hasEnoughSamples { return "background down-weighting left fewer than 500 effective samples" }
+        if !sourceEvidenceIsCredible { return requestedReason }
+        if leadingShare < 0.18 { return "no dominant color family" }
+        return requestedReason
+    }
+
+    private struct GrayWorldCorrection {
+        let redGain: Double
+        let greenGain: Double
+        let blueGain: Double
+
+        func correct(_ sample: GarmentPalettePixel) -> GarmentPalettePixel {
+            GarmentPalettePixel(
+                red: UInt8(clamping: Int((Double(sample.red) * redGain).rounded())),
+                green: UInt8(clamping: Int((Double(sample.green) * greenGain).rounded())),
+                blue: UInt8(clamping: Int((Double(sample.blue) * blueGain).rounded())),
+                x: sample.x,
+                y: sample.y,
+                isInsidePersonMask: sample.isInsidePersonMask,
+                isLikelySkinZone: sample.isLikelySkinZone
+            )
+        }
+    }
+
+    private static func grayWorldCorrection(for samples: [GarmentPalettePixel]) -> GrayWorldCorrection {
+        guard !samples.isEmpty else {
+            return GrayWorldCorrection(redGain: 1, greenGain: 1, blueGain: 1)
+        }
+        let count = Double(samples.count)
+        let redMean = samples.reduce(0.0) { $0 + Double($1.red) } / count
+        let greenMean = samples.reduce(0.0) { $0 + Double($1.green) } / count
+        let blueMean = samples.reduce(0.0) { $0 + Double($1.blue) } / count
+        let target = (redMean + greenMean + blueMean) / 3.0
+        let meanSpread = max(redMean, greenMean, blueMean) - min(redMean, greenMean, blueMean)
+        // Gray-world is reliable for lighting casts, but full correction would erase a
+        // genuinely tinted majority garment. Preserve most chroma when the sample mean
+        // itself has a clear hue.
+        let correctionStrength = meanSpread >= 12 ? 0.25 : 1.0
+        func gain(for mean: Double) -> Double {
+            guard mean > 0 else { return 1 }
+            let fullGain = min(1.6, max(0.6, target / mean))
+            return 1 + (fullGain - 1) * correctionStrength
+        }
+        return GrayWorldCorrection(
+            redGain: gain(for: redMean),
+            greenGain: gain(for: greenMean),
+            blueGain: gain(for: blueMean)
+        )
     }
 
     static func validatedGarmentColors(_ colors: [String]) -> [String] {
-        let validColors = [
-            "black", "white", "gray", "grey", "navy", "blue", "red", "green",
-            "brown", "tan", "beige", "olive", "khaki", "maroon", "burgundy",
-            "orange", "yellow", "purple", "pink", "cream", "charcoal", "denim"
-        ]
+        let validColors = FashionColorCatalog.anchors.map(\.name) + ["grey", "khaki"]
         let filtered = colors
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { color in
@@ -245,56 +796,8 @@ enum GarmentColorPaletteEngine {
         return filtered.isEmpty ? ["neutral"] : filtered
     }
 
-    static func everydayGarmentColorName(for sample: GarmentPalettePixel) -> String? {
-        let red = Int(sample.red)
-        let green = Int(sample.green)
-        let blue = Int(sample.blue)
-        let maxValue = max(red, green, blue)
-        let minValue = min(red, green, blue)
-        let spread = maxValue - minValue
-        let brightness = (red + green + blue) / 3
-
-        if brightness < 28 { return "black" }
-        if brightness < 62 && spread < 28 { return "charcoal" }
-        if brightness > 222 && spread < 34 { return "white" }
-        if spread < 20 {
-            if brightness < 80 { return "black" }
-            if brightness < 118 { return "charcoal" }
-            if brightness > 190 { return "white" }
-            return "gray"
-        }
-
-        if blue > red + 22 && blue > green + 12 {
-            return brightness < 88 ? "navy" : "blue"
-        }
-
-        if green > red + 12 && green > blue + 8 {
-            if red > 70 && blue < 105 && brightness < 150 { return "olive" }
-            return "green"
-        }
-
-        if red > green + 24 && red > blue + 24 {
-            if red > 165 && green > 112 && blue < 85 { return "orange" }
-            if red > 165 && green > 78 && blue > 100 { return "pink" }
-            if brightness < 95 && blue > 48 { return "maroon" }
-            if brightness < 100 { return "burgundy" }
-            return "red"
-        }
-
-        if red > green && green > blue {
-            if brightness < 92 { return "brown" }
-            if red > 184 && green > 152 && blue > 112 { return "beige" }
-            if red > 180 && green > 150 && blue < 112 { return "khaki" }
-            if red > 190 && green > 168 && blue < 105 { return "yellow" }
-            if red > 142 && green > 100 && blue < 105 { return "tan" }
-            return "brown"
-        }
-
-        if red > 120 && blue > 100 && green < 120 {
-            return "purple"
-        }
-
-        return nil
+    static func everydayGarmentColorName(for sample: GarmentPalettePixel) -> String {
+        FashionColorCatalog.nearestName(red: sample.red, green: sample.green, blue: sample.blue)
     }
 
     private struct SkinReference {

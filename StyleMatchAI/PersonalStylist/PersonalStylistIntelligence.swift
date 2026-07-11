@@ -12,6 +12,7 @@ struct PersonalStylistIntelligenceInput {
     let memories: [OutfitMemory]
     let profile: StylistProfile
     let dealMatches: [PersonalStylistDealMatch]
+    let outfitFingerprint: String?
 
     init(
         score: Int,
@@ -24,7 +25,8 @@ struct PersonalStylistIntelligenceInput {
         weather: WeatherContextRecommendation?,
         memories: [OutfitMemory],
         profile: StylistProfile,
-        dealMatches: [PersonalStylistDealMatch] = []
+        dealMatches: [PersonalStylistDealMatch] = [],
+        outfitFingerprint: String? = nil
     ) {
         self.score = min(100, max(0, score))
         self.scoreTier = scoreTier
@@ -37,6 +39,7 @@ struct PersonalStylistIntelligenceInput {
         self.memories = memories
         self.profile = profile
         self.dealMatches = dealMatches
+        self.outfitFingerprint = outfitFingerprint
     }
 }
 
@@ -160,7 +163,8 @@ enum PersonalStylistIntelligenceBuilder {
                 detectedGarments: input.detectedGarments,
                 colors: input.colors,
                 detectedStyle: input.detectedStyle,
-                garmentRecords: currentRecords
+                garmentRecords: currentRecords,
+                outfitFingerprint: input.outfitFingerprint
             ),
             memories: input.memories
         ) {

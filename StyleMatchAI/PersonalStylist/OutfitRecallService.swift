@@ -10,17 +10,20 @@ struct OutfitRecallScanContext {
     let colors: [String]
     let detectedStyle: String
     let garmentRecords: [GarmentRecord]
+    let outfitFingerprint: String?
 
     init(
         detectedGarments: [String],
         colors: [String],
         detectedStyle: String,
-        garmentRecords: [GarmentRecord] = []
+        garmentRecords: [GarmentRecord] = [],
+        outfitFingerprint: String? = nil
     ) {
         self.detectedGarments = detectedGarments
         self.colors = colors
         self.detectedStyle = detectedStyle
         self.garmentRecords = garmentRecords
+        self.outfitFingerprint = outfitFingerprint
     }
 }
 
@@ -93,7 +96,9 @@ enum OutfitRecallService {
     }
 
     private static func bestMatch(for context: OutfitRecallScanContext, memories: [OutfitMemory]) -> OutfitMemory? {
-        memories
+        guard let fingerprint = cleanOptional(context.outfitFingerprint) else { return nil }
+        return memories
+            .filter { cleanOptional($0.outfitFingerprint) == fingerprint }
             .map { memory in
                 (memory: memory, score: matchScore(context: context, memory: memory))
             }
@@ -163,5 +168,10 @@ enum OutfitRecallService {
 
     private static func clean(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func cleanOptional(_ value: String?) -> String? {
+        let cleaned = clean(value ?? "")
+        return cleaned.isEmpty ? nil : cleaned
     }
 }

@@ -153,10 +153,13 @@ final class Build16TrustHardeningTests: XCTestCase {
 
     func testOversizedRegionSubdivisionUsesSixtyPercentAreaRule() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
+        let paletteSource = try projectSource("StyleMatchAI/GarmentColorPaletteEngine.swift")
 
-        XCTAssertTrue(source.contains("box.width * box.height > 0.60"))
+        XCTAssertTrue(source.contains("oversizedAreaThreshold: 0.60"))
         XCTAssertTrue(source.contains("source: \"subdivided\""))
-        XCTAssertTrue(source.contains("if box.width >= box.height"))
+        XCTAssertTrue(paletteSource.contains("let pixelWidth = box.width * imageSize.width"))
+        XCTAssertTrue(paletteSource.contains("let pixelHeight = box.height * imageSize.height"))
+        XCTAssertTrue(paletteSource.contains("if pixelWidth >= pixelHeight"))
     }
 
     func testRegionCandidateDeduplicationUsesPointEightIoUAndKeepsSmaller() throws {

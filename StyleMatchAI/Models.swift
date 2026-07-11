@@ -32,6 +32,7 @@ struct OutfitAnalysisResult: Codable {
     let colorPalette: [String]
     let colorPaletteMaskingApplied: Bool
     let colorPaletteMaskTier: String?
+    let colorPaletteConfidence: GarmentPaletteConfidence
     let environment: String
     let imageQuality: String
     let skinToneStyleNote: String
@@ -56,6 +57,7 @@ struct OutfitAnalysisResult: Codable {
         colorPalette: [String],
         colorPaletteMaskingApplied: Bool = true,
         colorPaletteMaskTier: String? = nil,
+        colorPaletteConfidence: GarmentPaletteConfidence = .confident,
         environment: String,
         imageQuality: String,
         skinToneStyleNote: String,
@@ -79,6 +81,7 @@ struct OutfitAnalysisResult: Codable {
         self.colorPalette = colorPalette
         self.colorPaletteMaskingApplied = colorPaletteMaskingApplied
         self.colorPaletteMaskTier = colorPaletteMaskTier
+        self.colorPaletteConfidence = colorPaletteConfidence
         self.environment = environment
         self.imageQuality = imageQuality
         self.skinToneStyleNote = skinToneStyleNote
@@ -108,6 +111,7 @@ struct OutfitAnalysisResult: Codable {
         colorPalette = try container.decode([String].self, forKey: .colorPalette)
         colorPaletteMaskingApplied = try container.decodeIfPresent(Bool.self, forKey: .colorPaletteMaskingApplied) ?? true
         colorPaletteMaskTier = try container.decodeIfPresent(String.self, forKey: .colorPaletteMaskTier)
+        colorPaletteConfidence = try container.decodeIfPresent(GarmentPaletteConfidence.self, forKey: .colorPaletteConfidence) ?? .confident
         environment = try container.decode(String.self, forKey: .environment)
         imageQuality = try container.decode(String.self, forKey: .imageQuality)
         skinToneStyleNote = try container.decode(String.self, forKey: .skinToneStyleNote)
