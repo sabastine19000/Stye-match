@@ -10,7 +10,6 @@
 		AA0000000000000000000001 /* StyleMatchAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* StyleMatchAIApp.swift */; };
 		AA0000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* ContentView.swift */; };
 		AA0000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000013 /* Models.swift */; };
-		AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */; };
 		AA0000000000000000000004 /* RoadmapData.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* RoadmapData.swift */; };
 		AA0000000000000000000005 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* HomeView.swift */; };
 		AA0000000000000000000006 /* RoadmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* RoadmapView.swift */; };
@@ -28,26 +27,14 @@
 		AA0000000000000000000026 /* OpenAIKeychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000027 /* OpenAIKeychain.swift */; };
 		AA0000000000000000000028 /* OpenAIStylistClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000029 /* OpenAIStylistClient.swift */; };
 		AA000000000000000000002A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000002B /* Assets.xcassets */; };
+		AA000000000000000000002C /* AIStyleAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000002D /* AIStyleAdvisor.swift */; };
 		AA0000000000000000000033 /* ShoppingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000039 /* ShoppingView.swift */; };
 		AA0000000000000000000034 /* AffiliateProduct.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003A /* AffiliateProduct.swift */; };
 		AA0000000000000000000035 /* ProductCatalogProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003B /* ProductCatalogProvider.swift */; };
 		AA0000000000000000000036 /* ShoppingRecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003C /* ShoppingRecommendationEngine.swift */; };
 		AA0000000000000000000037 /* ShoppingLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003D /* ShoppingLocalStore.swift */; };
-		AA0000000000000000000100 /* ShoppingSaleAlertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000101 /* ShoppingSaleAlertService.swift */; };
-		AA0000000000000000000102 /* SaleWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* SaleWatcher.swift */; };
 		AA0000000000000000000038 /* ProductCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003E /* ProductCatalog.json */; };
 		AA000000000000000000003F /* RetailerConfig.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F8 /* RetailerConfig.json */; };
-		AA00000000000000000000F3 /* ShoppingSearchEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F4 /* ShoppingSearchEngine.swift */; };
-		AA00000000000000000000FC /* ShoppingSearchProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FB /* ShoppingSearchProviders.swift */; };
-		AA0000000000000000000140 /* DisplayLabelSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000141 /* DisplayLabelSanitizer.swift */; };
-		AA0000000000000000000142 /* RecommendationRationale.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000143 /* RecommendationRationale.swift */; };
-		AA0000000000000000000144 /* RecommendationRationaleBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000145 /* RecommendationRationaleBuilder.swift */; };
-		AA0000000000000000000146 /* ProductComplementaryPieceRecommender.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000147 /* ProductComplementaryPieceRecommender.swift */; };
-		AA0000000000000000000148 /* ShoppingTabUpgradeNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000149 /* ShoppingTabUpgradeNotes.swift */; };
-		AA00000000000000000000FE /* StoreSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FD /* StoreSearchView.swift */; };
-		AA00000000000000000000F5 /* SupportedStores.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F6 /* SupportedStores.json */; };
-		AA00000000000000000000F9 /* ShoppingRuntimeConfig.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FA /* ShoppingRuntimeConfig.json */; };
-		AA000000000000000000002C /* AIStyleAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000002D /* AIStyleAdvisor.swift */; };
 		AA00000000000000000000A1 /* FashionKnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000A0 /* FashionKnowledgeBase.swift */; };
 		AA00000000000000000000B1 /* LoginWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000B0 /* LoginWelcomeView.swift */; };
 		AA00000000000000000000C1 /* AIProviderAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000C0 /* AIProviderAdapters.swift */; };
@@ -68,24 +55,37 @@
 		AA00000000000000000000ED /* SaleMatchingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EE /* SaleMatchingService.swift */; };
 		AA00000000000000000000EF /* WeatherAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F0 /* WeatherAdvisor.swift */; };
 		AA00000000000000000000F1 /* PersonalStylistEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F2 /* PersonalStylistEngine.swift */; };
+		AA00000000000000000000F3 /* ShoppingSearchEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F4 /* ShoppingSearchEngine.swift */; };
+		AA00000000000000000000F5 /* SupportedStores.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F6 /* SupportedStores.json */; };
+		AA00000000000000000000F9 /* ShoppingRuntimeConfig.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FA /* ShoppingRuntimeConfig.json */; };
+		AA00000000000000000000FC /* ShoppingSearchProviders.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FB /* ShoppingSearchProviders.swift */; };
+		AA00000000000000000000FE /* StoreSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000FD /* StoreSearchView.swift */; };
+		AA0000000000000000000100 /* ShoppingSaleAlertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000101 /* ShoppingSaleAlertService.swift */; };
+		AA0000000000000000000102 /* SaleWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000103 /* SaleWatcher.swift */; };
+		AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */; };
 		AA0000000000000000000120 /* VoiceScript.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000122 /* VoiceScript.swift */; };
 		AA0000000000000000000123 /* VoiceScriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000124 /* VoiceScriptBuilder.swift */; };
 		AA0000000000000000000125 /* VoiceAssistantService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000126 /* VoiceAssistantService.swift */; };
-		AA0000000000000000000150 /* SpokenScriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000151 /* SpokenScriptBuilder.swift */; };
-		AA0000000000000000000152 /* VoiceStylistService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000153 /* VoiceStylistService.swift */; };
 		AA0000000000000000000130 /* StylistChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000135 /* StylistChatModels.swift */; };
 		AA0000000000000000000131 /* ChatConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000136 /* ChatConversationStore.swift */; };
 		AA0000000000000000000132 /* StylistChatTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000137 /* StylistChatTransport.swift */; };
 		AA0000000000000000000133 /* StylistChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000138 /* StylistChatService.swift */; };
 		AA0000000000000000000134 /* StylistChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000139 /* StylistChatView.swift */; };
+		AA0000000000000000000140 /* DisplayLabelSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000141 /* DisplayLabelSanitizer.swift */; };
+		AA0000000000000000000142 /* RecommendationRationale.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000143 /* RecommendationRationale.swift */; };
+		AA0000000000000000000144 /* RecommendationRationaleBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000145 /* RecommendationRationaleBuilder.swift */; };
+		AA0000000000000000000146 /* ProductComplementaryPieceRecommender.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000147 /* ProductComplementaryPieceRecommender.swift */; };
+		AA0000000000000000000148 /* ShoppingTabUpgradeNotes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000149 /* ShoppingTabUpgradeNotes.swift */; };
+		AA0000000000000000000150 /* SpokenScriptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000151 /* SpokenScriptBuilder.swift */; };
+		AA0000000000000000000152 /* VoiceStylistService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000153 /* VoiceStylistService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		549439C5300288FA00FFA170 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000010 /* StyleMatchAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StyleMatchAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000011 /* StyleMatchAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleMatchAIApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
-		AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarmentColorPaletteEngine.swift; sourceTree = "<group>"; };
 		AA0000000000000000000014 /* RoadmapData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadmapData.swift; sourceTree = "<group>"; };
 		AA0000000000000000000015 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000016 /* RoadmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadmapView.swift; sourceTree = "<group>"; };
@@ -103,27 +103,13 @@
 		AA0000000000000000000027 /* OpenAIKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIKeychain.swift; sourceTree = "<group>"; };
 		AA0000000000000000000029 /* OpenAIStylistClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIStylistClient.swift; sourceTree = "<group>"; };
 		AA000000000000000000002B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA000000000000000000002D /* AIStyleAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStyleAdvisor.swift; sourceTree = "<group>"; };
 		AA0000000000000000000039 /* ShoppingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingView.swift; sourceTree = "<group>"; };
 		AA000000000000000000003A /* AffiliateProduct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AffiliateProduct.swift; sourceTree = "<group>"; };
 		AA000000000000000000003B /* ProductCatalogProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogProvider.swift; sourceTree = "<group>"; };
 		AA000000000000000000003C /* ShoppingRecommendationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingRecommendationEngine.swift; sourceTree = "<group>"; };
 		AA000000000000000000003D /* ShoppingLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingLocalStore.swift; sourceTree = "<group>"; };
-		AA0000000000000000000101 /* ShoppingSaleAlertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSaleAlertService.swift; sourceTree = "<group>"; };
-		AA0000000000000000000103 /* SaleWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaleWatcher.swift; sourceTree = "<group>"; };
 		AA000000000000000000003E /* ProductCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ProductCatalog.json; sourceTree = "<group>"; };
-		AA00000000000000000000F4 /* ShoppingSearchEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSearchEngine.swift; sourceTree = "<group>"; };
-		AA00000000000000000000FB /* ShoppingSearchProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSearchProviders.swift; sourceTree = "<group>"; };
-		AA0000000000000000000141 /* DisplayLabelSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLabelSanitizer.swift; sourceTree = "<group>"; };
-		AA0000000000000000000143 /* RecommendationRationale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendationRationale.swift; sourceTree = "<group>"; };
-		AA0000000000000000000145 /* RecommendationRationaleBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendationRationaleBuilder.swift; sourceTree = "<group>"; };
-		AA0000000000000000000147 /* ProductComplementaryPieceRecommender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductComplementaryPieceRecommender.swift; sourceTree = "<group>"; };
-		AA0000000000000000000149 /* ShoppingTabUpgradeNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingTabUpgradeNotes.swift; sourceTree = "<group>"; };
-		AA00000000000000000000FD /* StoreSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreSearchView.swift; sourceTree = "<group>"; };
-		AA00000000000000000000F6 /* SupportedStores.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SupportedStores.json; sourceTree = "<group>"; };
-		AA00000000000000000000F7 /* ShoppingPartnerEnvironment.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = ShoppingPartnerEnvironment.example; sourceTree = "<group>"; };
-		AA00000000000000000000F8 /* RetailerConfig.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RetailerConfig.json; sourceTree = "<group>"; };
-		AA00000000000000000000FA /* ShoppingRuntimeConfig.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ShoppingRuntimeConfig.json; sourceTree = "<group>"; };
-		AA000000000000000000002D /* AIStyleAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStyleAdvisor.swift; sourceTree = "<group>"; };
 		AA00000000000000000000A0 /* FashionKnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FashionKnowledgeBase.swift; sourceTree = "<group>"; };
 		AA00000000000000000000B0 /* LoginWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginWelcomeView.swift; sourceTree = "<group>"; };
 		AA00000000000000000000C0 /* AIProviderAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderAdapters.swift; sourceTree = "<group>"; };
@@ -144,16 +130,31 @@
 		AA00000000000000000000EE /* SaleMatchingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaleMatchingService.swift; sourceTree = "<group>"; };
 		AA00000000000000000000F0 /* WeatherAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherAdvisor.swift; sourceTree = "<group>"; };
 		AA00000000000000000000F2 /* PersonalStylistEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistEngine.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F4 /* ShoppingSearchEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSearchEngine.swift; sourceTree = "<group>"; };
+		AA00000000000000000000F6 /* SupportedStores.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = SupportedStores.json; sourceTree = "<group>"; };
+		AA00000000000000000000F7 /* ShoppingPartnerEnvironment.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = ShoppingPartnerEnvironment.example; sourceTree = "<group>"; };
+		AA00000000000000000000F8 /* RetailerConfig.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = RetailerConfig.json; sourceTree = "<group>"; };
+		AA00000000000000000000FA /* ShoppingRuntimeConfig.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ShoppingRuntimeConfig.json; sourceTree = "<group>"; };
+		AA00000000000000000000FB /* ShoppingSearchProviders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSearchProviders.swift; sourceTree = "<group>"; };
+		AA00000000000000000000FD /* StoreSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreSearchView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000101 /* ShoppingSaleAlertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingSaleAlertService.swift; sourceTree = "<group>"; };
+		AA0000000000000000000103 /* SaleWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaleWatcher.swift; sourceTree = "<group>"; };
+		AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarmentColorPaletteEngine.swift; sourceTree = "<group>"; };
 		AA0000000000000000000122 /* VoiceScript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceScript.swift; sourceTree = "<group>"; };
 		AA0000000000000000000124 /* VoiceScriptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceScriptBuilder.swift; sourceTree = "<group>"; };
 		AA0000000000000000000126 /* VoiceAssistantService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceAssistantService.swift; sourceTree = "<group>"; };
-		AA0000000000000000000151 /* SpokenScriptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenScriptBuilder.swift; sourceTree = "<group>"; };
-		AA0000000000000000000153 /* VoiceStylistService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceStylistService.swift; sourceTree = "<group>"; };
 		AA0000000000000000000135 /* StylistChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatModels.swift; sourceTree = "<group>"; };
 		AA0000000000000000000136 /* ChatConversationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatConversationStore.swift; sourceTree = "<group>"; };
 		AA0000000000000000000137 /* StylistChatTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatTransport.swift; sourceTree = "<group>"; };
 		AA0000000000000000000138 /* StylistChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatService.swift; sourceTree = "<group>"; };
 		AA0000000000000000000139 /* StylistChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistChatView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000141 /* DisplayLabelSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLabelSanitizer.swift; sourceTree = "<group>"; };
+		AA0000000000000000000143 /* RecommendationRationale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendationRationale.swift; sourceTree = "<group>"; };
+		AA0000000000000000000145 /* RecommendationRationaleBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendationRationaleBuilder.swift; sourceTree = "<group>"; };
+		AA0000000000000000000147 /* ProductComplementaryPieceRecommender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductComplementaryPieceRecommender.swift; sourceTree = "<group>"; };
+		AA0000000000000000000149 /* ShoppingTabUpgradeNotes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingTabUpgradeNotes.swift; sourceTree = "<group>"; };
+		AA0000000000000000000151 /* SpokenScriptBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpokenScriptBuilder.swift; sourceTree = "<group>"; };
+		AA0000000000000000000153 /* VoiceStylistService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceStylistService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -178,16 +179,17 @@
 		AA0000000000000000000031 /* StyleMatchAI */ = {
 			isa = PBXGroup;
 			children = (
+				549439C5300288FA00FFA170 /* Info.plist */,
 				AA0000000000000000000011 /* StyleMatchAIApp.swift */,
 				AA000000000000000000002B /* Assets.xcassets */,
 				AA0000000000000000000025 /* OnboardingView.swift */,
 				AA00000000000000000000B0 /* LoginWelcomeView.swift */,
 				AA0000000000000000000012 /* ContentView.swift */,
 				AA0000000000000000000013 /* Models.swift */,
-					AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */,
-					AA00000000000000000000E6 /* WeatherContextEngine.swift */,
-					AA0000000000000000000154 /* Services */,
-					AA00000000000000000000D0 /* PersonalStylist */,
+				AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */,
+				AA00000000000000000000E6 /* WeatherContextEngine.swift */,
+				AA0000000000000000000154 /* Services */,
+				AA00000000000000000000D0 /* PersonalStylist */,
 				AA0000000000000000000121 /* VoiceAssistant */,
 				AA000000000000000000013A /* StylistChat */,
 				AA0000000000000000000041 /* Shopping */,
@@ -213,58 +215,12 @@
 			path = StyleMatchAI;
 			sourceTree = "<group>";
 		};
-		AA00000000000000000000D0 /* PersonalStylist */ = {
+		AA0000000000000000000032 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA00000000000000000000D4 /* StylistProfileModels.swift */,
-				AA00000000000000000000D5 /* ProfileStore.swift */,
-				AA00000000000000000000D6 /* OutfitMemoryStore.swift */,
-				AA00000000000000000000D8 /* PersonalStylistAIContext.swift */,
-				AA00000000000000000000DA /* StylistContextBuilder.swift */,
-				AA00000000000000000000DC /* FeedbackPromptScheduler.swift */,
-				AA00000000000000000000DE /* PersonalStylistStorage.swift */,
-				AA00000000000000000000E4 /* PersonalStylistSnapshotStore.swift */,
-				AA00000000000000000000E0 /* PersonalStylistEngines.swift */,
-				AA00000000000000000000EA /* StylistMessageComposer.swift */,
-				AA00000000000000000000EC /* OutfitRecallService.swift */,
-				AA00000000000000000000EE /* SaleMatchingService.swift */,
-				AA00000000000000000000F0 /* WeatherAdvisor.swift */,
-				AA00000000000000000000F2 /* PersonalStylistEngine.swift */,
-				AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */,
-				AA00000000000000000000E2 /* PersonalStylistPhase2Diagnostics.swift */,
+				AA0000000000000000000010 /* StyleMatchAI.app */,
 			);
-			path = PersonalStylist;
-			sourceTree = "<group>";
-		};
-			AA0000000000000000000121 /* VoiceAssistant */ = {
-				isa = PBXGroup;
-				children = (
-					AA0000000000000000000122 /* VoiceScript.swift */,
-					AA0000000000000000000124 /* VoiceScriptBuilder.swift */,
-					AA0000000000000000000126 /* VoiceAssistantService.swift */,
-				);
-				path = VoiceAssistant;
-				sourceTree = "<group>";
-			};
-			AA0000000000000000000154 /* Services */ = {
-				isa = PBXGroup;
-				children = (
-					AA0000000000000000000151 /* SpokenScriptBuilder.swift */,
-					AA0000000000000000000153 /* VoiceStylistService.swift */,
-				);
-				path = Services;
-				sourceTree = "<group>";
-			};
-			AA000000000000000000013A /* StylistChat */ = {
-			isa = PBXGroup;
-			children = (
-				AA0000000000000000000135 /* StylistChatModels.swift */,
-				AA0000000000000000000136 /* ChatConversationStore.swift */,
-				AA0000000000000000000137 /* StylistChatTransport.swift */,
-				AA0000000000000000000138 /* StylistChatService.swift */,
-				AA0000000000000000000139 /* StylistChatView.swift */,
-			);
-			path = StylistChat;
+			name = Products;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000041 /* Shopping */ = {
@@ -294,12 +250,58 @@
 			path = Shopping;
 			sourceTree = "<group>";
 		};
-		AA0000000000000000000032 /* Products */ = {
+		AA00000000000000000000D0 /* PersonalStylist */ = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000010 /* StyleMatchAI.app */,
+				AA00000000000000000000D4 /* StylistProfileModels.swift */,
+				AA00000000000000000000D5 /* ProfileStore.swift */,
+				AA00000000000000000000D6 /* OutfitMemoryStore.swift */,
+				AA00000000000000000000D8 /* PersonalStylistAIContext.swift */,
+				AA00000000000000000000DA /* StylistContextBuilder.swift */,
+				AA00000000000000000000DC /* FeedbackPromptScheduler.swift */,
+				AA00000000000000000000DE /* PersonalStylistStorage.swift */,
+				AA00000000000000000000E4 /* PersonalStylistSnapshotStore.swift */,
+				AA00000000000000000000E0 /* PersonalStylistEngines.swift */,
+				AA00000000000000000000EA /* StylistMessageComposer.swift */,
+				AA00000000000000000000EC /* OutfitRecallService.swift */,
+				AA00000000000000000000EE /* SaleMatchingService.swift */,
+				AA00000000000000000000F0 /* WeatherAdvisor.swift */,
+				AA00000000000000000000F2 /* PersonalStylistEngine.swift */,
+				AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */,
+				AA00000000000000000000E2 /* PersonalStylistPhase2Diagnostics.swift */,
 			);
-			name = Products;
+			path = PersonalStylist;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000121 /* VoiceAssistant */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000122 /* VoiceScript.swift */,
+				AA0000000000000000000124 /* VoiceScriptBuilder.swift */,
+				AA0000000000000000000126 /* VoiceAssistantService.swift */,
+			);
+			path = VoiceAssistant;
+			sourceTree = "<group>";
+		};
+		AA000000000000000000013A /* StylistChat */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000135 /* StylistChatModels.swift */,
+				AA0000000000000000000136 /* ChatConversationStore.swift */,
+				AA0000000000000000000137 /* StylistChatTransport.swift */,
+				AA0000000000000000000138 /* StylistChatService.swift */,
+				AA0000000000000000000139 /* StylistChatView.swift */,
+			);
+			path = StylistChat;
+			sourceTree = "<group>";
+		};
+		AA0000000000000000000154 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000151 /* SpokenScriptBuilder.swift */,
+				AA0000000000000000000153 /* VoiceStylistService.swift */,
+			);
+			path = Services;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -432,11 +434,11 @@
 				AA00000000000000000000EF /* WeatherAdvisor.swift in Sources */,
 				AA00000000000000000000F1 /* PersonalStylistEngine.swift in Sources */,
 				AA00000000000000000000E7 /* PersonalStylistIntelligence.swift in Sources */,
-					AA00000000000000000000E1 /* PersonalStylistPhase2Diagnostics.swift in Sources */,
-					AA00000000000000000000E5 /* WeatherContextEngine.swift in Sources */,
-					AA0000000000000000000150 /* SpokenScriptBuilder.swift in Sources */,
-					AA0000000000000000000152 /* VoiceStylistService.swift in Sources */,
-					AA0000000000000000000120 /* VoiceScript.swift in Sources */,
+				AA00000000000000000000E1 /* PersonalStylistPhase2Diagnostics.swift in Sources */,
+				AA00000000000000000000E5 /* WeatherContextEngine.swift in Sources */,
+				AA0000000000000000000150 /* SpokenScriptBuilder.swift in Sources */,
+				AA0000000000000000000152 /* VoiceStylistService.swift in Sources */,
+				AA0000000000000000000120 /* VoiceScript.swift in Sources */,
 				AA0000000000000000000123 /* VoiceScriptBuilder.swift in Sources */,
 				AA0000000000000000000125 /* VoiceAssistantService.swift in Sources */,
 				AA0000000000000000000130 /* StylistChatModels.swift in Sources */,
@@ -584,6 +586,7 @@
 				DEVELOPMENT_ASSET_PATHS = "";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StyleMatchAI/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro 1";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Style Match Pro uses your camera to scan outfit and clothing photos.";
@@ -619,6 +622,7 @@
 				CURRENT_PROJECT_VERSION = 14;
 				DEVELOPMENT_ASSET_PATHS = "";
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = StyleMatchAI/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro 1";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Style Match Pro uses your camera to scan outfit and clothing photos.";
