@@ -53,6 +53,8 @@ struct ScanView: View {
     @State private var result: OutfitAnalysisResult?
     @State private var preparedAnalysis: OutfitAnalysisResult?
     @State private var scanMessage: ScanMessage?
+    @State private var activeScanSessionID: UUID?
+    @State private var activeScanFingerprint: String?
     @State private var selectedScannerInsight = "Colors"
     @State private var scannerExampleIndex = 0
     @State private var selectedTryNextRecommendation: ClothingRecommendation?
@@ -507,6 +509,7 @@ struct ScanView: View {
             CameraCaptureView { image, source in
                 let scanImage = image.scanSizedImage()
                 let rescanTitle = pendingRescanTitle
+                invalidateActiveScanSession()
                 isPreparingCamera = false
                 isAnalyzing = false
                 pendingRescanTitle = nil
@@ -3987,6 +3990,7 @@ struct ScanView: View {
     }
 
     private func openSavedScan(_ scan: RecentOutfitScore, scrollProxy: ScrollViewProxy) {
+        invalidateActiveScanSession()
         selectedItem = nil
         selectedImage = nil
         selectedUIImage = nil
@@ -4025,6 +4029,7 @@ struct ScanView: View {
 
     private func compareSavedScan(_ scan: RecentOutfitScore) {
         guard let currentScore = result?.score else {
+            invalidateActiveScanSession()
             result = scan.analysis
             preparedAnalysis = scan.analysis
             ensureOutfitMemory(for: scan.analysis)
@@ -4148,6 +4153,7 @@ struct ScanView: View {
         selectedScanIDs.remove(scan.id)
 
         if result?.score == scan.score && result?.outfitDescription == scan.analysis.outfitDescription {
+            invalidateActiveScanSession()
             result = nil
             preparedAnalysis = nil
         }
@@ -4176,6 +4182,7 @@ struct ScanView: View {
     }
 
     private func deleteAllScanHistory() {
+        invalidateActiveScanSession()
         outfitScanHistoryData = Data()
         selectedScanIDs.removeAll()
         isEditingScanHistory = false
@@ -4506,6 +4513,7 @@ struct ScanView: View {
     }
 
     private func loadImage(from item: PhotosPickerItem?) async {
+        invalidateActiveScanSession()
         result = nil
         scanMessage = nil
         selectedUIImage = nil
@@ -4526,6 +4534,7 @@ struct ScanView: View {
     }
 
     private func deleteCurrentPhoto() {
+        invalidateActiveScanSession()
         selectedItem = nil
         selectedImage = nil
         selectedUIImage = nil
@@ -4599,6 +4608,7 @@ struct ScanView: View {
     }
 
     private func prepareNewCameraSession() {
+        invalidateActiveScanSession()
         isAnalyzing = false
         selectedItem = nil
         result = nil
@@ -4608,6 +4618,7 @@ struct ScanView: View {
     }
 
     private func analyze(forceReanalyze: Bool = false) {
+        invalidateActiveScanSession()
         result = nil
         scanMessage = nil
         isAnalyzing = true
@@ -4627,14 +4638,16 @@ struct ScanView: View {
             return
         }
 
+        let scanSessionID = UUID()
+        activeScanSessionID = scanSessionID
         let imageToAnalyze = selectedUIImage
         let scanSource = currentScanSource
         DispatchQueue.global(qos: .userInitiated).async {
             let validation = validateFashionImage(imageToAnalyze)
 
             DispatchQueue.main.async {
-                guard selectedUIImage === imageToAnalyze else {
-                    isAnalyzing = false
+                guard activeScanSessionID == scanSessionID,
+                      selectedUIImage === imageToAnalyze else {
                     return
                 }
 
@@ -4668,6 +4681,7 @@ struct ScanView: View {
                     labels: labels,
                     colorPalette: imageToAnalyze.garmentColorPalette()
                 )
+                activeScanFingerprint = fingerprint
                 logScanDebug(
                     source: scanSource,
                     validation: validation,
@@ -4702,7 +4716,11 @@ struct ScanView: View {
                 speakIfEnabled(VoiceScriptBuilder.scanResult(from: displayAnalysis))
 
                 if !savedResult.isRepeat {
-                    requestChatGPTRecommendationUpgrade(for: displayAnalysis)
+                    requestChatGPTRecommendationUpgrade(
+                        for: displayAnalysis,
+                        scanSessionID: scanSessionID,
+                        fingerprint: fingerprint
+                    )
                 }
             }
         }
@@ -4836,11 +4854,30 @@ struct ScanView: View {
         #endif
 
         if let rejectedLabel {
+            if flatLayRegionScene(in: labels) != nil {
+                #if DEBUG
+                print("[ScanGate] REGION-BEFORE-REJECT: attempting regions before rejectedLabel=\(rejectedLabel)")
+                #endif
+                if let regionValidation = regionClothingValidation(
+                    for: image,
+                    wholeImageLabels: labels
+                ) {
+                    return regionValidation
+                }
+            }
+
             #if DEBUG
             print("[ScanGate] FAIL: rejectedLabel - \(rejectedLabel), threshold>=0.32")
             print("[ScanGate] VERDICT: rejected(\(rejectedLabel))")
             #endif
             return .rejected(rejectedLabel)
+        }
+
+        if let regionValidation = regionClothingValidation(
+            for: image,
+            wholeImageLabels: labels
+        ) {
+            return regionValidation
         }
 
         #if DEBUG
@@ -5080,7 +5117,11 @@ struct ScanView: View {
         []
     }
 
-    private func requestChatGPTRecommendationUpgrade(for analysis: OutfitAnalysisResult) {
+    private func requestChatGPTRecommendationUpgrade(
+        for analysis: OutfitAnalysisResult,
+        scanSessionID: UUID,
+        fingerprint: String
+    ) {
         guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
               !savedKey.isEmpty else {
             return
@@ -5131,13 +5172,22 @@ struct ScanView: View {
             do {
                 let advice = try await client.askStylist(profile: profile, question: question)
                 await MainActor.run {
-                    applyChatGPTRecommendation(advice, to: analysis)
+                    applyChatGPTRecommendation(
+                        advice,
+                        to: analysis,
+                        scanSessionID: scanSessionID,
+                        fingerprint: fingerprint
+                    )
                 }
             } catch {
                 #if DEBUG
                 print("[Scan ChatGPT Upgrade] \(error.localizedDescription)")
                 #endif
                 await MainActor.run {
+                    guard activeScanSessionID == scanSessionID,
+                          activeScanFingerprint == fingerprint else {
+                        return
+                    }
                     scanMessage = ScanMessage(
                         title: "Fast score ready",
                         description: "StyleMatch Pro saved the score. AI styling notes are temporarily unavailable, so you can still use the local scan result or try Ask AI again.",
@@ -5557,7 +5607,12 @@ struct ScanView: View {
         return "No specific traditional attire confidence above threshold."
     }
 
-    private func applyChatGPTRecommendation(_ advice: String, to analysis: OutfitAnalysisResult) {
+    private func applyChatGPTRecommendation(
+        _ advice: String,
+        to analysis: OutfitAnalysisResult,
+        scanSessionID: UUID,
+        fingerprint: String
+    ) {
         let trimmedAdvice = advice
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5583,17 +5638,20 @@ struct ScanView: View {
             .replacingRecommendations(Array(updatedRecommendations))
             .replacingChatGPTStylistSections(finalSections)
 
-        if result?.score == analysis.score {
-            result = updatedAnalysis
-            preparedAnalysis = updatedAnalysis
-            saveChatGPTUpgrade(updatedAnalysis)
-            scanMessage = ScanMessage(
-                title: "ChatGPT stylist analysis ready",
-                description: "ChatGPT used the structured scan facts to explain the score and suggest improvements.",
-                icon: "sparkles",
-                isSuccess: true
-            )
+        guard activeScanSessionID == scanSessionID,
+              activeScanFingerprint == fingerprint else {
+            return
         }
+
+        result = updatedAnalysis
+        preparedAnalysis = updatedAnalysis
+        saveChatGPTUpgrade(updatedAnalysis, fingerprint: fingerprint)
+        scanMessage = ScanMessage(
+            title: "ChatGPT stylist analysis ready",
+            description: "ChatGPT used the structured scan facts to explain the score and suggest improvements.",
+            icon: "sparkles",
+            isSuccess: true
+        )
     }
 
     private func parseChatGPTStylistSections(from response: String, lockedScore: Int) -> [ChatGPTStylistSection] {
@@ -5790,19 +5848,11 @@ struct ScanView: View {
         ].filter { !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
-    private func saveChatGPTUpgrade(_ analysis: OutfitAnalysisResult) {
+    private func saveChatGPTUpgrade(_ analysis: OutfitAnalysisResult, fingerprint: String) {
         guard let selectedUIImage else {
             return
         }
 
-        let validation = validateFashionImage(selectedUIImage)
-        let labels = validation.labels
-        let fingerprint = normalizedOutfitFingerprint(
-            for: selectedUIImage,
-            validation: validation,
-            labels: labels,
-            colorPalette: selectedUIImage.garmentColorPalette()
-        )
         var history = loadScanHistory()
         let existing = history[fingerprint]
         history[fingerprint] = StoredOutfitScan(
@@ -5815,6 +5865,11 @@ struct ScanView: View {
             occasion: existing?.occasion?.canonical ?? selectedScanOccasion.canonical
         )
         saveScanHistory(history)
+    }
+
+    private func invalidateActiveScanSession() {
+        activeScanSessionID = nil
+        activeScanFingerprint = nil
     }
 
     private func fastOutfitFingerprint(for image: UIImage) -> String {
@@ -6294,6 +6349,330 @@ struct ScanView: View {
             return isClothing ? max(best, label.confidence) : best
         }
     }
+
+    private func regionClothingValidation(
+        for image: UIImage,
+        wholeImageLabels: [DetectedLabel]
+    ) -> ScanValidation? {
+        guard let cgImage = image.fastVisionCGImage() else {
+            #if DEBUG
+            print("[ScanGate] REGION-VERDICT: unavailable - no CGImage")
+            #endif
+            return nil
+        }
+
+        let scene = flatLayRegionScene(in: wholeImageLabels)
+        let acceptanceThreshold: Float = scene == nil ? 0.30 : 0.24
+        let candidates = scanRegionCandidates(in: cgImage)
+        var strongestMatch: RegionClothingMatch?
+
+        for (index, candidate) in candidates.enumerated() {
+            guard let croppedImage = crop(cgImage, to: candidate.normalizedTopLeftBox) else {
+                continue
+            }
+
+            let regionLabels = classifyImage(croppedImage)
+                .map { DetectedLabel(identifier: $0.identifier, confidence: $0.confidence) }
+                .sorted { $0.confidence > $1.confidence }
+
+            #if DEBUG
+            let topThree = regionLabels
+                .prefix(3)
+                .map { "\($0.identifier)=\(String(format: "%.3f", $0.confidence))" }
+                .joined(separator: ", ")
+            print("[ScanGate] REGION: crop=\(index + 1), source=\(candidate.source), box=\(formattedRegionBox(candidate.normalizedTopLeftBox)), top3=[\(topThree)]")
+            #endif
+
+            guard let clothingLabel = regionLabels.first(where: { label in
+                clothingTerms.contains { term in
+                    label.identifier.localizedCaseInsensitiveContains(term)
+                }
+            }) else {
+                continue
+            }
+
+            if strongestMatch == nil || clothingLabel.confidence > (strongestMatch?.label.confidence ?? 0) {
+                strongestMatch = RegionClothingMatch(label: clothingLabel, labels: regionLabels)
+            }
+        }
+
+        guard let strongestMatch,
+              strongestMatch.label.confidence >= acceptanceThreshold else {
+            #if DEBUG
+            let bestConfidence = strongestMatch?.label.confidence ?? 0
+            print("[ScanGate] REGION-VERDICT: noMatch - candidates=\(candidates.count), bestClothingConfidence=\(String(format: "%.3f", bestConfidence)), threshold>=\(String(format: "%.2f", acceptanceThreshold)), scene=\(scene?.rawValue ?? "none")")
+            #endif
+            return nil
+        }
+
+        let acceptedLabels = mergedRegionLabels(
+            regionLabels: strongestMatch.labels,
+            wholeImageLabels: wholeImageLabels
+        )
+
+        #if DEBUG
+        print("[ScanGate] REGION-VERDICT: accepted - label=\(strongestMatch.label.identifier), confidence=\(String(format: "%.3f", strongestMatch.label.confidence)), threshold>=\(String(format: "%.2f", acceptanceThreshold)), scene=\(scene?.rawValue ?? "none")")
+        #endif
+
+        if let scene {
+            return .acceptedClothingScene(
+                scene,
+                strongestMatch.label.identifier,
+                acceptedLabels
+            )
+        }
+        return .acceptedClothing(strongestMatch.label.identifier, acceptedLabels)
+    }
+
+    private func scanRegionCandidates(in cgImage: CGImage, limit: Int = 6) -> [ScanRegionCandidate] {
+        let foregroundCandidates = foregroundSubjectRegionCandidates(in: cgImage, limit: limit)
+        let objectnessCandidates = objectnessRegionCandidates(in: cgImage, limit: 3)
+        let baseCandidates = foregroundCandidates + objectnessCandidates
+        let subdividedCandidates = baseCandidates.flatMap(subdividedRegionCandidates)
+        let deduplicated = deduplicatedRegionCandidates(baseCandidates + subdividedCandidates)
+        return Array(deduplicated.prefix(limit))
+    }
+
+    private func foregroundSubjectRegionCandidates(in cgImage: CGImage, limit: Int) -> [ScanRegionCandidate] {
+        guard #available(iOS 17.0, *), limit > 0 else {
+            return []
+        }
+
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            guard let observation = request.results?.first else {
+                return []
+            }
+
+            return observation.allInstances.prefix(limit).compactMap { instance in
+                guard let mask = try? observation.generateScaledMaskForImage(
+                    forInstances: IndexSet(integer: instance),
+                    from: handler
+                ),
+                let box = normalizedTopLeftBoundingBox(in: mask, threshold: 96) else {
+                    return nil
+                }
+                return ScanRegionCandidate(
+                    source: "foregroundSubject",
+                    normalizedTopLeftBox: expandedRegionBox(box)
+                )
+            }
+        } catch {
+            #if DEBUG
+            print("[ScanGate] REGION: foregroundSubject error=\(error.localizedDescription)")
+            #endif
+            return []
+        }
+    }
+
+    private func objectnessRegionCandidates(in cgImage: CGImage, limit: Int) -> [ScanRegionCandidate] {
+        guard limit > 0 else {
+            return []
+        }
+
+        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            guard let salientObjects = request.results?.first?.salientObjects else {
+                return []
+            }
+
+            return salientObjects.prefix(limit).map { observation in
+                let visionBox = observation.boundingBox
+                let topLeftBox = CGRect(
+                    x: visionBox.minX,
+                    y: 1 - visionBox.maxY,
+                    width: visionBox.width,
+                    height: visionBox.height
+                )
+                return ScanRegionCandidate(
+                    source: "objectness",
+                    normalizedTopLeftBox: expandedRegionBox(topLeftBox)
+                )
+            }
+        } catch {
+            #if DEBUG
+            print("[ScanGate] REGION: objectness error=\(error.localizedDescription)")
+            #endif
+            return []
+        }
+    }
+
+    private func subdividedRegionCandidates(_ candidate: ScanRegionCandidate) -> [ScanRegionCandidate] {
+        let box = candidate.normalizedTopLeftBox
+        guard box.width * box.height > 0.60 else {
+            return []
+        }
+
+        let halves: [CGRect]
+        if box.width >= box.height {
+            let halfWidth = box.width / 2
+            halves = [
+                CGRect(x: box.minX, y: box.minY, width: halfWidth, height: box.height),
+                CGRect(x: box.minX + halfWidth, y: box.minY, width: halfWidth, height: box.height)
+            ]
+        } else {
+            let halfHeight = box.height / 2
+            halves = [
+                CGRect(x: box.minX, y: box.minY, width: box.width, height: halfHeight),
+                CGRect(x: box.minX, y: box.minY + halfHeight, width: box.width, height: halfHeight)
+            ]
+        }
+
+        return halves.map {
+            ScanRegionCandidate(source: "subdivided", normalizedTopLeftBox: $0)
+        }
+    }
+
+    private func deduplicatedRegionCandidates(
+        _ candidates: [ScanRegionCandidate],
+        overlapThreshold: CGFloat = 0.8
+    ) -> [ScanRegionCandidate] {
+        var result: [ScanRegionCandidate] = []
+
+        for candidate in candidates {
+            if let duplicateIndex = result.firstIndex(where: {
+                regionIntersectionOverUnion(
+                    candidate.normalizedTopLeftBox,
+                    $0.normalizedTopLeftBox
+                ) > overlapThreshold
+            }) {
+                let candidateArea = candidate.normalizedTopLeftBox.width * candidate.normalizedTopLeftBox.height
+                let existingArea = result[duplicateIndex].normalizedTopLeftBox.width
+                    * result[duplicateIndex].normalizedTopLeftBox.height
+                if candidateArea < existingArea {
+                    result[duplicateIndex] = candidate
+                }
+            } else {
+                result.append(candidate)
+            }
+        }
+
+        return result
+    }
+
+    private func regionIntersectionOverUnion(_ first: CGRect, _ second: CGRect) -> CGFloat {
+        let intersection = first.intersection(second)
+        guard !intersection.isNull, !intersection.isEmpty else {
+            return 0
+        }
+
+        let intersectionArea = intersection.width * intersection.height
+        let unionArea = first.width * first.height
+            + second.width * second.height
+            - intersectionArea
+        return unionArea > 0 ? intersectionArea / unionArea : 0
+    }
+
+    private func normalizedTopLeftBoundingBox(
+        in pixelBuffer: CVPixelBuffer,
+        threshold: UInt8
+    ) -> CGRect? {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+
+        for y in 0..<height {
+            for x in 0..<width where bytes[y * bytesPerRow + x] > threshold {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+
+        guard maxX >= minX, maxY >= minY else {
+            return nil
+        }
+
+        return CGRect(
+            x: CGFloat(minX) / CGFloat(width),
+            y: CGFloat(minY) / CGFloat(height),
+            width: CGFloat(maxX - minX + 1) / CGFloat(width),
+            height: CGFloat(maxY - minY + 1) / CGFloat(height)
+        )
+    }
+
+    private func expandedRegionBox(_ box: CGRect) -> CGRect {
+        let expanded = box.insetBy(dx: -box.width * 0.08, dy: -box.height * 0.08)
+        return expanded.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    private func crop(_ cgImage: CGImage, to normalizedTopLeftBox: CGRect) -> CGImage? {
+        let pixelBox = CGRect(
+            x: normalizedTopLeftBox.minX * CGFloat(cgImage.width),
+            y: normalizedTopLeftBox.minY * CGFloat(cgImage.height),
+            width: normalizedTopLeftBox.width * CGFloat(cgImage.width),
+            height: normalizedTopLeftBox.height * CGFloat(cgImage.height)
+        )
+        .integral
+        .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+
+        guard pixelBox.width >= 2, pixelBox.height >= 2 else {
+            return nil
+        }
+        return cgImage.cropping(to: pixelBox)
+    }
+
+    private func flatLayRegionScene(in labels: [DetectedLabel]) -> ClothingScanScene? {
+        if labels.contains(where: { label in mannequinTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .mannequin
+        }
+        if labels.contains(where: { label in hangerTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .hanger
+        }
+        if labels.contains(where: { label in bedTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .bed
+        }
+        if labels.contains(where: { label in tableTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .table
+        }
+        if labels.contains(where: { label in floorTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .floor
+        }
+        return nil
+    }
+
+    private func mergedRegionLabels(
+        regionLabels: [DetectedLabel],
+        wholeImageLabels: [DetectedLabel]
+    ) -> [DetectedLabel] {
+        var seen = Set<String>()
+        return (regionLabels + wholeImageLabels)
+            .sorted { $0.confidence > $1.confidence }
+            .filter { seen.insert($0.identifier.lowercased()).inserted }
+            .prefix(12)
+            .map { $0 }
+    }
+
+    #if DEBUG
+    private func formattedRegionBox(_ box: CGRect) -> String {
+        String(
+            format: "(x=%.3f,y=%.3f,w=%.3f,h=%.3f)",
+            box.minX,
+            box.minY,
+            box.width,
+            box.height
+        )
+    }
+    #endif
 
     private func strongestRejectedLabel(in labels: [DetectedLabel]) -> String? {
         let strongRejected = labels.first { label in
@@ -7591,6 +7970,16 @@ private struct GarmentAttributeDetection {
     var canAnalyze: Bool {
         qualityIssue == nil && (!labels.isEmpty || hasHuman)
     }
+}
+
+private struct ScanRegionCandidate {
+    let source: String
+    let normalizedTopLeftBox: CGRect
+}
+
+private struct RegionClothingMatch {
+    let label: DetectedLabel
+    let labels: [DetectedLabel]
 }
 
 private struct StyleScoreContext: Encodable {
