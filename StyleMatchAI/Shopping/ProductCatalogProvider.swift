@@ -21,6 +21,98 @@ protocol LiveRetailerSearchProvider {
     func search(criteria: ShoppingSearchCriteria) async throws -> [AffiliateProduct]
 }
 
+enum ProductCatalogRuntime {
+    static func activeProvider() -> ProductCatalogProvider {
+        let config = (try? BundledShoppingIntegrationConfigProvider().config()) ?? .empty
+        if FeatureFlags.remoteCatalogEnabled, let remoteURL = config.catalogBaseURL {
+            return RemoteCatalogProvider(
+                baseURL: remoteURL,
+                cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
+                fallbackProvider: BundledCatalogProvider()
+            )
+        }
+        return BundledCatalogProvider()
+    }
+}
+
+actor SharedProductCatalogLoader {
+    static let shared = SharedProductCatalogLoader(provider: ProductCatalogRuntime.activeProvider())
+
+    private let provider: ProductCatalogProvider
+    private let timeToLive: TimeInterval
+    private let now: () -> Date
+    private var cachedProducts: [AffiliateProduct]?
+    private var cachedAt: Date?
+    private var inFlight: Task<[AffiliateProduct], Error>?
+
+    init(
+        provider: ProductCatalogProvider,
+        timeToLive: TimeInterval = 300,
+        now: @escaping () -> Date = Date.init
+    ) {
+        self.provider = provider
+        self.timeToLive = timeToLive
+        self.now = now
+    }
+
+    func products() async throws -> [AffiliateProduct] {
+        let currentDate = now()
+        if let cachedProducts, let cachedAt {
+            if currentDate.timeIntervalSince(cachedAt) < timeToLive {
+                return cachedProducts
+            }
+            startBackgroundRefreshIfNeeded()
+            return cachedProducts
+        }
+
+        if let inFlight {
+            return try await inFlight.value
+        }
+
+        let task = Task { try await provider.products() }
+        inFlight = task
+        do {
+            let products = try await task.value
+            cachedProducts = products
+            cachedAt = currentDate
+            inFlight = nil
+            return products
+        } catch {
+            inFlight = nil
+            throw error
+        }
+    }
+
+    private func startBackgroundRefreshIfNeeded() {
+        guard inFlight == nil else { return }
+        let task = Task { try await provider.products() }
+        inFlight = task
+        Task {
+            let result = await task.result
+            finishBackgroundRefresh(result)
+        }
+    }
+
+    private func finishBackgroundRefresh(_ result: Result<[AffiliateProduct], Error>) {
+        inFlight = nil
+        guard case .success(let products) = result else { return }
+        cachedProducts = products
+        cachedAt = now()
+    }
+}
+
+struct SharedCatalogProvider: ProductCatalogProvider {
+    let loader: SharedProductCatalogLoader
+
+    init(loader: SharedProductCatalogLoader = .shared) {
+        self.loader = loader
+    }
+
+    func products() async throws -> [AffiliateProduct] {
+        try await loader.products()
+    }
+}
+
 enum ProductCatalogProviderError: Error {
     case missingCatalog
 }
@@ -188,6 +280,16 @@ struct RemoteCatalogProvider: ProductCatalogProvider {
     var refreshInterval: TimeInterval = 3600
 
     func products() async throws -> [AffiliateProduct] {
+        if let cached = try? cachedProducts(), !cached.isEmpty {
+            if shouldRefreshCache() {
+                Task {
+                    guard let data = try? await fetchRemoteData() else { return }
+                    try? cache(data)
+                }
+            }
+            return cached
+        }
+
         do {
             let data = try await fetchRemoteData()
             let decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)

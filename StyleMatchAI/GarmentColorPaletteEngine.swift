@@ -1,5 +1,65 @@
 import Foundation
 
+#if DEBUG
+enum StyleMatchDebugLogEmitter {
+    private static let queue = DispatchQueue(label: "com.stylematch.debug-log-emitter")
+
+    static func emit(_ message: @autoclosure () -> String) {
+        queue.sync {
+            print(message())
+            fflush(stdout)
+        }
+    }
+}
+#endif
+
+enum GarmentPaletteTimedStage {
+    case illuminant
+    case naming
+    case confidence
+}
+
+final class GarmentPaletteStageTiming {
+    private let lock = NSLock()
+    private var illuminantSeconds = 0.0
+    private var namingSeconds = 0.0
+    private var confidenceSeconds = 0.0
+
+    func add(_ elapsed: Double, to stage: GarmentPaletteTimedStage) {
+        #if DEBUG
+        lock.lock()
+        switch stage {
+        case .illuminant:
+            illuminantSeconds += elapsed
+        case .naming:
+            namingSeconds += elapsed
+        case .confidence:
+            confidenceSeconds += elapsed
+        }
+        lock.unlock()
+        #endif
+    }
+
+    func milliseconds(for stage: GarmentPaletteTimedStage) -> Double {
+        #if DEBUG
+        lock.lock()
+        defer { lock.unlock() }
+        let seconds: Double
+        switch stage {
+        case .illuminant:
+            seconds = illuminantSeconds
+        case .naming:
+            seconds = namingSeconds
+        case .confidence:
+            seconds = confidenceSeconds
+        }
+        return seconds * 1_000
+        #else
+        return 0
+        #endif
+    }
+}
+
 enum GarmentRegionGeometry {
     static func subdividedBoxes(
         of box: CGRect,
@@ -82,9 +142,21 @@ enum FashionColorCatalog {
         let weight: Double
     }
 
+    struct NamingEvaluation: Equatable {
+        let contributions: [NameContribution]
+        let calibrationDecision: String?
+    }
+
+    private struct RankedAnchor {
+        let anchor: Anchor
+        let distance: Double
+        let hueDistance: Double
+    }
+
     private static let neutralAnchorNames: Set<String> = [
         "white", "ivory", "cream", "gray", "charcoal", "black"
     ]
+    private static let chromaticNearTieMargin = 0.08
 
     static func nearestName(red: UInt8, green: UInt8, blue: UInt8) -> String {
         nameContributions(red: red, green: green, blue: blue, hasSpatialEvidence: false)
@@ -95,27 +167,95 @@ enum FashionColorCatalog {
         red: UInt8,
         green: UInt8,
         blue: UInt8,
-        hasSpatialEvidence: Bool
+        hasSpatialEvidence: Bool,
+        allowsHueTieBreak: Bool = true,
+        preferredChromaticFamily: String? = nil,
+        corroboratedChromaticFamilies: Set<String> = [],
+        enforcesLightNeutralEvidence: Bool = false
     ) -> [NameContribution] {
+        namingEvaluation(
+            red: red,
+            green: green,
+            blue: blue,
+            hasSpatialEvidence: hasSpatialEvidence,
+            allowsHueTieBreak: allowsHueTieBreak,
+            preferredChromaticFamily: preferredChromaticFamily,
+            corroboratedChromaticFamilies: corroboratedChromaticFamilies,
+            enforcesLightNeutralEvidence: enforcesLightNeutralEvidence
+        ).contributions
+    }
+
+    static func namingEvaluation(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        hasSpatialEvidence: Bool,
+        allowsHueTieBreak: Bool = true,
+        preferredChromaticFamily: String? = nil,
+        corroboratedChromaticFamilies: Set<String> = [],
+        enforcesLightNeutralEvidence: Bool = false
+    ) -> NamingEvaluation {
         let sample = hsl(red: red, green: green, blue: blue)
+        let ranked = rankedChromaticAnchors(to: sample)
+        let calibrationDecision = calibrationDecision(
+            red: red,
+            green: green,
+            blue: blue,
+            sample: sample,
+            ranked: ranked,
+            allowsHueTieBreak: allowsHueTieBreak,
+            preferredChromaticFamily: preferredChromaticFamily
+        )
+
+        let contributions: [NameContribution]
 
         if isUnsupportedBrightWarmTint(sample, hasSpatialEvidence: hasSpatialEvidence) {
-            return [NameContribution(name: sample.lightness >= 0.90 ? "white" : "ivory", weight: 1)]
+            contributions = [NameContribution(name: sample.lightness >= 0.90 ? "white" : "ivory", weight: 1)]
+        } else if hasCoherentDarkChromaticSignal(red: red, green: green, blue: blue, sample: sample) {
+            contributions = [
+                NameContribution(name: nearestChromaticName(
+                    to: sample,
+                    allowsHueTieBreak: allowsHueTieBreak,
+                    preferredFamily: preferredChromaticFamily,
+                    ranked: ranked
+                ), weight: 0.65),
+                NameContribution(name: nearestNeutralName(to: sample), weight: 0.35)
+            ]
+        } else if sample.saturation <= 0.08 {
+            contributions = [NameContribution(name: nearestNeutralName(to: sample), weight: 1)]
+        } else if sample.saturation < 0.16 {
+            let chromaticName = nearestChromaticName(
+                to: sample,
+                allowsHueTieBreak: allowsHueTieBreak,
+                preferredFamily: preferredChromaticFamily,
+                ranked: ranked
+            )
+            let chromaticFamily = FashionColorFamilyCatalog.family(for: chromaticName)
+            if enforcesLightNeutralEvidence,
+               sample.lightness >= 0.62,
+               !hasSpatialEvidence,
+               !corroboratedChromaticFamilies.contains(chromaticFamily) {
+                contributions = [NameContribution(name: nearestNeutralName(to: sample), weight: 1)]
+            } else {
+                let chromaticWeight = (sample.saturation - 0.08) / 0.08
+                contributions = [
+                    NameContribution(name: nearestNeutralName(to: sample), weight: 1 - chromaticWeight),
+                    NameContribution(name: chromaticName, weight: chromaticWeight)
+                ].filter { $0.weight > 0 }
+            }
+        } else {
+            contributions = [NameContribution(name: nearestChromaticName(
+                to: sample,
+                allowsHueTieBreak: allowsHueTieBreak,
+                preferredFamily: preferredChromaticFamily,
+                ranked: ranked
+            ), weight: 1)]
         }
 
-        if sample.saturation <= 0.08 {
-            return [NameContribution(name: nearestNeutralName(to: sample), weight: 1)]
-        }
-
-        if sample.saturation < 0.16 {
-            let chromaticWeight = (sample.saturation - 0.08) / 0.08
-            return [
-                NameContribution(name: nearestNeutralName(to: sample), weight: 1 - chromaticWeight),
-                NameContribution(name: nearestChromaticName(to: sample), weight: chromaticWeight)
-            ].filter { $0.weight > 0 }
-        }
-
-        return [NameContribution(name: nearestChromaticName(to: sample), weight: 1)]
+        return NamingEvaluation(
+            contributions: contributions,
+            calibrationDecision: calibrationDecision
+        )
     }
 
     private static func nearestNeutralName(to sample: HSL) -> String {
@@ -124,10 +264,86 @@ enum FashionColorCatalog {
         }?.name ?? "gray"
     }
 
-    private static func nearestChromaticName(to sample: HSL) -> String {
-        anchors.min {
-            chromaticDistance(from: sample, to: $0) < chromaticDistance(from: sample, to: $1)
-        }?.name ?? "black"
+    private static func nearestChromaticName(
+        to sample: HSL,
+        allowsHueTieBreak: Bool = true,
+        preferredFamily: String? = nil,
+        ranked: [RankedAnchor]? = nil
+    ) -> String {
+        let ranked = ranked ?? rankedChromaticAnchors(to: sample)
+        guard let best = ranked.first else { return "black" }
+        let nearTies = ranked.filter { $0.distance - best.distance <= chromaticNearTieMargin }
+        if !allowsHueTieBreak,
+           let preferredFamily,
+           let preferred = nearTies
+            .filter({ FashionColorFamilyCatalog.family(for: $0.anchor.name) == preferredFamily })
+            .min(by: { $0.distance < $1.distance }) {
+            return preferred.anchor.name
+        }
+        return nearTies.min { lhs, rhs in
+            if lhs.hueDistance == rhs.hueDistance { return lhs.distance < rhs.distance }
+            return lhs.hueDistance < rhs.hueDistance
+        }?.anchor.name ?? best.anchor.name
+    }
+
+    private static func rankedChromaticAnchors(to sample: HSL) -> [RankedAnchor] {
+        anchors
+            .filter { !neutralAnchorNames.contains($0.name) }
+            .map { anchor in
+                RankedAnchor(
+                    anchor: anchor,
+                    distance: chromaticDistance(from: sample, to: anchor),
+                    hueDistance: hueDistance(from: sample, to: anchor)
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.distance == rhs.distance { return lhs.anchor.name < rhs.anchor.name }
+                return lhs.distance < rhs.distance
+            }
+    }
+
+    static func calibrationDecision(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        allowsHueTieBreak: Bool = true,
+        preferredChromaticFamily: String? = nil
+    ) -> String? {
+        let sample = hsl(red: red, green: green, blue: blue)
+        return calibrationDecision(
+            red: red,
+            green: green,
+            blue: blue,
+            sample: sample,
+            ranked: rankedChromaticAnchors(to: sample),
+            allowsHueTieBreak: allowsHueTieBreak,
+            preferredChromaticFamily: preferredChromaticFamily
+        )
+    }
+
+    private static func calibrationDecision(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        sample: HSL,
+        ranked: [RankedAnchor],
+        allowsHueTieBreak: Bool,
+        preferredChromaticFamily: String?
+    ) -> String? {
+        if hasCoherentDarkChromaticSignal(red: red, green: green, blue: blue, sample: sample) {
+            return "darkChromaticPreference=\(nearestChromaticName(to: sample, ranked: ranked))"
+        }
+        guard ranked.count >= 2, ranked[1].distance - ranked[0].distance <= chromaticNearTieMargin else { return nil }
+        let candidates = ranked.filter { $0.distance - ranked[0].distance <= chromaticNearTieMargin }
+        if !allowsHueTieBreak,
+           let preferredChromaticFamily,
+           let preferred = candidates
+            .filter({ FashionColorFamilyCatalog.family(for: $0.anchor.name) == preferredChromaticFamily })
+            .min(by: { $0.distance < $1.distance }) {
+            return "hueTieBreakSuppressed=\(preferred.anchor.name)"
+        }
+        let winner = candidates.min { $0.hueDistance < $1.hueDistance }?.anchor.name ?? ranked[0].anchor.name
+        return "hueTieBreak=\(winner)"
     }
 
     private static func neutralDistance(from sample: HSL, to anchor: Anchor) -> Double {
@@ -139,10 +355,28 @@ enum FashionColorCatalog {
 
     private static func chromaticDistance(from sample: HSL, to anchor: Anchor) -> Double {
         let target = hsl(red: anchor.red, green: anchor.green, blue: anchor.blue)
-        let hueDelta = min(abs(sample.hue - target.hue), 1 - abs(sample.hue - target.hue))
+        let hueDelta = hueDistance(from: sample, to: anchor)
         let saturationDelta = abs(sample.saturation - target.saturation)
         let lightnessDelta = abs(sample.lightness - target.lightness)
         return hueDelta * 5 + saturationDelta * 1.25 + lightnessDelta * 1.75
+    }
+
+    private static func hueDistance(from sample: HSL, to anchor: Anchor) -> Double {
+        let target = hsl(red: anchor.red, green: anchor.green, blue: anchor.blue)
+        return min(abs(sample.hue - target.hue), 1 - abs(sample.hue - target.hue))
+    }
+
+    private static func hasCoherentDarkChromaticSignal(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        sample: HSL
+    ) -> Bool {
+        let channelSpread = Int(max(red, green, blue)) - Int(min(red, green, blue))
+        return sample.lightness <= 0.36 &&
+            sample.saturation >= 0.07 &&
+            sample.saturation < 0.20 &&
+            channelSpread >= 8
     }
 
     private static func isUnsupportedBrightWarmTint(_ sample: HSL, hasSpatialEvidence: Bool) -> Bool {
@@ -181,6 +415,31 @@ enum FashionColorCatalog {
         }
 
         return HSL(hue: hue < 0 ? hue + 1 : hue, saturation: saturation, lightness: lightness)
+    }
+
+    static func chromaticFamily(red: UInt8, green: UInt8, blue: UInt8) -> String {
+        FashionColorFamilyCatalog.family(for: nearestChromaticName(
+            to: hsl(red: red, green: green, blue: blue),
+            allowsHueTieBreak: false
+        ))
+    }
+}
+
+enum SleepwearPrimaryPaletteSignal {
+    static func score(for palette: [String]) -> Int {
+        let normalized = palette.map { $0.lowercased() }
+        let hasPinkOrRed = normalized.contains(where: { $0.contains("pink") || $0.contains("red") })
+        let hasLightSleepwearColor = normalized.contains(where: {
+            ["cream", "white", "pastel"].contains($0) ||
+                $0.contains("cream") ||
+                $0.contains("white") ||
+                $0.contains("pastel")
+        })
+        var score = 0
+        if hasPinkOrRed { score += 2 }
+        if hasLightSleepwearColor { score += 1 }
+        if hasPinkOrRed && hasLightSleepwearColor { score += 2 }
+        return score
     }
 }
 
@@ -224,6 +483,8 @@ struct GarmentPaletteDebugSnapshot {
     let familyShares: [(name: String, share: Double)]
     let finalPalette: [String]
     let whiteBalanceGains: (red: Double, green: Double, blue: Double)
+    let illuminantReference: String
+    let namingCalibrationDecisions: [String]
     let backgroundReferences: [(name: String, share: Double)]
     let downWeightedSamples: Int
     let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
@@ -246,7 +507,7 @@ struct GarmentPaletteDebugSnapshot {
                 "\($0.name):foregroundConcentration=\(String(format: "%.2f", $0.foregroundConcentration)):downWeighted=\($0.downWeighted)"
             }
             .joined(separator: ", ")
-        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), clusterDecisions=[\(decisionText)], leadershipDecision=\(leadershipDecision), confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
+        return "samples total=\(totalSamples), person=\(personSamples), skinRef=\(skinReferenceSamples), garment=\(garmentSamples), whiteBalance=[\(gains)], illuminantReference=\(illuminantReference), namingCalibration=\(namingCalibrationDecisions), clusters=[\(clusterText)], familyShares=[\(familyText)], backgroundRefs=[\(backgroundText)], downWeighted=\(downWeightedSamples), clusterDecisions=[\(decisionText)], leadershipDecision=\(leadershipDecision), confidenceReason=\(confidenceReason), final=\(finalPalette.joined(separator: ", "))"
     }
 }
 
@@ -599,20 +860,20 @@ enum GarmentRegionMasker {
                 if let mask = try attempt(),
                    mask.includedCount >= minimumIncludedPixels {
                     #if DEBUG
-                    print("[StyleMatch Color Debug] maskTier=\(tier.rawValue) succeeded with \(mask.includedCount) included pixels.")
+                    StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(tier.rawValue) succeeded with \(mask.includedCount) included pixels.")
                     #endif
                     return mask
                 }
             } catch {
                 #if DEBUG
-                print("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed: \(error.localizedDescription)")
+                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed: \(error.localizedDescription)")
                 #endif
                 continue
             }
         }
 
         #if DEBUG
-        print("[StyleMatch Color Debug] all garment mask tiers failed; returning couldNotIsolateGarment.")
+        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] all garment mask tiers failed; returning couldNotIsolateGarment.")
         #endif
         return GarmentRegionMask.couldNotIsolate(width: width, height: height)
     }
@@ -628,6 +889,7 @@ enum GarmentColorPaletteEngine {
         let downWeightedSamples: Int
         let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
         let familyForegroundConcentrations: [String: Double]
+        let namingCalibrationDecisions: [String]
     }
 
     static func extractPalette(
@@ -638,9 +900,11 @@ enum GarmentColorPaletteEngine {
         forceLowConfidence: Bool = false,
         confidenceSampleCount: Int? = nil,
         backgroundFamilyShares: [String: Double] = [:],
+        illuminantReferenceSamples: [GarmentPalettePixel] = [],
         confidenceEvidenceSatisfied: Bool = false,
         corroboratedFamilies: Set<String> = [],
-        confidenceReason: String = "legacy source confidence rule"
+        confidenceReason: String = "legacy source confidence rule",
+        debugTiming: GarmentPaletteStageTiming? = nil
     ) -> (palette: [String], confidence: Int, confidenceLevel: GarmentPaletteConfidence, debug: GarmentPaletteDebugSnapshot) {
         let personSamples = samples.filter(\.isInsidePersonMask)
         let skinReference = allowsSkinExclusion
@@ -664,6 +928,8 @@ enum GarmentColorPaletteEngine {
                 familyShares: [],
                 finalPalette: ["neutral"],
                 whiteBalanceGains: (1, 1, 1),
+                illuminantReference: "unavailable",
+                namingCalibrationDecisions: [],
                 backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
                 downWeightedSamples: 0,
                 clusterWeightDecisions: [],
@@ -673,24 +939,40 @@ enum GarmentColorPaletteEngine {
             return (["neutral"], 30, .low, debug)
         }
 
-        let correction = grayWorldCorrection(for: garmentSamples)
+        #if DEBUG
+        let illuminantStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        let correction = illuminantAwareCorrection(
+            for: garmentSamples,
+            brightReferenceSamples: illuminantReferenceSamples
+        )
+        #if DEBUG
+        debugTiming?.add(ProcessInfo.processInfo.systemUptime - illuminantStart, to: .illuminant)
+        let namingStart = ProcessInfo.processInfo.systemUptime
+        #endif
         let correctedSamples = garmentSamples.map { correction.correct($0) }
         let weightedSummary = weightedColorSummary(
             correctedSamples,
+            originalSamples: garmentSamples,
             source: source,
-            backgroundFamilyShares: backgroundFamilyShares
+            backgroundFamilyShares: backgroundFamilyShares,
+            illuminantIsCredible: correction.usesCredibleIlluminant,
+            corroboratedFamilies: corroboratedFamilies,
+            enforcesLightNeutralEvidence: true
         )
         let total = max(1, weightedSummary.effectiveSampleCount)
         let familyCounts = FashionColorFamilyCatalog.aggregatedWeights(
             weightedSummary.colorWeights.filter { $0.key != "background" }
         )
-        let rawSortedFamilies = familyCounts
-            .sorted { lhs, rhs in
-                if lhs.value.weight == rhs.value.weight {
-                    return lhs.key < rhs.key
-                }
-                return lhs.value.weight > rhs.value.weight
+        let rawSortedFamilies = familyCounts.sorted { lhs, rhs in
+            if lhs.value.weight == rhs.value.weight {
+                return lhs.key < rhs.key
             }
+            return lhs.value.weight > rhs.value.weight
+        }
+        #if DEBUG
+        debugTiming?.add(ProcessInfo.processInfo.systemUptime - namingStart, to: .naming)
+        #endif
         let hasLeadershipEvidence: (String) -> Bool = { family in
             family == "neutral" || family == "white" ||
                 source == .garmentCrop ||
@@ -730,9 +1012,15 @@ enum GarmentColorPaletteEngine {
         let hasEnoughSamples = rawSampleCount >= minimumGarmentPixels * 2
             && weightedSummary.effectiveSampleCount >= Double(GarmentPaletteSourceSelector.minimumReliableGarmentSamples)
         let sourceEvidenceIsCredible = confidenceEvidenceSatisfied || source.reliability >= 2
+        #if DEBUG
+        let confidenceStart = ProcessInfo.processInfo.systemUptime
+        #endif
         let confidenceLevel: GarmentPaletteConfidence = !forceLowConfidence && sourceEvidenceIsCredible && leadershipEvidenceSatisfied && hasEnoughSamples && leadingShare >= 0.18
             ? .confident
             : .low
+        #if DEBUG
+        debugTiming?.add(ProcessInfo.processInfo.systemUptime - confidenceStart, to: .confidence)
+        #endif
         let debug = GarmentPaletteDebugSnapshot(
             totalSamples: samples.count,
             personSamples: personSamples.count,
@@ -742,6 +1030,8 @@ enum GarmentColorPaletteEngine {
             familyShares: familyShares,
             finalPalette: palette,
             whiteBalanceGains: (correction.redGain, correction.greenGain, correction.blueGain),
+            illuminantReference: correction.reason,
+            namingCalibrationDecisions: weightedSummary.namingCalibrationDecisions,
             backgroundReferences: backgroundFamilyShares.sorted { $0.value > $1.value }.map { ($0.key, $0.value) },
             downWeightedSamples: weightedSummary.downWeightedSamples,
             clusterWeightDecisions: weightedSummary.clusterWeightDecisions,
@@ -773,7 +1063,9 @@ enum GarmentColorPaletteEngine {
         in samples: [GarmentPalettePixel],
         allowsSkinExclusion: Bool,
         source: GarmentPaletteSource = .foregroundSubject,
-        backgroundFamilyShares: [String: Double] = [:]
+        backgroundFamilyShares: [String: Double] = [:],
+        illuminantReferenceSamples: [GarmentPalettePixel] = [],
+        debugTiming: GarmentPaletteStageTiming? = nil
     ) -> [String: Double] {
         let personSamples = samples.filter(\.isInsidePersonMask)
         let skinReference = allowsSkinExclusion
@@ -785,15 +1077,31 @@ enum GarmentColorPaletteEngine {
         }
         guard !garmentSamples.isEmpty else { return [:] }
 
-        let correction = grayWorldCorrection(for: garmentSamples)
+        #if DEBUG
+        let illuminantStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        let correction = illuminantAwareCorrection(
+            for: garmentSamples,
+            brightReferenceSamples: illuminantReferenceSamples
+        )
+        #if DEBUG
+        debugTiming?.add(ProcessInfo.processInfo.systemUptime - illuminantStart, to: .illuminant)
+        let namingStart = ProcessInfo.processInfo.systemUptime
+        #endif
         let weightedSummary = weightedColorSummary(
             garmentSamples.map { correction.correct($0) },
+            originalSamples: garmentSamples,
             source: source,
-            backgroundFamilyShares: backgroundFamilyShares
+            backgroundFamilyShares: backgroundFamilyShares,
+            illuminantIsCredible: correction.usesCredibleIlluminant
         )
         let familyCounts = FashionColorFamilyCatalog.aggregatedWeights(weightedSummary.colorWeights)
         let total = max(1, weightedSummary.effectiveSampleCount)
-        return familyCounts.mapValues { $0.weight / total }
+        let shares = familyCounts.mapValues { $0.weight / total }
+        #if DEBUG
+        debugTiming?.add(ProcessInfo.processInfo.systemUptime - namingStart, to: .naming)
+        #endif
+        return shares
     }
 
     static func backgroundFamilyShares(from samples: [GarmentPalettePixel]) -> [String: Double] {
@@ -819,17 +1127,41 @@ enum GarmentColorPaletteEngine {
 
     private static func weightedColorSummary(
         _ samples: [GarmentPalettePixel],
+        originalSamples: [GarmentPalettePixel]? = nil,
         source: GarmentPaletteSource,
-        backgroundFamilyShares: [String: Double]
+        backgroundFamilyShares: [String: Double],
+        illuminantIsCredible: Bool = true,
+        corroboratedFamilies: Set<String> = [],
+        enforcesLightNeutralEvidence: Bool = false
     ) -> WeightedColorSummary {
-        let named = samples.map { sample in
-            FashionColorCatalog.nameContributions(
+        let originals = originalSamples?.count == samples.count ? originalSamples! : samples
+        let namingEvaluations = samples.enumerated().map { index, sample in
+            let original = originals[index]
+            let preferredFamily = FashionColorCatalog.chromaticFamily(
+                red: original.red,
+                green: original.green,
+                blue: original.blue
+            )
+            let evaluation = FashionColorCatalog.namingEvaluation(
                 red: sample.red,
                 green: sample.green,
                 blue: sample.blue,
-                hasSpatialEvidence: sample.isStrongForegroundEvidence
-            ).map { (sample: sample, name: $0.name, contribution: $0.weight) }
-        }.flatMap { $0 }
+                hasSpatialEvidence: sample.isStrongForegroundEvidence,
+                allowsHueTieBreak: illuminantIsCredible,
+                preferredChromaticFamily: preferredFamily,
+                corroboratedChromaticFamilies: corroboratedFamilies,
+                enforcesLightNeutralEvidence: enforcesLightNeutralEvidence
+            )
+            return (sample: sample, evaluation: evaluation)
+        }
+        let named = namingEvaluations.flatMap { item in
+            item.evaluation.contributions.map {
+                (sample: item.sample, name: $0.name, contribution: $0.weight)
+            }
+        }
+        let namingCalibrationDecisions = Array(Set(namingEvaluations.compactMap {
+            $0.evaluation.calibrationDecision
+        })).sorted()
         let namedGroups = Dictionary(grouping: named, by: { $0.name })
         let foregroundConcentrations = namedGroups.mapValues { entries in
             let total = entries.reduce(0) { $0 + $1.contribution }
@@ -877,7 +1209,8 @@ enum GarmentColorPaletteEngine {
             clusterWeightDecisions: clusterWeightDecisions,
             familyForegroundConcentrations: Dictionary(uniqueKeysWithValues: familyTotals.map { family, total in
                 (family, familyForegroundTotals[family, default: 0] / max(0.0001, total))
-            })
+            }),
+            namingCalibrationDecisions: namingCalibrationDecisions
         )
     }
 
@@ -899,6 +1232,8 @@ enum GarmentColorPaletteEngine {
         let redGain: Double
         let greenGain: Double
         let blueGain: Double
+        let reason: String
+        let usesCredibleIlluminant: Bool
 
         func correct(_ sample: GarmentPalettePixel) -> GarmentPalettePixel {
             GarmentPalettePixel(
@@ -916,7 +1251,13 @@ enum GarmentColorPaletteEngine {
 
     private static func grayWorldCorrection(for samples: [GarmentPalettePixel]) -> GrayWorldCorrection {
         guard !samples.isEmpty else {
-            return GrayWorldCorrection(redGain: 1, greenGain: 1, blueGain: 1)
+            return GrayWorldCorrection(
+                redGain: 1,
+                greenGain: 1,
+                blueGain: 1,
+                reason: "bright-region rejected reason=no garment samples; fallback=none",
+                usesCredibleIlluminant: false
+            )
         }
         let count = Double(samples.count)
         let redMean = samples.reduce(0.0) { $0 + Double($1.red) } / count
@@ -936,7 +1277,125 @@ enum GarmentColorPaletteEngine {
         return GrayWorldCorrection(
             redGain: gain(for: redMean),
             greenGain: gain(for: greenMean),
-            blueGain: gain(for: blueMean)
+            blueGain: gain(for: blueMean),
+            reason: "garment-gray-world strength=\(String(format: "%.2f", correctionStrength))",
+            usesCredibleIlluminant: false
+        )
+    }
+
+    private enum BorderRegion: String, CaseIterable {
+        case top, right, bottom, left
+    }
+
+    private static func borderRegion(for sample: GarmentPalettePixel) -> BorderRegion {
+        let distances: [(BorderRegion, Double)] = [
+            (.top, sample.y),
+            (.right, 1 - sample.x),
+            (.bottom, 1 - sample.y),
+            (.left, sample.x)
+        ]
+        return distances.min { lhs, rhs in
+            lhs.1 == rhs.1 ? lhs.0.rawValue < rhs.0.rawValue : lhs.1 < rhs.1
+        }?.0 ?? .top
+    }
+
+    private static func credibleIlluminantSamples(
+        from samples: [GarmentPalettePixel]
+    ) -> (samples: [GarmentPalettePixel], accepted: Bool, reason: String) {
+        let bright = samples.filter { sample in
+            let red = Double(sample.red)
+            let green = Double(sample.green)
+            let blue = Double(sample.blue)
+            let mean = (red + green + blue) / 3
+            let spread = max(red, green, blue) - min(red, green, blue)
+            return mean >= 160 && spread / max(1, max(red, green, blue)) <= 0.35
+        }
+        guard bright.count >= 24 else {
+            return ([], false, "fewer than 24 bright border samples")
+        }
+
+        let grouped = Dictionary(grouping: bright, by: borderRegion(for:))
+        let supportedRegions = grouped.filter { $0.value.count >= 6 }
+        guard supportedRegions.count >= 2 else {
+            return ([], false, "neutral evidence appears in fewer than 2 border regions")
+        }
+
+        let regionChromaticities = supportedRegions.map { region, regionSamples -> (BorderRegion, [Double]) in
+            let count = Double(regionSamples.count)
+            let red = regionSamples.reduce(0.0) { $0 + Double($1.red) } / count
+            let green = regionSamples.reduce(0.0) { $0 + Double($1.green) } / count
+            let blue = regionSamples.reduce(0.0) { $0 + Double($1.blue) } / count
+            let total = max(1, red + green + blue)
+            return (region, [red / total, green / total, blue / total])
+        }
+        var maximumRegionDelta = 0.0
+        for leftIndex in regionChromaticities.indices {
+            for rightIndex in regionChromaticities.indices where rightIndex > leftIndex {
+                let delta = zip(
+                    regionChromaticities[leftIndex].1,
+                    regionChromaticities[rightIndex].1
+                ).map { abs($0 - $1) }.max() ?? 0
+                maximumRegionDelta = max(maximumRegionDelta, delta)
+            }
+        }
+        guard maximumRegionDelta <= 0.05 else {
+            return ([], false, "border regions disagree (chromaticity delta=\(String(format: "%.3f", maximumRegionDelta)))")
+        }
+
+        let corroborated = supportedRegions.values.flatMap { $0 }
+        let count = Double(corroborated.count)
+        let redMean = corroborated.reduce(0.0) { $0 + Double($1.red) } / count
+        let greenMean = corroborated.reduce(0.0) { $0 + Double($1.green) } / count
+        let blueMean = corroborated.reduce(0.0) { $0 + Double($1.blue) } / count
+        let greenReferenceLimit = max(redMean, blueMean) * 1.04
+        guard greenMean <= greenReferenceLimit else {
+            return ([], false, "green-dominant reference is not a credible neutral")
+        }
+
+        return (
+            corroborated,
+            true,
+            "corroborated across \(supportedRegions.count) border regions"
+        )
+    }
+
+    private static func illuminantAwareCorrection(
+        for garmentSamples: [GarmentPalettePixel],
+        brightReferenceSamples: [GarmentPalettePixel]
+    ) -> GrayWorldCorrection {
+        let credibility = credibleIlluminantSamples(from: brightReferenceSamples)
+        guard credibility.accepted else {
+            let fallback = grayWorldCorrection(for: garmentSamples)
+            return GrayWorldCorrection(
+                redGain: fallback.redGain,
+                greenGain: fallback.greenGain,
+                blueGain: fallback.blueGain,
+                reason: "bright-region rejected reason=\(credibility.reason); fallback=\(fallback.reason)",
+                usesCredibleIlluminant: false
+            )
+        }
+
+        let sorted = credibility.samples.sorted {
+            (Int($0.red) + Int($0.green) + Int($0.blue)) >
+                (Int($1.red) + Int($1.green) + Int($1.blue))
+        }
+        let selected = Array(sorted.prefix(max(24, sorted.count / 2)))
+        let count = Double(selected.count)
+        let redMean = selected.reduce(0.0) { $0 + Double($1.red) } / count
+        let greenMean = selected.reduce(0.0) { $0 + Double($1.green) } / count
+        let blueMean = selected.reduce(0.0) { $0 + Double($1.blue) } / count
+        let target = (redMean + greenMean + blueMean) / 3
+        func gain(for mean: Double) -> Double {
+            guard mean > 0 else { return 1 }
+            let fullGain = min(1.45, max(0.65, target / mean))
+            return 1 + (fullGain - 1) * 0.90
+        }
+        return GrayWorldCorrection(
+            redGain: gain(for: redMean),
+            greenGain: gain(for: greenMean),
+            blueGain: gain(for: blueMean),
+            reason: "bright-region accepted reason=\(credibility.reason) count=\(selected.count) mean=\(Int(redMean))/\(Int(greenMean))/\(Int(blueMean))",
+            usesCredibleIlluminant: true
         )
     }
 

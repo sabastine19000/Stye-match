@@ -33,6 +33,8 @@ struct OutfitAnalysisResult: Codable {
     let colorPaletteMaskingApplied: Bool
     let colorPaletteMaskTier: String?
     let colorPaletteConfidence: GarmentPaletteConfidence
+    let colorPaletteDetectionConfidence: Int
+    let colorPaletteNotes: String
     let environment: String
     let imageQuality: String
     let skinToneStyleNote: String
@@ -58,6 +60,8 @@ struct OutfitAnalysisResult: Codable {
         colorPaletteMaskingApplied: Bool = true,
         colorPaletteMaskTier: String? = nil,
         colorPaletteConfidence: GarmentPaletteConfidence = .confident,
+        colorPaletteDetectionConfidence: Int? = nil,
+        colorPaletteNotes: String? = nil,
         environment: String,
         imageQuality: String,
         skinToneStyleNote: String,
@@ -82,6 +86,12 @@ struct OutfitAnalysisResult: Codable {
         self.colorPaletteMaskingApplied = colorPaletteMaskingApplied
         self.colorPaletteMaskTier = colorPaletteMaskTier
         self.colorPaletteConfidence = colorPaletteConfidence
+        self.colorPaletteDetectionConfidence = colorPaletteDetectionConfidence
+            ?? (colorPaletteConfidence == .confident ? 80 : 40)
+        self.colorPaletteNotes = colorPaletteNotes
+            ?? (colorPaletteConfidence == .confident
+                ? "Garment colors came from the completed scan palette."
+                : "Low confidence: colors were hard to read in this photo.")
         self.environment = environment
         self.imageQuality = imageQuality
         self.skinToneStyleNote = skinToneStyleNote
@@ -112,6 +122,12 @@ struct OutfitAnalysisResult: Codable {
         colorPaletteMaskingApplied = try container.decodeIfPresent(Bool.self, forKey: .colorPaletteMaskingApplied) ?? true
         colorPaletteMaskTier = try container.decodeIfPresent(String.self, forKey: .colorPaletteMaskTier)
         colorPaletteConfidence = try container.decodeIfPresent(GarmentPaletteConfidence.self, forKey: .colorPaletteConfidence) ?? .confident
+        colorPaletteDetectionConfidence = try container.decodeIfPresent(Int.self, forKey: .colorPaletteDetectionConfidence)
+            ?? (colorPaletteConfidence == .confident ? 80 : 40)
+        colorPaletteNotes = try container.decodeIfPresent(String.self, forKey: .colorPaletteNotes)
+            ?? (colorPaletteConfidence == .confident
+                ? "Garment colors came from the completed scan palette."
+                : "Low confidence: colors were hard to read in this photo.")
         environment = try container.decode(String.self, forKey: .environment)
         imageQuality = try container.decode(String.self, forKey: .imageQuality)
         skinToneStyleNote = try container.decode(String.self, forKey: .skinToneStyleNote)

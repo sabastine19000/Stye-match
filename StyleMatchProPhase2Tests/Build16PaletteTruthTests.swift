@@ -21,14 +21,15 @@ final class Build16PaletteTruthTests: XCTestCase {
 
     func testGrayWorldCorrectionRunsBeforeColorNamingAndClampsGains() throws {
         let source = try projectSource("StyleMatchAI/GarmentColorPaletteEngine.swift")
-        guard let correction = source.range(of: "let correction = grayWorldCorrection(for: garmentSamples)"),
+        guard let correction = source.range(of: "let correction = illuminantAwareCorrection("),
               let naming = source.range(of: "let weightedSummary = weightedColorSummary(") else {
-            return XCTFail("Expected gray-world correction before palette naming.")
+            return XCTFail("Expected illuminant-aware correction before palette naming.")
         }
 
         XCTAssertLessThan(correction.lowerBound, naming.lowerBound)
         XCTAssertTrue(source.contains("min(1.6, max(0.6, target / mean))"))
         XCTAssertTrue(source.contains("whiteBalance=["))
+        XCTAssertTrue(source.contains("illuminantReference="))
     }
 
     func testExtremeGrayWorldGainsAreClamped() {
@@ -566,5 +567,236 @@ final class Build16PaletteTruthTests: XCTestCase {
         let standalone = GarmentPaletteSourceSelector.select([strong])
         XCTAssertTrue(standalone.winnerIsStrongStandalone)
         XCTAssertTrue(standalone.hasConfidenceEvidence)
+    }
+
+    func testDarkDenimUnderShadePrefersBlueFamilyButTrueBlackStaysNeutral() {
+        let denim = Array(repeating: GarmentPalettePixel(
+            red: 70,
+            green: 76,
+            blue: 94,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let denimResult = GarmentColorPaletteEngine.extractPalette(
+            from: denim,
+            source: .garmentCrop,
+            confidenceEvidenceSatisfied: true
+        )
+        XCTAssertEqual(FashionColorFamilyCatalog.family(for: denimResult.palette.first ?? ""), "blue")
+        XCTAssertTrue(denimResult.debug.namingCalibrationDecisions.contains { $0.contains("darkChromaticPreference=") })
+
+        let black = Array(repeating: GarmentPalettePixel(
+            red: 25,
+            green: 25,
+            blue: 28,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let blackResult = GarmentColorPaletteEngine.extractPalette(
+            from: black,
+            source: .garmentCrop,
+            confidenceEvidenceSatisfied: true
+        )
+        XCTAssertEqual(FashionColorFamilyCatalog.family(for: blackResult.palette.first ?? ""), "neutral")
+    }
+
+    func testBrightRegionIlluminantCorrectsWarmBrownOliveAndPinkReflectedBlue() {
+        func palette(
+            garment: (UInt8, UInt8, UInt8),
+            reference: (UInt8, UInt8, UInt8)
+        ) -> (palette: [String], debug: GarmentPaletteDebugSnapshot) {
+            let samples = Array(repeating: GarmentPalettePixel(
+                red: garment.0,
+                green: garment.1,
+                blue: garment.2,
+                isStrongForegroundEvidence: true
+            ), count: 700)
+            let borderPositions = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)]
+            let references = borderPositions.flatMap { x, y in
+                Array(repeating: GarmentPalettePixel(
+                    red: reference.0,
+                    green: reference.1,
+                    blue: reference.2,
+                    x: x,
+                    y: y,
+                    isInsidePersonMask: false
+                ), count: 25)
+            }
+            let result = GarmentColorPaletteEngine.extractPalette(
+                from: samples,
+                source: .garmentCrop,
+                illuminantReferenceSamples: references,
+                confidenceEvidenceSatisfied: true
+            )
+            return (result.palette, result.debug)
+        }
+
+        let brown = palette(garment: (125, 75, 48), reference: (230, 190, 155))
+        XCTAssertEqual(brown.palette.first, "brown")
+        XCTAssertFalse(brown.palette.contains("chocolate"))
+
+        let olive = palette(garment: (160, 145, 55), reference: (230, 190, 155))
+        XCTAssertEqual(olive.palette.first, "olive")
+        XCTAssertEqual(FashionColorFamilyCatalog.family(for: olive.palette.first ?? ""), "green")
+
+        let reflectedBlue = palette(garment: (180, 165, 205), reference: (230, 175, 200))
+        XCTAssertEqual(reflectedBlue.palette.first, "light blue")
+        XCTAssertTrue(reflectedBlue.debug.illuminantReference.contains("bright-region"))
+    }
+
+    func testGreenDominantBrightReferenceFallsBackAndKeepsOliveGreen() {
+        let olive = Array(repeating: GarmentPalettePixel(
+            red: 160,
+            green: 145,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let borderPositions = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)]
+        let greenDominantReference = borderPositions.flatMap { x, y in
+            Array(repeating: GarmentPalettePixel(
+                red: 192,
+                green: 224,
+                blue: 213,
+                x: x,
+                y: y,
+                isInsidePersonMask: false
+            ), count: 25)
+        }
+
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: olive,
+            source: .garmentCrop,
+            illuminantReferenceSamples: greenDominantReference,
+            confidenceEvidenceSatisfied: true
+        )
+
+        XCTAssertEqual(FashionColorFamilyCatalog.family(for: result.palette.first ?? ""), "green")
+        XCTAssertFalse(result.palette.contains("mustard"))
+        XCTAssertTrue(result.debug.illuminantReference.contains("green-dominant reference"))
+        XCTAssertTrue(result.debug.illuminantReference.contains("fallback=garment-gray-world"))
+    }
+
+    func testCorroboratedWarmReferenceStillKeepsOliveInGreenFamily() {
+        let olive = Array(repeating: GarmentPalettePixel(
+            red: 160,
+            green: 145,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let warmReference = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)].flatMap { x, y in
+            Array(repeating: GarmentPalettePixel(
+                red: 230,
+                green: 190,
+                blue: 155,
+                x: x,
+                y: y,
+                isInsidePersonMask: false
+            ), count: 25)
+        }
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: olive,
+            source: .garmentCrop,
+            illuminantReferenceSamples: warmReference,
+            confidenceEvidenceSatisfied: true
+        )
+
+        XCTAssertEqual(result.palette.first, "olive")
+        XCTAssertTrue(result.debug.illuminantReference.contains("bright-region accepted"))
+    }
+
+    func testCorroboratedWarmReferenceKeepsBrownOutOfChocolate() {
+        let brown = Array(repeating: GarmentPalettePixel(
+            red: 125,
+            green: 75,
+            blue: 48,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let warmReference = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)].flatMap { x, y in
+            Array(repeating: GarmentPalettePixel(
+                red: 230,
+                green: 190,
+                blue: 155,
+                x: x,
+                y: y,
+                isInsidePersonMask: false
+            ), count: 25)
+        }
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: brown,
+            source: .garmentCrop,
+            illuminantReferenceSamples: warmReference,
+            confidenceEvidenceSatisfied: true
+        )
+
+        XCTAssertEqual(result.palette.first, "brown")
+        XCTAssertFalse(result.palette.contains("chocolate"))
+    }
+
+    func testUnsupportedBlueCastLightGrayStaysNeutralInTransitionBand() {
+        let gray = Array(repeating: GarmentPalettePixel(
+            red: 170,
+            green: 180,
+            blue: 190
+        ), count: 700)
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: gray,
+            source: .saliencyCrop,
+            confidenceEvidenceSatisfied: true
+        )
+
+        XCTAssertEqual(FashionColorFamilyCatalog.family(for: result.palette.first ?? ""), "neutral")
+    }
+
+    func testForegroundEvidencePreservesGenuinePaleBlue() {
+        let paleBlue = Array(repeating: GarmentPalettePixel(
+            red: 170,
+            green: 200,
+            blue: 215,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let result = GarmentColorPaletteEngine.extractPalette(
+            from: paleBlue,
+            source: .saliencyCrop,
+            confidenceEvidenceSatisfied: true
+        )
+
+        XCTAssertEqual(result.palette.first, "light blue")
+    }
+
+    func testStructuredOutfitFactsUsesCompletedAnalysisPaletteWithoutSecondExtraction() throws {
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+        let functionStart = try XCTUnwrap(scanSource.range(of: "private func structuredOutfitFacts(for analysis:"))
+        let functionTail = scanSource[functionStart.lowerBound...]
+        let functionEnd = try XCTUnwrap(functionTail.range(of: "\n    private func", options: [], range: functionTail.index(after: functionStart.lowerBound)..<functionTail.endIndex))
+        let body = functionTail[..<functionEnd.lowerBound]
+
+        XCTAssertFalse(body.contains("garmentColorDetection()"))
+        XCTAssertTrue(body.contains("garmentColors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : []"))
+        XCTAssertTrue(body.contains("confidence: analysis.colorPaletteDetectionConfidence"))
+        XCTAssertTrue(body.contains("? analysis.colorPaletteNotes"))
+    }
+
+    func testNamingCalibrationProtectsEstablishedColorWins() {
+        let cases: [((UInt8, UInt8, UInt8), String)] = [
+            ((235, 205, 55), "yellow"),
+            ((225, 120, 45), "orange"),
+            ((25, 42, 78), "navy"),
+            ((82, 32, 42), "maroon"),
+            ((14, 14, 16), "black"),
+            ((112, 72, 45), "brown"),
+            ((125, 125, 125), "gray")
+        ]
+        for (rgb, expected) in cases {
+            XCTAssertEqual(
+                FashionColorCatalog.nearestName(red: rgb.0, green: rgb.1, blue: rgb.2),
+                expected,
+                "Expected \(rgb) to remain \(expected)."
+            )
+        }
+    }
+
+    func testScanPassesFlatLayBorderSamplesIntoIlluminantCalibration() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertTrue(source.contains("let backgroundSamples = prefersPersonMask ? [] : paletteBackgroundSamples"))
+        XCTAssertTrue(source.contains("illuminantReferenceSamples: backgroundSamples"))
+        XCTAssertTrue(source.contains("namingCalibration="))
     }
 }

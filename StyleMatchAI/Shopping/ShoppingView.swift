@@ -937,19 +937,7 @@ struct ShoppingView: View {
         isLoading = true
         loadError = nil
         do {
-            let provider: ProductCatalogProvider
-            let config = (try? BundledShoppingIntegrationConfigProvider().config()) ?? .empty
-            if FeatureFlags.remoteCatalogEnabled, let remoteURL = config.catalogBaseURL {
-                provider = RemoteCatalogProvider(
-                    baseURL: remoteURL,
-                    cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
-                    fallbackProvider: BundledCatalogProvider()
-                )
-            } else {
-                provider = BundledCatalogProvider()
-            }
-
-            async let loadedProducts = provider.products()
+            async let loadedProducts = SharedProductCatalogLoader.shared.products()
             async let loadedStores = BundledStoreDirectoryProvider().stores()
             let loaded = try await loadedProducts
             let stores = (try? await loadedStores) ?? []
@@ -975,7 +963,7 @@ struct ShoppingView: View {
             visibleRecommendations.forEach { _ = PersonalizationContextBuilder.buildShoppingRecommendationPromptContext($0.reasonFacts) }
             #endif
             let alertList = makeSaleAlerts(from: loaded)
-            let watcher = SaleWatcher(catalogProvider: provider)
+            let watcher = SaleWatcher()
             let favoriteSales = watcher.currentFavoriteSaleEvents(catalog: loaded)
             await MainActor.run {
                 products = loaded

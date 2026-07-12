@@ -56,6 +56,7 @@ struct ScanView: View {
     @State private var activeScanSessionID: UUID?
     @State private var activeScanFingerprint: String?
     @State private var activeScanImageDigest: String?
+    @State private var scanHistoryCache = ScanHistoryDecodeCache()
     @State private var selectedScannerInsight = "Colors"
     @State private var scannerExampleIndex = 0
     @State private var selectedTryNextRecommendation: ClothingRecommendation?
@@ -106,12 +107,21 @@ struct ScanView: View {
         colorPaletteMaskingApplied: Bool? = nil,
         colorPaletteMaskTier: String? = nil,
         colorPaletteConfidence: GarmentPaletteConfidence? = nil,
+        colorPaletteDetectionConfidence: Int? = nil,
+        colorPaletteNotes: String? = nil,
         skinToneStyleNote: String? = nil,
         scoreBreakdown: StyleScoreBreakdown? = nil
     ) -> OutfitAnalysisResult {
+        let paletteDetection = colorPalette == nil ? selectedUIImage?.garmentColorDetection() : nil
+        let resolvedColorPalette = colorPalette ?? paletteDetection?.garmentColors ?? ["Neutral"]
         let noveltyStyle = noveltyClothingMatch(in: labels)
         let culturalStyle = noveltyStyle == nil ? traditionalStyleMatch(in: labels, image: selectedUIImage) : nil
-        let purposeStyle = noveltyStyle == nil ? clothingPurposeClassification(validation: validation, labels: labels, image: selectedUIImage) : nil
+        let purposeStyle = noveltyStyle == nil ? clothingPurposeClassification(
+            validation: validation,
+            labels: labels,
+            image: selectedUIImage,
+            primaryPalette: resolvedColorPalette
+        ) : nil
         var detectedItems = detectedClothingItems(from: labels)
         if let noveltyStyle {
             detectedItems.insert(noveltyStyle.garment, at: 0)
@@ -125,8 +135,6 @@ struct ScanView: View {
             detectedItems.insert(culturalStyle.garment, at: 0)
             detectedItems = detectedItems.removingDuplicates()
         }
-        let paletteDetection = colorPalette == nil ? selectedUIImage?.garmentColorDetection() : nil
-        let resolvedColorPalette = colorPalette ?? paletteDetection?.garmentColors ?? ["Neutral"]
         let environment = detectedEnvironment(from: labels)
         let sceneName = validation.sceneName
         let itemDescription = detectedItems.isEmpty ? sceneName : detectedItems.joined(separator: ", ")
@@ -182,6 +190,8 @@ struct ScanView: View {
             colorPaletteMaskingApplied: colorPaletteMaskingApplied ?? paletteDetection?.maskingApplied ?? true,
             colorPaletteMaskTier: colorPaletteMaskTier ?? paletteDetection?.maskTier,
             colorPaletteConfidence: colorPaletteConfidence ?? paletteDetection?.confidenceLevel ?? .low,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence ?? paletteDetection?.confidence,
+            colorPaletteNotes: colorPaletteNotes ?? paletteDetection?.notes,
             environment: environment,
             imageQuality: imageQuality,
             skinToneStyleNote: skinToneStyleNote ?? "Style Match Pro uses visible outfit colors for fashion recommendations. It does not identify race, ethnicity, or sensitive personal traits.",
@@ -4689,8 +4699,67 @@ struct ScanView: View {
         activeScanSessionID = scanSessionID
         let imageToAnalyze = selectedUIImage
         let scanSource = currentScanSource
+        let historySnapshot = loadScanHistory()
         DispatchQueue.global(qos: .userInitiated).async {
+            let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
             let validation = validateFashionImage(imageToAnalyze)
+
+            let preparedFacts: PreparedScanFacts?
+            if validation.isAccepted {
+                let labels = validation.labels
+                let paletteBoxes = paletteRegionBoxes(
+                    for: imageToAnalyze,
+                    validation: validation,
+                    wholeImageLabels: labels
+                )
+                let colorDetection = imageToAnalyze.garmentColorDetection(
+                    regionBoxes: paletteBoxes,
+                    prefersPersonMask: validation.isPersonScan
+                )
+                let fingerprint = normalizedOutfitFingerprint(
+                    for: imageToAnalyze,
+                    validation: validation,
+                    labels: labels,
+                    colorPalette: colorDetection.garmentColors
+                )
+                let exactStoredScan = historySnapshot[fingerprint].flatMap { storedScan in
+                    ScanImageIdentity.isExactMatch(
+                        storedFingerprint: fingerprint,
+                        storedImageDigest: storedScan.imageDigest,
+                        currentFingerprint: fingerprint,
+                        currentImageDigest: imageDigest
+                    ) ? storedScan : nil
+                }
+                let storedInputs = exactStoredScan?.deterministicInputs
+                let colorPalette = storedInputs?.colorPalette ?? colorDetection.garmentColors
+                let scoringLabels = storedInputs?.labels ?? labels
+                let detectedItems = storedInputs?.detectedItems ?? detectedClothingItems(from: scoringLabels)
+                let styleCategory = storedInputs?.styleCategory
+                    ?? detectedStyleCategorySignal(validation: validation, labels: scoringLabels)
+                let styleScore = exactStoredScan != nil && !forceReanalyze
+                    ? nil
+                    : calculateStyleScore(
+                        validation: validation,
+                        labels: scoringLabels,
+                        colorPalette: colorPalette,
+                        detectedItems: detectedItems,
+                        styleCategory: styleCategory
+                    )
+                preparedFacts = PreparedScanFacts(
+                    validation: validation,
+                    labels: labels,
+                    colorDetection: colorDetection,
+                    fingerprint: fingerprint,
+                    imageDigest: imageDigest,
+                    colorPalette: colorPalette,
+                    scoringLabels: scoringLabels,
+                    detectedItems: detectedItems,
+                    styleCategory: styleCategory,
+                    styleScore: styleScore
+                )
+            } else {
+                preparedFacts = nil
+            }
 
             DispatchQueue.main.async {
                 guard activeScanSessionID == scanSessionID,
@@ -4699,7 +4768,6 @@ struct ScanView: View {
                 }
 
                 guard validation.isAccepted else {
-                    let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
                     logScanDebug(
                         source: scanSource,
                         validation: validation,
@@ -4722,24 +4790,15 @@ struct ScanView: View {
                     return
                 }
 
-                let labels = validation.labels
+                guard let preparedFacts else {
+                    isAnalyzing = false
+                    return
+                }
+                let labels = preparedFacts.labels
                 let qualityDescription = validation.qualityDescription
-                let paletteBoxes = paletteRegionBoxes(
-                    for: imageToAnalyze,
-                    validation: validation,
-                    wholeImageLabels: labels
-                )
-                let colorDetection = imageToAnalyze.garmentColorDetection(
-                    regionBoxes: paletteBoxes,
-                    prefersPersonMask: validation.isPersonScan
-                )
-                let fingerprint = normalizedOutfitFingerprint(
-                    for: imageToAnalyze,
-                    validation: validation,
-                    labels: labels,
-                    colorPalette: colorDetection.garmentColors
-                )
-                let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
+                let colorDetection = preparedFacts.colorDetection
+                let fingerprint = preparedFacts.fingerprint
+                let imageDigest = preparedFacts.imageDigest
                 activeScanFingerprint = fingerprint
                 activeScanImageDigest = imageDigest
                 logScanDebug(
@@ -4759,7 +4818,8 @@ struct ScanView: View {
                     fingerprint: fingerprint,
                     imageDigest: imageDigest,
                     forceReanalyze: forceReanalyze,
-                    colorDetection: colorDetection
+                    colorDetection: colorDetection,
+                    preparedFacts: preparedFacts
                 )
                 let analysis = savedResult.analysis
                 let displayAnalysis = analysisWithPersonalStylistIntelligence(analysis)
@@ -4786,7 +4846,12 @@ struct ScanView: View {
                     requestChatGPTRecommendationUpgrade(
                         for: displayAnalysis,
                         scanSessionID: scanSessionID,
-                        fingerprint: fingerprint
+                        identity: CompletedScanIdentity(
+                            validation: validation,
+                            labels: labels,
+                            fingerprint: fingerprint,
+                            imageDigest: imageDigest
+                        )
                     )
                 }
             }
@@ -4822,6 +4887,8 @@ struct ScanView: View {
             colorPaletteMaskingApplied: colorDetection.maskingApplied,
             colorPaletteMaskTier: colorDetection.maskTier,
             colorPaletteConfidence: colorDetection.confidenceLevel,
+            colorPaletteDetectionConfidence: colorDetection.confidence,
+            colorPaletteNotes: colorDetection.notes,
             skinToneStyleNote: image.skinToneStyleNote(),
             scoreBreakdown: styleScore.breakdown
         )
@@ -5001,7 +5068,8 @@ struct ScanView: View {
         fingerprint: String,
         imageDigest: String,
         forceReanalyze: Bool,
-        colorDetection: GarmentColorDetection
+        colorDetection: GarmentColorDetection,
+        preparedFacts: PreparedScanFacts
     ) -> SavedScanResult {
         var history = loadScanHistory()
         let exactStoredScan = history[fingerprint].flatMap { storedScan in
@@ -5034,11 +5102,11 @@ struct ScanView: View {
 
         // Semantic-only matches are not exact images and must be analyzed from current facts.
         let storedInputs = exactStoredScan?.deterministicInputs
-        let colorPalette = storedInputs?.colorPalette ?? colorDetection.garmentColors
-        let scoringLabels = storedInputs?.labels ?? labels
-        let detectedItems = storedInputs?.detectedItems ?? detectedClothingItems(from: scoringLabels)
-        let styleCategory = storedInputs?.styleCategory ?? detectedStyleCategorySignal(validation: validation, labels: scoringLabels)
-        let styleScore = calculateStyleScore(
+        let colorPalette = preparedFacts.colorPalette
+        let scoringLabels = preparedFacts.scoringLabels
+        let detectedItems = preparedFacts.detectedItems
+        let styleCategory = preparedFacts.styleCategory
+        let styleScore = preparedFacts.styleScore ?? calculateStyleScore(
             validation: validation,
             labels: scoringLabels,
             colorPalette: colorPalette,
@@ -5054,6 +5122,8 @@ struct ScanView: View {
             colorPaletteMaskingApplied: colorDetection.maskingApplied,
             colorPaletteMaskTier: colorDetection.maskTier,
             colorPaletteConfidence: storedInputs?.colorPaletteConfidence ?? colorDetection.confidenceLevel,
+            colorPaletteDetectionConfidence: colorDetection.confidence,
+            colorPaletteNotes: colorDetection.notes,
             skinToneStyleNote: image.skinToneStyleNote(),
             scoreBreakdown: styleScore.breakdown
         )
@@ -5236,7 +5306,7 @@ struct ScanView: View {
     private func requestChatGPTRecommendationUpgrade(
         for analysis: OutfitAnalysisResult,
         scanSessionID: UUID,
-        fingerprint: String
+        identity: CompletedScanIdentity
     ) {
         guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
               !savedKey.isEmpty else {
@@ -5244,7 +5314,7 @@ struct ScanView: View {
         }
 
         let client = OpenAIStylistClient(apiKey: savedKey, model: openAIModel)
-        let structuredFacts = structuredOutfitFacts(for: analysis)
+        let structuredFacts = structuredOutfitFacts(for: analysis, identity: identity)
         let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
         let enginePromptContext = PersonalizationContextBuilder.buildPersonalStylistEnginePromptContext(phrasingContext)
         #if DEBUG
@@ -5292,7 +5362,7 @@ struct ScanView: View {
                         advice,
                         to: analysis,
                         scanSessionID: scanSessionID,
-                        fingerprint: fingerprint
+                        fingerprint: identity.fingerprint
                     )
                 }
             } catch {
@@ -5301,7 +5371,7 @@ struct ScanView: View {
                 #endif
                 await MainActor.run {
                     guard activeScanSessionID == scanSessionID,
-                          activeScanFingerprint == fingerprint else {
+                          activeScanFingerprint == identity.fingerprint else {
                         return
                     }
                     scanMessage = ScanMessage(
@@ -5601,15 +5671,9 @@ struct ScanView: View {
         return "unknown"
     }
 
-    private func structuredOutfitFacts(for analysis: OutfitAnalysisResult) -> String {
-        let colorDetection = selectedUIImage?.garmentColorDetection()
-        let palette = analysis.colorPalette
+    private func structuredOutfitFacts(for analysis: OutfitAnalysisResult, identity: CompletedScanIdentity? = nil) -> String {
         let scoreResult = lockedStyleScoreResult(from: analysis)
-        let fingerprint = selectedUIImage.map {
-            let validation = validateFashionImage($0)
-            let labels = validation.labels
-            return normalizedOutfitFingerprint(for: $0, validation: validation, labels: labels, colorPalette: palette)
-        } ?? "saved-result"
+        let fingerprint = identity?.fingerprint ?? activeScanFingerprint ?? "saved-result"
         let payload = OutfitFactPayload(
             scanSource: currentScanSource.rawValue,
             normalized: true,
@@ -5620,9 +5684,9 @@ struct ScanView: View {
             colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
             colorDetection: OutfitFactPayload.GarmentColorFact(
                 garmentColors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
-                confidence: colorDetection?.confidence ?? 72,
+                confidence: analysis.colorPaletteDetectionConfidence,
                 notes: analysis.colorPaletteConfidence == .confident
-                    ? (colorDetection?.notes ?? "Garment colors came from the saved scan palette; background colors were not used as clothing facts.")
+                    ? analysis.colorPaletteNotes
                     : "Low confidence: colors were hard to read in this photo. Do not assert specific garment colors.",
                 confidenceLevel: analysis.colorPaletteConfidence.rawValue
             ),
@@ -6117,7 +6181,7 @@ struct ScanView: View {
         cacheSource: String
     ) {
         #if DEBUG
-        print(scanDebugLog(
+        StyleMatchDebugLogEmitter.emit(scanDebugLog(
             source: source,
             validation: validation,
             labels: labels,
@@ -6319,12 +6383,7 @@ struct ScanView: View {
     }
 
     private func loadScanHistory() -> [String: StoredOutfitScan] {
-        guard !outfitScanHistoryData.isEmpty,
-              let history = try? JSONDecoder().decode([String: StoredOutfitScan].self, from: outfitScanHistoryData) else {
-            return [:]
-        }
-
-        return history
+        scanHistoryCache.history(from: outfitScanHistoryData)
     }
 
     private func saveScanHistory(_ history: [String: StoredOutfitScan]) {
@@ -6339,6 +6398,7 @@ struct ScanView: View {
             return
         }
 
+        scanHistoryCache.replace(with: limitedHistory, encodedData: data)
         outfitScanHistoryData = data
     }
 
@@ -6608,7 +6668,7 @@ struct ScanView: View {
         }
         #if DEBUG
         let latencyMs = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
-        print("[StyleMatch Color Debug] paletteRegionDiscovery=flatLayAlways, qualifyingBoxes=\(uniqueBoxes.count), threshold=\(String(format: "%.2f", threshold)), latencyMs=\(latencyMs)")
+        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] paletteRegionDiscovery=flatLayAlways, qualifyingBoxes=\(uniqueBoxes.count), threshold=\(String(format: "%.2f", threshold)), latencyMs=\(latencyMs)")
         #endif
         return uniqueBoxes
     }
@@ -6977,11 +7037,16 @@ struct ScanView: View {
         )
     }
 
-    private func clothingPurposeClassification(validation: ScanValidation, labels: [DetectedLabel], image: UIImage?) -> ClothingPurposeMatch? {
+    private func clothingPurposeClassification(
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        image: UIImage?,
+        primaryPalette: [String]
+    ) -> ClothingPurposeMatch? {
         let labelText = labels.map(\.identifier).joined(separator: " ").lowercased()
         let sceneText = "\(validation.sceneName) \(validation.arrangementFingerprint) \(detectedEnvironment(from: labels))".lowercased()
         let contextText = "\(labelText) \(sceneText)"
-        let imageSleepwearBoost = image?.sleepwearVisualSignalScore() ?? 0
+        let imageSleepwearBoost = image?.sleepwearVisualSignalScore(primaryPalette: primaryPalette) ?? 0
 
         let sleepwearTerms = [
             "pajama", "pyjama", "sleepwear", "nightwear", "nightgown", "sleep shirt",
@@ -8666,6 +8731,43 @@ private struct SavedScanResult {
     }
 }
 
+private struct PreparedScanFacts {
+    let validation: ScanValidation
+    let labels: [DetectedLabel]
+    let colorDetection: GarmentColorDetection
+    let fingerprint: String
+    let imageDigest: String
+    let colorPalette: [String]
+    let scoringLabels: [DetectedLabel]
+    let detectedItems: [String]
+    let styleCategory: String
+    let styleScore: StyleScoreResult?
+}
+
+private struct CompletedScanIdentity {
+    let validation: ScanValidation
+    let labels: [DetectedLabel]
+    let fingerprint: String
+    let imageDigest: String
+}
+
+private final class ScanHistoryDecodeCache {
+    private var encodedData = Data()
+    private var decodedHistory = [String: StoredOutfitScan]()
+
+    func history(from data: Data) -> [String: StoredOutfitScan] {
+        guard data != encodedData else { return decodedHistory }
+        encodedData = data
+        decodedHistory = (try? JSONDecoder().decode([String: StoredOutfitScan].self, from: data)) ?? [:]
+        return decodedHistory
+    }
+
+    func replace(with history: [String: StoredOutfitScan], encodedData: Data) {
+        self.encodedData = encodedData
+        decodedHistory = history
+    }
+}
+
 private enum ImageQualityIssue: String {
     case tooDark
     case tooBright
@@ -8731,6 +8833,8 @@ private extension OutfitAnalysisResult {
             colorPaletteMaskingApplied: colorPaletteMaskingApplied,
             colorPaletteMaskTier: colorPaletteMaskTier,
             colorPaletteConfidence: colorPaletteConfidence,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence,
+            colorPaletteNotes: colorPaletteNotes,
             environment: environment,
             imageQuality: imageQuality,
             skinToneStyleNote: skinToneStyleNote,
@@ -8758,6 +8862,8 @@ private extension OutfitAnalysisResult {
             colorPaletteMaskingApplied: colorPaletteMaskingApplied,
             colorPaletteMaskTier: colorPaletteMaskTier,
             colorPaletteConfidence: colorPaletteConfidence,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence,
+            colorPaletteNotes: colorPaletteNotes,
             environment: environment,
             imageQuality: imageQuality,
             skinToneStyleNote: skinToneStyleNote,
@@ -8768,6 +8874,22 @@ private extension OutfitAnalysisResult {
         )
     }
 }
+
+#if DEBUG
+private enum StyleMatchPaletteExtractionTracker {
+    private static let lock = NSLock()
+    private static var invocationCounts: [ObjectIdentifier: Int] = [:]
+
+    static func nextInvocation(for image: UIImage) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let identifier = ObjectIdentifier(image)
+        let next = invocationCounts[identifier, default: 0] + 1
+        invocationCounts[identifier] = next
+        return next
+    }
+}
+#endif
 
 private extension UIImage {
     #if DEBUG
@@ -8891,20 +9013,8 @@ private extension UIImage {
     }
     #endif
 
-    func sleepwearVisualSignalScore() -> Int {
-        let palette = garmentColorPalette().map { $0.lowercased() }
-        var score = 0
-        let hasPinkOrRed = palette.contains(where: { $0.contains("pink") || $0.contains("red") })
-        let hasLightSleepwearColor = palette.contains(where: { ["cream", "white", "pastel"].contains($0) || $0.contains("cream") || $0.contains("white") || $0.contains("pastel") })
-        if hasPinkOrRed {
-            score += 2
-        }
-        if hasLightSleepwearColor {
-            score += 1
-        }
-        if hasPinkOrRed && hasLightSleepwearColor {
-            score += 2
-        }
+    func sleepwearVisualSignalScore(primaryPalette: [String]) -> Int {
+        var score = SleepwearPrimaryPaletteSignal.score(for: primaryPalette)
         score += redPinkStripeSignalScore()
         if outfitIdentitySignature().contains("soft") {
             score += 1
@@ -9052,8 +9162,26 @@ private extension UIImage {
         regionBoxes: [CGRect] = [],
         prefersPersonMask: Bool = false
     ) -> GarmentColorDetection {
-        let start = CFAbsoluteTimeGetCurrent()
-        let backgroundReferences = prefersPersonMask ? [:] : paletteBackgroundFamilyShares(width: 48, height: 48)
+        let start = ProcessInfo.processInfo.systemUptime
+        #if DEBUG
+        let debugTiming = GarmentPaletteStageTiming()
+        let invocation = StyleMatchPaletteExtractionTracker.nextInvocation(for: self)
+        let callers = Thread.callStackSymbols.prefix(5).joined(separator: " | ")
+        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] extractionEntry caller=\(callers) regionBoxes=\(regionBoxes.count) invocation=\(invocation)")
+        let sourcesStart = ProcessInfo.processInfo.systemUptime
+        #else
+        let debugTiming: GarmentPaletteStageTiming? = nil
+        #endif
+        let backgroundSamples = prefersPersonMask ? [] : paletteBackgroundSamples(width: 48, height: 48)
+        #if DEBUG
+        var sourcesMs = (ProcessInfo.processInfo.systemUptime - sourcesStart) * 1_000
+        let backgroundNamingStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        let backgroundReferences = GarmentColorPaletteEngine.backgroundFamilyShares(from: backgroundSamples)
+        #if DEBUG
+        debugTiming.add(ProcessInfo.processInfo.systemUptime - backgroundNamingStart, to: .naming)
+        let candidateSourcesStart = ProcessInfo.processInfo.systemUptime
+        #endif
         var candidates: [MaskedGarmentPaletteSamples] = []
         if !regionBoxes.isEmpty {
             candidates.append(garmentCropPaletteSamples(regionBoxes: regionBoxes, width: 80, height: 100))
@@ -9063,6 +9191,9 @@ private extension UIImage {
             height: 100,
             hasHuman: prefersPersonMask
         ))
+        #if DEBUG
+        sourcesMs += (ProcessInfo.processInfo.systemUptime - candidateSourcesStart) * 1_000
+        #endif
         let evaluatedCandidates = candidates.filter { $0.tier != .couldNotIsolateGarment }.map { candidate in
             let garmentSampleCount = candidate.rawGarmentSampleCount ?? GarmentColorPaletteEngine.garmentSampleCount(
                 in: candidate.samples,
@@ -9078,11 +9209,19 @@ private extension UIImage {
                     in: candidate.samples,
                     allowsSkinExclusion: prefersPersonMask,
                     source: candidate.source,
-                    backgroundFamilyShares: backgroundReferences
+                    backgroundFamilyShares: backgroundReferences,
+                    illuminantReferenceSamples: backgroundSamples,
+                    debugTiming: debugTiming
                 )
             )
         }
+        #if DEBUG
+        let rankingStart = ProcessInfo.processInfo.systemUptime
+        #endif
         let selection = GarmentPaletteSourceSelector.select(evaluatedCandidates)
+        #if DEBUG
+        let rankingMs = (ProcessInfo.processInfo.systemUptime - rankingStart) * 1_000
+        #endif
         let selectedCandidate = selection.candidate
         let maskedSamples = selectedCandidate.map {
             MaskedGarmentPaletteSamples(
@@ -9095,9 +9234,10 @@ private extension UIImage {
             )
         } ?? failedPaletteSamples(width: 80, height: 100)
         if maskedSamples.tier == .couldNotIsolateGarment {
-            let latencyMs = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
+            let latencyMs = Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())
             #if DEBUG
-            print("[StyleMatch Color Debug] maskTier=\(maskedSamples.tier.rawValue), maskingApplied=false, palette latencyMs=\(latencyMs); all tiers failed")
+            StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(maskedSamples.tier.rawValue), maskingApplied=false, palette latencyMs=\(latencyMs); all tiers failed")
+            StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] timing totalMs=\(latencyMs) sourcesMs=\(String(format: "%.1f", sourcesMs)) illuminantMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .illuminant))) namingMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .naming))) rankingMs=\(String(format: "%.1f", rankingMs)) confidenceMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .confidence)))")
             #endif
             return GarmentColorDetection(
                 garmentColors: [],
@@ -9116,14 +9256,16 @@ private extension UIImage {
             forceLowConfidence: !selection.hasConfidenceEvidence,
             confidenceSampleCount: selectedCandidate?.garmentSampleCount,
             backgroundFamilyShares: backgroundReferences,
+            illuminantReferenceSamples: backgroundSamples,
             confidenceEvidenceSatisfied: selection.hasConfidenceEvidence,
             corroboratedFamilies: selection.corroboratedFamilies,
-            confidenceReason: selection.confidenceReason
+            confidenceReason: selection.confidenceReason,
+            debugTiming: debugTiming
         )
         let finalColors = extraction.palette
         let confidence = extraction.confidence
         let noteColors = finalColors.joined(separator: ", ")
-        let latencyMs = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
+        let latencyMs = Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())
 
         #if DEBUG
         let candidateSummary = evaluatedCandidates.map {
@@ -9140,7 +9282,8 @@ private extension UIImage {
         let backgroundSummary = backgroundReferences.sorted { $0.value > $1.value }.map {
             "\($0.key)=\(String(format: "%.1f", $0.value * 100))%"
         }.joined(separator: ", ")
-        print("[StyleMatch Color Debug] chosenSource=\(maskedSamples.source.rawValue), reason=\(selection.metQualityBar ? "best ranked candidate clearing >=\(GarmentPaletteSourceSelector.minimumReliableGarmentSamples) garment samples" : "largest available tier; no tier cleared quality bar"), garmentSamples=\(selectedCandidate?.garmentSampleCount ?? 0), cropsMerged=\(maskedSamples.cropsMerged), candidates=[\(candidateSummary)], candidatesRanked=[\(rankedSummary)], familyShares=[\(familySummary)], disagreement=\(selection.disagreement), backgroundRefs=[\(backgroundSummary)], downWeighted=\(extraction.debug.downWeightedSamples), leadershipEvidence=\(extraction.debug.leadershipDecision), confidenceReason=\(extraction.debug.confidenceReason), maskTier=\(maskedSamples.tier.rawValue), maskingApplied=\(maskedSamples.maskingApplied), paletteConfidence=\(extraction.confidenceLevel.rawValue), palette latencyMs=\(latencyMs); \(extraction.debug.debugDescription)")
+        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] chosenSource=\(maskedSamples.source.rawValue), reason=\(selection.metQualityBar ? "best ranked candidate clearing >=\(GarmentPaletteSourceSelector.minimumReliableGarmentSamples) garment samples" : "largest available tier; no tier cleared quality bar"), garmentSamples=\(selectedCandidate?.garmentSampleCount ?? 0), cropsMerged=\(maskedSamples.cropsMerged), candidates=[\(candidateSummary)], candidatesRanked=[\(rankedSummary)], familyShares=[\(familySummary)], disagreement=\(selection.disagreement), backgroundRefs=[\(backgroundSummary)], downWeighted=\(extraction.debug.downWeightedSamples), illuminantReference=\(extraction.debug.illuminantReference), namingCalibration=\(extraction.debug.namingCalibrationDecisions), leadershipEvidence=\(extraction.debug.leadershipDecision), confidenceReason=\(extraction.debug.confidenceReason), maskTier=\(maskedSamples.tier.rawValue), maskingApplied=\(maskedSamples.maskingApplied), paletteConfidence=\(extraction.confidenceLevel.rawValue), palette latencyMs=\(latencyMs); \(extraction.debug.debugDescription)")
+        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] timing totalMs=\(latencyMs) sourcesMs=\(String(format: "%.1f", sourcesMs)) illuminantMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .illuminant))) namingMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .naming))) rankingMs=\(String(format: "%.1f", rankingMs)) confidenceMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .confidence)))")
         #endif
 
         let sourceNote = maskedSamples.maskingApplied
@@ -9192,7 +9335,7 @@ private extension UIImage {
                 let strongForegroundMask = rawMask.adaptivelyErodedStrongMask()
                 #if DEBUG
                 let strongCoverage = Double(strongForegroundMask?.includedCount ?? 0) / Double(max(1, rawMask.includedCount))
-                print("[StyleMatch Color Debug] source=\(paletteSource(for: tier).rawValue), included=\(mask.includedCount), strongCoverage=\(String(format: "%.3f", strongCoverage))")
+                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] source=\(self.paletteSource(for: tier).rawValue), included=\(mask.includedCount), strongCoverage=\(String(format: "%.3f", strongCoverage))")
                 #endif
                 return MaskedGarmentPaletteSamples(
                     samples: paletteSamples(
@@ -9209,7 +9352,7 @@ private extension UIImage {
                 )
             } catch {
                 #if DEBUG
-                print("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed during source selection: \(error.localizedDescription)")
+                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed during source selection: \(error.localizedDescription)")
                 #endif
                 return nil
             }
@@ -9236,14 +9379,14 @@ private extension UIImage {
             guard let foregroundMask,
                   foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount else {
                 #if DEBUG
-                print("[StyleMatch Color Debug] garmentCrop sampling=skipped reason=noUsableForegroundIntersection")
+                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] garmentCrop sampling=skipped reason=noUsableForegroundIntersection")
                 #endif
                 return nil
             }
             let strongForegroundMask = rawForegroundMask?.adaptivelyErodedStrongMask()
             #if DEBUG
             let strongCoverage = Double(strongForegroundMask?.includedCount ?? 0) / Double(max(1, rawForegroundMask?.includedCount ?? 0))
-            print("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount), strongForeground=\(strongForegroundMask?.includedCount ?? 0), strongCoverage=\(String(format: "%.3f", strongCoverage))")
+            StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount), strongForeground=\(strongForegroundMask?.includedCount ?? 0), strongCoverage=\(String(format: "%.3f", strongCoverage))")
             #endif
             return paletteSamples(
                 width: width,
@@ -9266,17 +9409,18 @@ private extension UIImage {
         )
     }
 
-    private func paletteBackgroundFamilyShares(width: Int, height: Int) -> [String: Double] {
-        guard let rgbBytes = renderedRGBBytes(width: width, height: height) else { return [:] }
+    private func paletteBackgroundSamples(width: Int, height: Int) -> [GarmentPalettePixel] {
+        guard let rgbBytes = renderedRGBBytes(width: width, height: height) else { return [] }
         let allPixelsMask = GarmentRegionMask(
             width: width,
             height: height,
             included: [Bool](repeating: true, count: width * height),
             tier: .foregroundSubject
         )
-        return GarmentColorPaletteEngine.backgroundFamilyShares(
-            from: paletteSamples(width: width, height: height, rgbBytes: rgbBytes, mask: allPixelsMask)
-        )
+        return paletteSamples(width: width, height: height, rgbBytes: rgbBytes, mask: allPixelsMask)
+            .filter { sample in
+                sample.x <= 0.10 || sample.x >= 0.90 || sample.y <= 0.10 || sample.y >= 0.90
+            }
     }
 
     private func paletteSource(for tier: GarmentMaskTier) -> GarmentPaletteSource {

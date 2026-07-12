@@ -225,6 +225,7 @@ extension View {
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
+    @State private var mountedTabs: Set<AppTab> = [.home]
     @StateObject private var liveWeather = StyleMatchLiveWeatherManager()
     @StateObject private var outfitMemoryStore = OutfitMemoryStore()
     @State private var pendingFeedbackPrompt: ScheduledFeedbackPrompt?
@@ -259,6 +260,7 @@ struct ContentView: View {
             }
         }
         .styleMatchOnChange(of: selectedTab) { tab in
+            mountedTabs.insert(tab)
             if tab == .home {
                 checkForPendingFeedbackPrompt()
             } else {
@@ -283,32 +285,42 @@ struct ContentView: View {
                 )
             }
 
-            preservedTab(.scan) {
-                ScanView(selectedTab: $selectedTab)
-            }
-
-            preservedTab(.closet) {
-                ClosetView(selectedTab: $selectedTab)
-            }
-
-            preservedTab(.shop) {
-                if ShoppingTabVisibility.shouldShowShoppingTab() {
-                    ShoppingView(selectedTab: $selectedTab)
-                } else {
-                    HomeView(selectedTab: $selectedTab)
+            if mountedTabs.contains(.scan) {
+                preservedTab(.scan) {
+                    ScanView(selectedTab: $selectedTab)
                 }
             }
 
-            preservedTab(.ai) {
-                if FeatureFlags.conversationalStylist {
-                    StylistChatView()
-                } else {
-                    StableAIFallbackView(selectedTab: $selectedTab)
+            if mountedTabs.contains(.closet) {
+                preservedTab(.closet) {
+                    ClosetView(selectedTab: $selectedTab)
                 }
             }
 
-            preservedTab(.profile) {
-                ProfileView(selectedTab: $selectedTab)
+            if mountedTabs.contains(.shop) {
+                preservedTab(.shop) {
+                    if ShoppingTabVisibility.shouldShowShoppingTab() {
+                        ShoppingView(selectedTab: $selectedTab)
+                    } else {
+                        HomeView(selectedTab: $selectedTab)
+                    }
+                }
+            }
+
+            if mountedTabs.contains(.ai) {
+                preservedTab(.ai) {
+                    if FeatureFlags.conversationalStylist {
+                        StylistChatView()
+                    } else {
+                        StableAIFallbackView(selectedTab: $selectedTab)
+                    }
+                }
+            }
+
+            if mountedTabs.contains(.profile) {
+                preservedTab(.profile) {
+                    ProfileView(selectedTab: $selectedTab)
+                }
             }
         }
     }
@@ -398,6 +410,7 @@ struct ContentView: View {
 
         return Button {
             guard selectedTab != tab else { return }
+            mountedTabs.insert(tab)
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {

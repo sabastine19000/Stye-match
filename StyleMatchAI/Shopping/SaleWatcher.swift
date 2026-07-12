@@ -293,15 +293,7 @@ struct SaleWatcher {
     }
 
     static func activeCatalogProvider() -> ProductCatalogProvider {
-        let config = (try? BundledShoppingIntegrationConfigProvider().config()) ?? .empty
-        if FeatureFlags.remoteCatalogEnabled, let remoteURL = config.catalogBaseURL {
-            return RemoteCatalogProvider(
-                baseURL: remoteURL,
-                cacheDirectory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
-                fallbackProvider: BundledCatalogProvider()
-            )
-        }
-        return BundledCatalogProvider()
+        SharedCatalogProvider()
     }
 
     private func scheduleNotifications(for events: [SaleEvent]) async {
