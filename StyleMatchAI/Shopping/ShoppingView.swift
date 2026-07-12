@@ -1,4 +1,3 @@
-import SafariServices
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
@@ -66,7 +65,6 @@ struct ShoppingView: View {
     @State private var alertsEnabled = false
     @State private var selectedCategory: ProductCategory? = nil
     @State private var searchCriteria = ShoppingSearchCriteria()
-    @State private var selectedProduct: AffiliateProduct?
     @State private var showExpandedDisclosure = false
     @State private var selectedRationaleSheet: RecommendationRationaleSheet?
     @State private var showRecommendationPreferences = false
@@ -74,6 +72,7 @@ struct ShoppingView: View {
     @State private var isLoading = true
     @State private var isSearchingLive = false
     @State private var loadError: String?
+    @State private var catalogDisclosure = ShoppingCatalogDisclosure.fallback
     @StateObject private var profileStore = ProfileStore()
     @StateObject private var outfitMemoryStore = OutfitMemoryStore()
 
@@ -137,10 +136,12 @@ struct ShoppingView: View {
                                 .padding()
                                 .appCard(.shop, radius: 10)
                         }
+                        catalogDisclosureFooter
                     }
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Shopping")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -163,23 +164,6 @@ struct ShoppingView: View {
             .task {
                 await loadCatalog()
             }
-            .sheet(item: $selectedProduct) { product in
-                NavigationStack {
-                    SafariView(url: AffiliateLinkBuilder.outboundURL(for: product))
-                        .navigationTitle(product.name)
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Done") {
-                                    selectedProduct = nil
-                                }
-                            }
-                        }
-                        .onAppear {
-                            store.markViewed(product.id)
-                        }
-                    }
-            }
             .onReceive(NotificationCenter.default.publisher(for: SaleWatcherRouteStore.didReceiveProductRoute)) { notification in
                 if let productID = notification.object as? String {
                     selectProduct(productID: productID)
@@ -197,7 +181,7 @@ struct ShoppingView: View {
                         Text("Shopping through StyleMatch Pro")
                             .font(.title2)
                             .fontWeight(.bold)
-                        Text("We may earn a small commission from qualifying purchases at no extra cost to you. Orders are completed securely with the retailer.")
+                        Text(catalogDisclosure)
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
@@ -241,6 +225,15 @@ struct ShoppingView: View {
             Spacer()
         }
         .lineLimit(1)
+    }
+
+    private var catalogDisclosureFooter: some View {
+        Text(catalogDisclosure)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 4)
+            .accessibilityLabel("Affiliate disclosure: \(catalogDisclosure)")
     }
 
     private var recommendationBasisControls: some View {
@@ -326,7 +319,7 @@ struct ShoppingView: View {
                 ForEach(favoriteSaleEvents) { event in
                     if let product = products.first(where: { $0.id == event.productID }) {
                         Button {
-                            selectedProduct = product
+                            openProductExternally(product)
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(product.name)
@@ -382,11 +375,12 @@ struct ShoppingView: View {
     }
 
     private func saleAlertCard(_ alert: ShoppingSaleAlert) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        let product = products.first { $0.id == alert.productID }
+        let content = HStack(alignment: .top, spacing: 10) {
             Image(systemName: alert.trigger == .backInStock ? "shippingbox.fill" : "tag.fill")
                 .foregroundStyle(.red)
                 .frame(width: 24)
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(alert.productName)
                         .font(.subheadline)
@@ -408,6 +402,26 @@ struct ShoppingView: View {
                         .font(.caption)
                         .fontWeight(.semibold)
                 }
+                if let product {
+                    Label(AffiliateProductViewModel(product: product).actionTitle, systemImage: "arrow.up.forward.app")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .contentShape(Rectangle())
+
+        return Group {
+            if let product {
+                Button {
+                    openProductExternally(product)
+                } label: {
+                    content
+                }
+                .buttonStyle(.plain)
+            } else {
+                content
             }
         }
         .padding()
@@ -536,7 +550,7 @@ struct ShoppingView: View {
         let viewModel = AffiliateProductViewModel(product: product, reasonText: reason, matchPercent: matchPercent)
         return VStack(alignment: .leading, spacing: 10) {
             Button {
-                selectedProduct = product
+                openProductExternally(product)
             } label: {
                 HStack(alignment: .top, spacing: 12) {
                     AsyncImage(url: product.imageURL) { phase in
@@ -632,6 +646,16 @@ struct ShoppingView: View {
 
             whyRecommendationButton(product: product, rationale: rationale)
 
+            Button {
+                openProductExternally(product)
+            } label: {
+                Label(viewModel.actionTitle, systemImage: "arrow.up.forward.app")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
             completeTheLookSection(for: product)
 
             HStack(spacing: 8) {
@@ -718,7 +742,7 @@ struct ShoppingView: View {
                         HStack(spacing: 8) {
                             ForEach(suggestions) { suggestion in
                                 Button {
-                                    selectedProduct = suggestion
+                                    openProductExternally(suggestion)
                                 } label: {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(suggestion.name)
@@ -940,6 +964,7 @@ struct ShoppingView: View {
             async let loadedProducts = SharedProductCatalogLoader.shared.products()
             async let loadedStores = BundledStoreDirectoryProvider().stores()
             let loaded = try await loadedProducts
+            let disclosure = await SharedProductCatalogLoader.shared.disclosure()
             let stores = (try? await loadedStores) ?? []
             let preferences = await MainActor.run { currentRecommendationPreferences() }
             let eligibleCatalog = RecommendationRationaleBuilder.budgetFiltered(
@@ -967,6 +992,7 @@ struct ShoppingView: View {
             let favoriteSales = watcher.currentFavoriteSaleEvents(catalog: loaded)
             await MainActor.run {
                 products = loaded
+                catalogDisclosure = disclosure
                 supportedStores = stores
                 recommendations = visibleRecommendations
                 alertsEnabled = store.saleNotificationsEnabled
@@ -1055,7 +1081,15 @@ struct ShoppingView: View {
     }
 
     private func selectProduct(productID: String) {
-        selectedProduct = products.first { $0.id == productID }
+        guard let product = products.first(where: { $0.id == productID }) else { return }
+        openProductExternally(product)
+    }
+
+    private func openProductExternally(_ product: AffiliateProduct) {
+        store.markViewed(product.id)
+        #if canImport(UIKit)
+        UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])
+        #endif
     }
 
     private func isRecentSaleEvent(productID: String) -> Bool {
@@ -1071,14 +1105,4 @@ struct ShoppingView: View {
         formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
     }
-}
-
-struct SafariView: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context: Context) -> SFSafariViewController {
-        SFSafariViewController(url: url)
-    }
-
-    func updateUIViewController(_ uiViewController: SFSafariViewController, context: Context) {}
 }

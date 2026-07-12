@@ -4,6 +4,14 @@ protocol ProductCatalogProvider {
     func products() async throws -> [AffiliateProduct]
 }
 
+protocol CatalogDisclosureProviding {
+    func disclosure() async -> String?
+}
+
+enum ShoppingCatalogDisclosure {
+    static let fallback = "As an Amazon Associate I earn from qualifying purchases. StyleMatch Pro may earn a commission at no extra cost to you."
+}
+
 protocol ProductSearchProvider {
     var sourceName: String { get }
     func search(_ query: ProductSearchQuery) async throws -> [AffiliateProduct]
@@ -81,6 +89,17 @@ actor SharedProductCatalogLoader {
             inFlight = nil
             throw error
         }
+    }
+
+    func disclosure() async -> String {
+        guard let disclosureProvider = provider as? CatalogDisclosureProviding else {
+            return ShoppingCatalogDisclosure.fallback
+        }
+        let disclosure = await disclosureProvider.disclosure()?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let disclosure, !disclosure.isEmpty {
+            return disclosure
+        }
+        return ShoppingCatalogDisclosure.fallback
     }
 
     private func startBackgroundRefreshIfNeeded() {
@@ -272,7 +291,7 @@ struct BundledCatalogProvider: ProductCatalogProvider {
 
 typealias CatalogProductSearchProvider = CatalogSearchProvider
 
-struct RemoteCatalogProvider: ProductCatalogProvider {
+struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding {
     let baseURL: URL
     let cacheDirectory: URL
     let fallbackProvider: ProductCatalogProvider
@@ -292,18 +311,44 @@ struct RemoteCatalogProvider: ProductCatalogProvider {
 
         do {
             let data = try await fetchRemoteData()
-            let decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)
+            let decoded: [AffiliateProduct]
+            do {
+                decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)
+            } catch {
+                #if DEBUG
+                print("[StyleMatch Remote Catalog] Decode failed: \(type(of: error)) \(error.localizedDescription)")
+                #endif
+                throw error
+            }
             guard !decoded.isEmpty else {
+                #if DEBUG
+                print("[StyleMatch Remote Catalog] Decode produced zero visible products.")
+                #endif
                 throw ProductCatalogProviderError.missingCatalog
             }
             try cache(data)
             return decoded
         } catch {
+            #if DEBUG
+            print("[StyleMatch Remote Catalog] Products load failed: \(type(of: error)) \(error.localizedDescription)")
+            #endif
             if let cached = try? cachedProducts(), !cached.isEmpty {
                 return cached
             }
             throw ProductCatalogProviderError.missingCatalog
         }
+    }
+
+    func disclosure() async -> String? {
+        if let data = try? Data(contentsOf: cacheFileURL()),
+           let disclosure = try? Self.decodeRemoteDisclosure(data) {
+            return disclosure
+        }
+        guard let data = try? await fetchRemoteData() else {
+            return nil
+        }
+        try? cache(data)
+        return try? Self.decodeRemoteDisclosure(data)
     }
 
     static func decodeRemoteProducts(_ data: Data, baseURL: URL, regionCode: String = Self.currentRegionCode) throws -> [AffiliateProduct] {
@@ -354,6 +399,10 @@ struct RemoteCatalogProvider: ProductCatalogProvider {
         }
     }
 
+    static func decodeRemoteDisclosure(_ data: Data) throws -> String? {
+        try JSONDecoder.catalog.decode(RemoteProductsResponse.self, from: data).disclosure
+    }
+
     private func fetchRemoteData() async throws -> Data {
         var components = URLComponents(url: baseURL.appendingPathComponent("v1/products"), resolvingAgainstBaseURL: false)
         components?.queryItems = [
@@ -370,7 +419,17 @@ struct RemoteCatalogProvider: ProductCatalogProvider {
         print("[StyleMatch Remote Catalog] Fetching catalog from \(url.absoluteString)")
         #endif
         let (data, response) = try await urlSession.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse else {
+            #if DEBUG
+            print("[StyleMatch Remote Catalog] Missing HTTP response for \(url.absoluteString)")
+            #endif
+            throw ProductCatalogProviderError.missingCatalog
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            #if DEBUG
+            let body = String(data: data.prefix(240), encoding: .utf8) ?? "<non-utf8 body>"
+            print("[StyleMatch Remote Catalog] HTTP \(http.statusCode) for \(url.absoluteString): \(body)")
+            #endif
             throw ProductCatalogProviderError.missingCatalog
         }
         return data
@@ -428,6 +487,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider {
 
 private struct RemoteProductsResponse: Decodable {
     let products: [RemoteProduct]
+    let disclosure: String?
 }
 
 private struct RemoteProduct: Decodable {

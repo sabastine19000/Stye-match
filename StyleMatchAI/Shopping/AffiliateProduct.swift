@@ -456,6 +456,7 @@ struct AffiliateProductViewModel: Equatable {
     let ratingText: String?
     let shippingText: String?
     let outboundURL: URL
+    let actionTitle: String
 
     init(product: AffiliateProduct, reasonText: String? = nil, matchPercent: Int? = nil, now: Date = Date()) {
         self.id = product.id
@@ -487,6 +488,7 @@ struct AffiliateProductViewModel: Equatable {
         }
         self.shippingText = product.estimatedShippingText
         self.outboundURL = AffiliateLinkBuilder.outboundURL(for: product)
+        self.actionTitle = product.isAmazonSourced ? "View on Amazon" : "View Product"
 
         if product.retailer.name.caseInsensitiveCompare("Amazon") == .orderedSame {
             self.priceText = "See price at Amazon"
@@ -545,5 +547,12 @@ struct AffiliateProductViewModel: Equatable {
         if days == 1 { return "Sale ends tomorrow" }
         let hours = max(1, Int(seconds / 3_600))
         return "Sale ends in \(hours) hr"
+    }
+}
+
+extension AffiliateProduct {
+    var isAmazonSourced: Bool {
+        if affiliateProvider == .amazon { return true }
+        return retailer.name.caseInsensitiveCompare("Amazon") == .orderedSame
     }
 }

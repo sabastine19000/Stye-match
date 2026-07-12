@@ -1558,6 +1558,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertEqual(viewModel.priceText, "See price at Amazon")
         XCTAssertNil(viewModel.originalPriceText)
+        XCTAssertEqual(viewModel.actionTitle, "View on Amazon")
     }
 
     func testProductViewModelOmitsBrandWhenItDuplicatesRetailer() {
@@ -1572,6 +1573,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(viewModel.brandText)
         XCTAssertEqual(viewModel.retailerName, "Macy's")
         XCTAssertEqual(viewModel.soldAndShippedText, "Sold and shipped by Macy's")
+        XCTAssertEqual(viewModel.actionTitle, "View Product")
     }
 
     func testProductViewModelOmitsEmptyBrandAndKeepsDistinctBrand() {
@@ -1723,12 +1725,15 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let shopView = try projectSource("StyleMatchAI/ShopView.swift")
         let shoppingView = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
         let storeSearchView = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+        let productCatalogProvider = try projectSource("StyleMatchAI/Shopping/ProductCatalogProvider.swift")
 
         for source in [shopView, shoppingView, storeSearchView] {
             XCTAssertFalse(source.contains("Tracking ID"))
             XCTAssertFalse(source.contains("affiliateTrackingID)."))
-            XCTAssertTrue(source.contains("We may earn a small commission from qualifying purchases at no extra cost to you"))
+            XCTAssertTrue(source.contains("ShoppingCatalogDisclosure.fallback") || source.contains("catalogDisclosure"))
         }
+        XCTAssertTrue(productCatalogProvider.contains("As an Amazon Associate I earn from qualifying purchases."))
+        XCTAssertTrue(productCatalogProvider.contains("StyleMatch Pro may earn a commission at no extra cost to you."))
     }
 
     func testRecommendationRationaleUsesDominantProfileColor() {
@@ -2642,6 +2647,13 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(ShoppingSearchEngine.filterStores(stores, query: "").contains { $0.name == "Disabled" })
     }
 
+    func testStoreSearchUsesSharedWorkerBackedCatalogProvider() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+
+        XCTAssertTrue(source.contains("CatalogSearchProvider(catalogProvider: SharedCatalogProvider())"))
+        XCTAssertTrue(source.contains("[StyleMatch Store Search] Search failed:"))
+    }
+
     func testLiveSearchFlagDefaultsOffAndResolverStaysDormant() throws {
         XCTAssertFalse(FeatureFlags.liveSearchEnabled)
         XCTAssertFalse(FeatureFlags.pushNotificationsEnabled)
@@ -2737,7 +2749,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             }
           ],
           "next_cursor": null,
-          "disclosure": "As an affiliate, StyleMatch Pro may earn a commission from qualifying purchases at no extra cost to you."
+          "disclosure": "As an Amazon Associate I earn from qualifying purchases. StyleMatch Pro may earn a commission at no extra cost to you."
         }
         """.utf8)
 
@@ -2761,6 +2773,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(products.first?.retailer.trackingID, AffiliateLinkBuilder.pendingApprovalTrackingID)
         XCTAssertEqual(products.first?.currencyCode, "USD")
         XCTAssertEqual(products.first?.availableCountries, ["US", "CA"])
+        XCTAssertEqual(try RemoteCatalogProvider.decodeRemoteDisclosure(CapturingURLProtocol.responseData), ShoppingCatalogDisclosure.fallback)
 
         let url = try XCTUnwrap(CapturingURLProtocol.lastURL)
         let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))

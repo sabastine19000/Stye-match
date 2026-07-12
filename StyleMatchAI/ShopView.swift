@@ -10,7 +10,7 @@ struct ShopView: View {
             Text("The active shopping experience now uses ShoppingView with backend catalog routing and safe affiliate fallback handling.")
                 .foregroundStyle(.secondary)
 
-            Text("We may earn a small commission from qualifying purchases at no extra cost to you. Orders are completed securely with the retailer.")
+            Text(ShoppingCatalogDisclosure.fallback)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

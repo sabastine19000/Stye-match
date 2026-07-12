@@ -1,5 +1,7 @@
-import SafariServices
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct StoreSearchView: View {
     @State private var text = ""
@@ -19,7 +21,6 @@ struct StoreSearchView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var partialFailureNote: String?
-    @State private var selectedProduct: AffiliateProduct?
     @State private var showFilters = false
     @State private var showDisclosure = false
     @State private var searchTask: Task<Void, Never>?
@@ -54,7 +55,7 @@ struct StoreSearchView: View {
                                     localStore.toggleFavorite(ranked.product.id)
                                     rerank()
                                 },
-                                onTap: { selectedProduct = ranked.product }
+                                onTap: { openProductExternally(ranked.product) }
                             )
                         }
                     }
@@ -68,12 +69,13 @@ struct StoreSearchView: View {
                     }
                 }
 
-                Text("We may earn a small commission from qualifying purchases at no extra cost to you. Orders are completed securely with the retailer.")
+                Text(ShoppingCatalogDisclosure.fallback)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding()
         }
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Store Search")
         .appScreenBackground(.shop)
         .toolbar {
@@ -89,21 +91,6 @@ struct StoreSearchView: View {
             await loadRetailersAndSearch()
         }
         .onChange(of: text) { _ in debouncedSearch() }
-        .sheet(item: $selectedProduct) { product in
-            NavigationStack {
-                SafariView(url: AffiliateLinkBuilder.outboundURL(for: product))
-                    .navigationTitle(product.name)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") {
-                                selectedProduct = nil
-                            }
-                        }
-                    }
-                    .onAppear { localStore.markViewed(product.id) }
-            }
-        }
         .sheet(isPresented: $showFilters) {
             filterSheet
         }
@@ -113,7 +100,7 @@ struct StoreSearchView: View {
                     Text("Affiliate Disclosure")
                         .font(.title2)
                         .fontWeight(.bold)
-                    Text("We may earn a small commission from qualifying purchases at no extra cost to you. StyleMatch Pro is not the seller. Checkout, fulfillment, shipping, refunds, returns, and customer service are handled by the retailer.")
+                    Text(ShoppingCatalogDisclosure.fallback)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -141,6 +128,13 @@ struct StoreSearchView: View {
         }
         .padding()
         .appCard(.shop, radius: 10)
+    }
+
+    private func openProductExternally(_ product: AffiliateProduct) {
+        localStore.markViewed(product.id)
+        #if canImport(UIKit)
+        UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])
+        #endif
     }
 
     private var searchBar: some View {
@@ -285,7 +279,7 @@ struct StoreSearchView: View {
         }
 
         do {
-            let provider: ProductSearchProvider = CatalogSearchProvider()
+            let provider: ProductSearchProvider = CatalogSearchProvider(catalogProvider: SharedCatalogProvider())
             let results = try await provider.search(currentQuery())
             await MainActor.run {
                 products = results
@@ -293,6 +287,9 @@ struct StoreSearchView: View {
                 isLoading = false
             }
         } catch {
+            #if DEBUG
+            print("[StyleMatch Store Search] Search failed: \(type(of: error)) \(error.localizedDescription)")
+            #endif
             await MainActor.run {
                 errorMessage = "We could not search right now. Please try again."
                 isLoading = false
@@ -399,6 +396,10 @@ private struct SearchProductCard: View {
                     if let footnote = viewModel.footnote {
                         Text(footnote).font(.caption2).foregroundStyle(.secondary)
                     }
+                    Label(viewModel.actionTitle, systemImage: "arrow.up.forward.app")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.orange)
                 }
             }
             .padding()
