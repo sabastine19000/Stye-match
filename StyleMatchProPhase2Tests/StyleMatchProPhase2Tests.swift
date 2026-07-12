@@ -1398,6 +1398,9 @@ final class StyleMatchProPhase2Tests: XCTestCase {
                     accessoryUse: 4
                 ),
                 detectedGarments: ["shirt"],
+                detectedItemConfidences: [
+                    DetectedItemConfidence(item: "shirt", confidence: 96)
+                ],
                 colors: ["navy"]
             )
             let message = StylistMessageComposer.scoreEncouragement(input: input)
@@ -1421,6 +1424,49 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertTrue(message.body.contains("58/100"))
         XCTAssertTrue(message.body.localizedCaseInsensitiveContains("score itself"))
+    }
+
+    func testStylistNarrationUsesNeutralNounWhenGarmentIsUnreliableOrCompeting() {
+        let lowConfidenceTie = StylistMessageComposer.scoreEncouragement(
+            input: StylistScoreMessageInput(
+                score: 82,
+                scoreTier: "Strong",
+                scoreBreakdown: nil,
+                detectedGarments: ["tie"],
+                detectedItemConfidences: [DetectedItemConfidence(item: "tie", confidence: 78)],
+                colors: ["gray"]
+            )
+        )
+        XCTAssertTrue(lowConfidenceTie.body.contains("the detected gray outfit item"))
+        XCTAssertFalse(lowConfidenceTie.body.contains("gray tie"))
+
+        let competingNouns = StylistMessageComposer.scoreEncouragement(
+            input: StylistScoreMessageInput(
+                score: 82,
+                scoreTier: "Strong",
+                scoreBreakdown: nil,
+                detectedGarments: ["jacket", "polo"],
+                detectedItemConfidences: [
+                    DetectedItemConfidence(item: "jacket", confidence: 95),
+                    DetectedItemConfidence(item: "polo", confidence: 92)
+                ],
+                colors: ["navy"]
+            )
+        )
+        XCTAssertTrue(competingNouns.body.contains("the detected navy outfit item"))
+        XCTAssertFalse(competingNouns.body.contains("navy jacket"))
+
+        let reliablePolo = StylistMessageComposer.scoreEncouragement(
+            input: StylistScoreMessageInput(
+                score: 82,
+                scoreTier: "Strong",
+                scoreBreakdown: nil,
+                detectedGarments: ["polo"],
+                detectedItemConfidences: [DetectedItemConfidence(item: "polo", confidence: 96)],
+                colors: ["navy"]
+            )
+        )
+        XCTAssertTrue(reliablePolo.body.contains("the detected navy polo shirt"))
     }
 
     func testStylistMessageComposerScoreBandBoundaries() {
@@ -1659,7 +1705,10 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     func testDisplayLabelSanitizerBlocksInternalVisionLabels() {
         XCTAssertNil(DisplayLabelSanitizer.displayName(for: "Person Wearing Outfit"))
         XCTAssertNil(DisplayLabelSanitizer.displayName(for: "Textile"))
+        XCTAssertNil(DisplayLabelSanitizer.displayName(for: "outfit item"))
         XCTAssertEqual(DisplayLabelSanitizer.displayName(for: "Loafer"), "loafers")
+        XCTAssertEqual(DisplayLabelSanitizer.displayName(for: "polo shirt"), "polo shirt")
+        XCTAssertEqual(DisplayLabelSanitizer.displayName(for: "tie"), "tie")
 
         let phrase = DisplayLabelSanitizer.wornItemPhrase(
             rawLabel: "Person Wearing Outfit",
@@ -1670,6 +1719,64 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(phrase.localizedCaseInsensitiveContains("gray"))
         XCTAssertFalse(phrase.localizedCaseInsensitiveContains("Person Wearing"))
         XCTAssertEqual(phrase, "what you wore yesterday")
+    }
+
+    func testShoppingLabelsRecoverRealGarmentFromConfidenceWithoutPlaceholder() {
+        let analysis = OutfitAnalysisResult(
+            score: 82,
+            colorMatch: "Strong",
+            occasionFit: "Everyday",
+            styleBalance: "Casual",
+            colorHarmony: "Balanced",
+            styleCoordination: "Coordinated",
+            formality: "Casual",
+            seasonalMatch: "Mild",
+            summary: "Synthetic summary",
+            outfitDescription: "Synthetic outfit",
+            detectedClothingItems: ["outfit item"],
+            colorPalette: ["navy"],
+            environment: "indoor",
+            imageQuality: "clear",
+            skinToneStyleNote: "No skin-tone recommendation needed.",
+            detectedItemConfidences: [
+                DetectedItemConfidence(item: "Textile", confidence: 92),
+                DetectedItemConfidence(item: "polo", confidence: 90)
+            ],
+            suggestions: [],
+            recommendations: []
+        )
+
+        XCTAssertEqual(analysis.safeDetectedClothingItems, ["polo shirt"])
+        XCTAssertFalse(analysis.safeDetectedClothingItems.contains("outfit item"))
+    }
+
+    func testSavedScoreCopyUsesOneSourceAndUserFacingNarration() {
+        let description = ScanMessageCopy.savedScoreDescription(
+            confidenceLabel: "High",
+            qualityDescription: "Source: local detection. Clothing detected: polo shirt.",
+            guidance: "The outfit signal is strong.",
+            savedResultMessage: "If you open this scan again, Style Match Pro uses this saved result unless the outfit is new."
+        )
+
+        XCTAssertEqual(description.components(separatedBy: "Source:").count - 1, 1)
+        XCTAssertTrue(description.hasPrefix("High confidence."))
+        XCTAssertFalse(description.localizedCaseInsensitiveContains("the customer"))
+    }
+
+    func testConfidenceVocabularyUsesHighMediumLowLabels() throws {
+        XCTAssertEqual(GarmentPaletteConfidence.confident.userFacingLabel, "High")
+        XCTAssertEqual(GarmentPaletteConfidence.low.userFacingLabel, "Low")
+
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertTrue(scanSource.contains("return \"Medium\""))
+        XCTAssertFalse(scanSource.contains("colorPaletteConfidence.rawValue"))
+    }
+
+    func testTargetDisplayNameDropsNumericSuffix() throws {
+        let project = try projectSource("StyleMatchAI.xcodeproj/project.pbxproj")
+
+        XCTAssertFalse(project.contains("StyleMatch Pro 1"))
+        XCTAssertEqual(project.components(separatedBy: "INFOPLIST_KEY_CFBundleDisplayName = \"StyleMatch Pro\";").count - 1, 2)
     }
 
     func testRecommendationRationaleUsesTrendingFallbackForColdStart() {

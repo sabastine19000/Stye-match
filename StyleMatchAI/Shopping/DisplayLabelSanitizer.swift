@@ -42,7 +42,14 @@ enum DisplayLabelSanitizer {
         "fabric"
     ]
 
+    private static let genericFallbackTerms: Set<String> = [
+        "outfit item",
+        "item",
+        "piece"
+    ]
+
     private static let displayTerms: [String: String] = [
+        "accessory": "accessory",
         "bag": "bag",
         "belt": "belt",
         "blazer": "blazer",
@@ -71,6 +78,8 @@ enum DisplayLabelSanitizer {
         "pants": "pants",
         "polo": "polo shirt",
         "polo shirt": "polo shirt",
+        "robe": "robe",
+        "scarf": "scarf",
         "shirt": "shirt",
         "shoe": "shoes",
         "shoes": "shoes",
@@ -80,18 +89,30 @@ enum DisplayLabelSanitizer {
         "sneaker": "sneakers",
         "sneakers": "sneakers",
         "sweater": "sweater",
+        "sleepwear": "sleepwear",
         "tee": "t-shirt",
         "t-shirt": "t-shirt",
         "t shirt": "t-shirt",
         "tank": "tank top",
+        "tie": "tie",
         "trouser": "trousers",
         "trousers": "trousers",
+        "suit": "suit",
+        "slipper": "slippers",
+        "slippers": "slippers",
         "watch": "watch"
     ]
 
     static func displayName(for rawLabel: String) -> String? {
         let normalized = normalize(rawLabel)
         guard !normalized.isEmpty else { return nil }
+
+        // Legacy scans may contain this synthetic fallback. It is not a real
+        // detected label, so keep it out of shopping copy without reporting
+        // it as an allowlist miss.
+        if genericFallbackTerms.contains(normalized) {
+            return nil
+        }
 
         if isBlocked(normalized) {
             report(normalized, reason: "blocked")

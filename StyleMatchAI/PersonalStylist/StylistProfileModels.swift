@@ -987,7 +987,7 @@ struct FormalityMismatchEvaluator {
             return FormalityMismatch(
                 occasion: occasion,
                 detectedFormality: formality,
-                message: "StyleMatch Pro could not confidently read this outfit for \(occasion.displayName.lowercased()). Try a clearer full-outfit scan before relying on this for the occasion."
+                message: "StyleMatch Pro could not read this outfit clearly enough for \(occasion.displayName.lowercased()). Try a clearer full-outfit scan before relying on this for the occasion."
             )
         }
 

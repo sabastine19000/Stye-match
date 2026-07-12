@@ -94,7 +94,7 @@ struct VoiceScriptBuilder {
 
     private static func scanExplanationSource(from analysis: OutfitAnalysisResult, score: Int, style: String, rating: String) -> String {
         if style == "unrecognized" {
-            return "I could not identify this outfit clearly enough to give confident style guidance. Try a clearer, fuller photo with the clothing visible."
+            return "I could not identify this outfit clearly enough to give reliable style guidance. Try a clearer, fuller photo with the clothing visible."
         }
 
         var parts = [

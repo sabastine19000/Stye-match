@@ -4834,7 +4834,12 @@ struct ScanView: View {
                 let confidence = confidenceLevel(for: validation, labels: labels)
                 let message = ScanMessage(
                     title: confidence == .low ? "Clearer photo recommended" : savedResult.title(defaultNewTitle: "Outfit score saved", repeatTitle: "Previous score restored"),
-                    description: "\(confidence.label) confidence. Source: \(savedResult.isRepeat ? "saved analysis" : "new scan"). \(qualityDescription) \(confidence.customerGuidance) \(savedResult.message)",
+                    description: ScanMessageCopy.savedScoreDescription(
+                        confidenceLabel: confidence.label,
+                        qualityDescription: qualityDescription,
+                        guidance: confidence.customerGuidance,
+                        savedResultMessage: savedResult.message
+                    ),
                     icon: savedResult.isRepeat ? "clock.arrow.circlepath" : "checkmark.seal",
                     isSuccess: true
                 )
@@ -5160,7 +5165,7 @@ struct ScanView: View {
             isForced: forceReanalyze,
             message: forceReanalyze
                 ? "You asked Style Match Pro to refresh this outfit, so it updated the saved analysis while keeping scoring consistent for the same clothes."
-                : "Style Match Pro saved this outfit analysis as \(analysis.score) \(scoreRatingTitle(for: analysis.score)) on this iPhone. If the customer opens this scan again, the app pulls this saved result unless the outfit is new."
+                : "Style Match Pro saved this outfit analysis as \(analysis.score) \(scoreRatingTitle(for: analysis.score)) on this iPhone. If you open this scan again, Style Match Pro uses this saved result unless the outfit is new."
         )
     }
 
@@ -5221,6 +5226,7 @@ struct ScanView: View {
             scoreTier: scoreRatingTitle(for: analysis.score),
             scoreBreakdown: analysis.scoreBreakdown,
             detectedGarments: analysis.safeDetectedClothingItems,
+            detectedItemConfidences: analysis.detectedItemConfidences,
             colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: activeScanOccasionText(environment: analysis.environment),
@@ -5259,6 +5265,7 @@ struct ScanView: View {
             scoreTier: scoreRatingTitle(for: analysis.score),
             scoreBreakdown: analysis.scoreBreakdown,
             detectedGarments: analysis.safeDetectedClothingItems,
+            detectedItemConfidences: analysis.detectedItemConfidences,
             colors: analysis.colorPalette,
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: activeScanOccasionText(environment: analysis.environment),
@@ -5688,7 +5695,7 @@ struct ScanView: View {
                 notes: analysis.colorPaletteConfidence == .confident
                     ? analysis.colorPaletteNotes
                     : "Low confidence: colors were hard to read in this photo. Do not assert specific garment colors.",
-                confidenceLevel: analysis.colorPaletteConfidence.rawValue
+                confidenceLevel: analysis.colorPaletteConfidence.userFacingLabel
             ),
             patterns: inferredPatternFacts(for: analysis),
             fabricsAndTextures: inferredFabricFacts(for: analysis),
@@ -5753,7 +5760,7 @@ struct ScanView: View {
         let combined = (analysis.outfitDescription + " " + analysis.detectedClothingItems.joined(separator: " ") + " " + analysis.summary).lowercased()
         let fabrics = ["denim", "cotton", "linen", "leather", "wool", "silk", "ankara", "aso oke", "kente", "embroidered", "knit"]
         let matches = fabrics.filter { combined.contains($0) }
-        return matches.isEmpty ? ["fabric not confidently detected"] : matches
+        return matches.isEmpty ? ["fabric was not reliably detected"] : matches
     }
 
     private func inferredAccessoryFacts(for analysis: OutfitAnalysisResult) -> [String] {
@@ -6008,7 +6015,7 @@ struct ScanView: View {
         }
 
         let garmentText = decoded.detectedGarments.isEmpty
-            ? "Visible garments were not clear enough for the AI stylist to list confidently."
+            ? "Visible garments were not clear enough for the AI stylist to list reliably."
             : decoded.detectedGarments.joined(separator: ", ")
         let paletteText = decoded.garmentColors.isEmpty
             ? "Garment colors were unclear."

@@ -1,5 +1,16 @@
 import Foundation
 
+enum ScanMessageCopy {
+    static func savedScoreDescription(
+        confidenceLabel: String,
+        qualityDescription: String,
+        guidance: String,
+        savedResultMessage: String
+    ) -> String {
+        "\(confidenceLabel) confidence. \(qualityDescription) \(guidance) \(savedResultMessage)"
+    }
+}
+
 struct RoadmapVersion: Identifiable {
     let id = UUID()
     let title: String
@@ -81,7 +92,7 @@ struct OutfitAnalysisResult: Codable {
         self.seasonalMatch = seasonalMatch
         self.summary = summary
         self.outfitDescription = outfitDescription
-        self.detectedClothingItems = GarmentLabelMapper.sanitizedTerms(from: detectedClothingItems, fallback: "outfit item")
+        self.detectedClothingItems = GarmentLabelMapper.sanitizedTerms(from: detectedClothingItems)
         self.colorPalette = colorPalette
         self.colorPaletteMaskingApplied = colorPaletteMaskingApplied
         self.colorPaletteMaskTier = colorPaletteMaskTier
@@ -90,7 +101,7 @@ struct OutfitAnalysisResult: Codable {
             ?? (colorPaletteConfidence == .confident ? 80 : 40)
         self.colorPaletteNotes = colorPaletteNotes
             ?? (colorPaletteConfidence == .confident
-                ? "Garment colors came from the completed scan palette."
+                ? "High confidence: garment colors came from the completed scan palette."
                 : "Low confidence: colors were hard to read in this photo.")
         self.environment = environment
         self.imageQuality = imageQuality
@@ -115,8 +126,7 @@ struct OutfitAnalysisResult: Codable {
         summary = try container.decode(String.self, forKey: .summary)
         outfitDescription = try container.decode(String.self, forKey: .outfitDescription)
         detectedClothingItems = GarmentLabelMapper.sanitizedTerms(
-            from: try container.decode([String].self, forKey: .detectedClothingItems),
-            fallback: "outfit item"
+            from: try container.decode([String].self, forKey: .detectedClothingItems)
         )
         colorPalette = try container.decode([String].self, forKey: .colorPalette)
         colorPaletteMaskingApplied = try container.decodeIfPresent(Bool.self, forKey: .colorPaletteMaskingApplied) ?? true
@@ -126,7 +136,7 @@ struct OutfitAnalysisResult: Codable {
             ?? (colorPaletteConfidence == .confident ? 80 : 40)
         colorPaletteNotes = try container.decodeIfPresent(String.self, forKey: .colorPaletteNotes)
             ?? (colorPaletteConfidence == .confident
-                ? "Garment colors came from the completed scan palette."
+                ? "High confidence: garment colors came from the completed scan palette."
                 : "Low confidence: colors were hard to read in this photo.")
         environment = try container.decode(String.self, forKey: .environment)
         imageQuality = try container.decode(String.self, forKey: .imageQuality)
@@ -221,7 +231,15 @@ enum GarmentLabelMapper {
 
 extension OutfitAnalysisResult {
     var safeDetectedClothingItems: [String] {
-        GarmentLabelMapper.sanitizedTerms(from: detectedClothingItems, fallback: "outfit item")
+        let storedItems = GarmentLabelMapper.sanitizedTerms(from: detectedClothingItems)
+        if !storedItems.isEmpty {
+            return storedItems
+        }
+
+        return detectedItemConfidences
+            .sorted { $0.confidence > $1.confidence }
+            .compactMap { GarmentLabelMapper.humanReadableTerm(for: $0.item) }
+            .removingDuplicates()
     }
 }
 

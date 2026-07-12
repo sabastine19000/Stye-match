@@ -49,7 +49,7 @@ final class Build16PaletteTruthTests: XCTestCase {
 
         XCTAssertTrue(source.contains("Colors were hard to read in this photo"))
         XCTAssertTrue(source.contains("colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : []"))
-        XCTAssertTrue(source.contains("confidenceLevel: analysis.colorPaletteConfidence.rawValue"))
+        XCTAssertTrue(source.contains("confidenceLevel: analysis.colorPaletteConfidence.userFacingLabel"))
         XCTAssertTrue(source.contains("Do not assert specific garment colors"))
     }
 

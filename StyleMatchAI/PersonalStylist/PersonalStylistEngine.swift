@@ -5,6 +5,7 @@ struct PersonalStylistEngineInput {
     let scoreTier: String
     let scoreBreakdown: OutfitScoreBreakdown?
     let detectedGarments: [String]
+    let detectedItemConfidences: [DetectedItemConfidence]
     let colors: [String]
     let detectedStyle: String
     let occasion: String
@@ -21,6 +22,7 @@ struct PersonalStylistEngineInput {
         scoreTier: String,
         scoreBreakdown: OutfitScoreBreakdown?,
         detectedGarments: [String],
+        detectedItemConfidences: [DetectedItemConfidence] = [],
         colors: [String],
         detectedStyle: String,
         occasion: String,
@@ -36,6 +38,7 @@ struct PersonalStylistEngineInput {
         self.scoreTier = scoreTier
         self.scoreBreakdown = scoreBreakdown
         self.detectedGarments = detectedGarments
+        self.detectedItemConfidences = detectedItemConfidences
         self.colors = colors
         self.detectedStyle = detectedStyle
         self.occasion = occasion
@@ -128,6 +131,7 @@ enum PersonalStylistEngine {
             scoreTier: input.scoreTier,
             scoreBreakdown: input.scoreBreakdown,
             detectedGarments: input.detectedGarments,
+            detectedItemConfidences: input.detectedItemConfidences,
             colors: input.colors,
             detectedStyle: input.detectedStyle,
             occasion: input.occasion,

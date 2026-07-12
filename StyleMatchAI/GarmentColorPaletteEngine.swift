@@ -801,6 +801,15 @@ enum GarmentPaletteSourceSelector {
 enum GarmentPaletteConfidence: String, Codable, Equatable {
     case confident
     case low
+
+    var userFacingLabel: String {
+        switch self {
+        case .confident:
+            return "High"
+        case .low:
+            return "Low"
+        }
+    }
 }
 
 enum GarmentPaletteSource: String, Codable, Equatable {

@@ -98,7 +98,8 @@ struct ItemFingerprintMatcher {
         scanID: String,
         scanDate: Date = Date()
     ) -> [GarmentRecord] {
-        let garments = analysis.safeDetectedClothingItems.isEmpty ? ["outfit item"] : analysis.safeDetectedClothingItems
+        let garments = analysis.safeDetectedClothingItems
+        guard !garments.isEmpty else { return [] }
         let colors = analysis.colorPalette
         let styleTags = [analysis.styleBalance, analysis.formality]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

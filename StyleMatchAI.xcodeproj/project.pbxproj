@@ -587,7 +587,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = StyleMatchAI/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro 1";
+				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Style Match Pro uses your camera to scan outfit and clothing photos.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Style Match Pro uses your location to show live weather for outfit recommendations.";
@@ -623,7 +623,7 @@
 				DEVELOPMENT_ASSET_PATHS = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = StyleMatchAI/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro 1";
+				INFOPLIST_KEY_CFBundleDisplayName = "StyleMatch Pro";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Style Match Pro uses your camera to scan outfit and clothing photos.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Style Match Pro uses your location to show live weather for outfit recommendations.";
