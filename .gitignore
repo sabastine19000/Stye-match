@@ -1,6 +1,7 @@
 Secrets.xcconfig
 *.xcuserstate
 xcuserdata/
+**/xcuserdata/
 .DS_Store
 .build/
 Build/
