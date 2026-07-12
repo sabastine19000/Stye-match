@@ -638,8 +638,96 @@ final class Build16PaletteTruthTests: XCTestCase {
         XCTAssertEqual(FashionColorFamilyCatalog.family(for: olive.palette.first ?? ""), "green")
 
         let reflectedBlue = palette(garment: (180, 165, 205), reference: (230, 175, 200))
+        XCTAssertGreaterThanOrEqual(FashionColorCatalog.saturation(red: 180, green: 165, blue: 205), 0.08)
         XCTAssertEqual(reflectedBlue.palette.first, "light blue")
         XCTAssertTrue(reflectedBlue.debug.illuminantReference.contains("bright-region"))
+    }
+
+    func testPreCorrectionNeutralityGuardKeepsGrayTeeNeutralUnderAcceptedWarmReference() {
+        let warmReference = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)].flatMap { x, y in
+            Array(repeating: GarmentPalettePixel(
+                red: 227,
+                green: 206,
+                blue: 172,
+                x: x,
+                y: y,
+                isInsidePersonMask: false
+            ), count: 25)
+        }
+
+        for gray in [150, 165] {
+            let samples = Array(repeating: GarmentPalettePixel(
+                red: UInt8(gray),
+                green: UInt8(gray),
+                blue: UInt8(gray),
+                isStrongForegroundEvidence: true
+            ), count: 700)
+            let result = GarmentColorPaletteEngine.extractPalette(
+                from: samples,
+                source: .garmentCrop,
+                illuminantReferenceSamples: warmReference,
+                confidenceEvidenceSatisfied: true
+            )
+
+            XCTAssertTrue(result.debug.illuminantReference.contains("bright-region accepted"))
+            XCTAssertEqual(
+                FashionColorFamilyCatalog.family(for: result.palette.first ?? ""),
+                "neutral",
+                "Gray \(gray) should not become blue after accepted warm correction."
+            )
+        }
+    }
+
+    func testPreCorrectionNeutralityGuardMatchesFullAndFastFamilyPaths() {
+        let warmReference = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)].flatMap { x, y in
+            Array(repeating: GarmentPalettePixel(
+                red: 227,
+                green: 206,
+                blue: 172,
+                x: x,
+                y: y,
+                isInsidePersonMask: false
+            ), count: 25)
+        }
+        let samples = Array(repeating: GarmentPalettePixel(
+            red: 150,
+            green: 150,
+            blue: 150,
+            isStrongForegroundEvidence: true
+        ), count: 700)
+        let full = GarmentColorPaletteEngine.colorFamilyShares(
+            in: samples,
+            allowsSkinExclusion: false,
+            source: .garmentCrop,
+            illuminantReferenceSamples: warmReference
+        )
+        let fast = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+            in: samples,
+            allowsSkinExclusion: false,
+            illuminantReferenceSamples: warmReference
+        )
+
+        XCTAssertEqual(
+            GarmentPaletteSourceSelector.credibleFamilies(from: full),
+            GarmentPaletteSourceSelector.credibleFamilies(from: fast)
+        )
+        XCTAssertEqual(full.max(by: { $0.value < $1.value })?.key, "neutral")
+        XCTAssertEqual(fast.max(by: { $0.value < $1.value })?.key, "neutral")
+    }
+
+    func testPreCorrectionNeutralityGuardDocumentsUltraPaleBlueBoundary() {
+        let guarded = FashionColorCatalog.namingEvaluation(
+            red: 136,
+            green: 149,
+            blue: 169,
+            hasSpatialEvidence: true,
+            preCorrectionSaturation: 0.079
+        )
+
+        XCTAssertEqual(
+            FashionColorFamilyCatalog.family(for: guarded.contributions.first?.name ?? ""),
+            "neutral"
+        )
     }
 
     func testGreenDominantBrightReferenceFallsBackAndKeepsOliveGreen() {
@@ -862,6 +950,36 @@ final class Build16PaletteTruthTests: XCTestCase {
         )
 
         XCTAssertEqual(memo.evaluationCount, 1)
+    }
+
+    func testFastCandidateFamilyMemoSeparatesPreCorrectionNeutralState() {
+        let memo = GarmentColorPaletteEngine.CandidateFamilyMemo()
+        let warmReference = [(0.04, 0.50), (0.96, 0.50), (0.50, 0.04), (0.50, 0.96)].flatMap { x, y in
+            Array(repeating: GarmentPalettePixel(
+                red: 227,
+                green: 206,
+                blue: 172,
+                x: x,
+                y: y,
+                isInsidePersonMask: false
+            ), count: 25)
+        }
+
+        let guarded = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+            in: [GarmentPalettePixel(red: 150, green: 150, blue: 150, isStrongForegroundEvidence: true)],
+            allowsSkinExclusion: false,
+            illuminantReferenceSamples: warmReference,
+            memo: memo
+        )
+        let unguarded = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+            in: [GarmentPalettePixel(red: 135, green: 147, blue: 173, isStrongForegroundEvidence: true)],
+            allowsSkinExclusion: false,
+            memo: memo
+        )
+
+        XCTAssertEqual(memo.evaluationCount, 2)
+        XCTAssertEqual(guarded.max(by: { $0.value < $1.value })?.key, "neutral")
+        XCTAssertEqual(unguarded.max(by: { $0.value < $1.value })?.key, "blue")
     }
 
     func testFastCandidateFamilySharesPreserveCredibleSetForFixture() {

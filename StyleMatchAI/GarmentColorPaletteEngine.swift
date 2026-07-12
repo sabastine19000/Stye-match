@@ -176,7 +176,8 @@ enum FashionColorCatalog {
         allowsHueTieBreak: Bool = true,
         preferredChromaticFamily: String? = nil,
         corroboratedChromaticFamilies: Set<String> = [],
-        enforcesLightNeutralEvidence: Bool = false
+        enforcesLightNeutralEvidence: Bool = false,
+        preCorrectionSaturation: Double? = nil
     ) -> [NameContribution] {
         namingEvaluation(
             red: red,
@@ -186,7 +187,8 @@ enum FashionColorCatalog {
             allowsHueTieBreak: allowsHueTieBreak,
             preferredChromaticFamily: preferredChromaticFamily,
             corroboratedChromaticFamilies: corroboratedChromaticFamilies,
-            enforcesLightNeutralEvidence: enforcesLightNeutralEvidence
+            enforcesLightNeutralEvidence: enforcesLightNeutralEvidence,
+            preCorrectionSaturation: preCorrectionSaturation
         ).contributions
     }
 
@@ -198,7 +200,8 @@ enum FashionColorCatalog {
         allowsHueTieBreak: Bool = true,
         preferredChromaticFamily: String? = nil,
         corroboratedChromaticFamilies: Set<String> = [],
-        enforcesLightNeutralEvidence: Bool = false
+        enforcesLightNeutralEvidence: Bool = false,
+        preCorrectionSaturation: Double? = nil
     ) -> NamingEvaluation {
         let sample = hsl(red: red, green: green, blue: blue)
         let ranked = rankedChromaticAnchors(to: sample)
@@ -214,7 +217,9 @@ enum FashionColorCatalog {
 
         let contributions: [NameContribution]
 
-        if isUnsupportedBrightWarmTint(sample, hasSpatialEvidence: hasSpatialEvidence) {
+        if preCorrectionSaturation.map({ $0 < 0.08 }) == true {
+            contributions = [NameContribution(name: nearestNeutralName(to: sample), weight: 1)]
+        } else if isUnsupportedBrightWarmTint(sample, hasSpatialEvidence: hasSpatialEvidence) {
             contributions = [NameContribution(name: sample.lightness >= 0.90 ? "white" : "ivory", weight: 1)]
         } else if hasCoherentDarkChromaticSignal(red: red, green: green, blue: blue, sample: sample) {
             contributions = [
@@ -271,10 +276,15 @@ enum FashionColorCatalog {
         allowsHueTieBreak: Bool = true,
         preferredChromaticFamily: String? = nil,
         corroboratedChromaticFamilies: Set<String> = [],
-        enforcesLightNeutralEvidence: Bool = false
+        enforcesLightNeutralEvidence: Bool = false,
+        preCorrectionSaturation: Double? = nil
     ) -> [FamilyContribution] {
         let sample = hsl(red: red, green: green, blue: blue)
         let ranked = rankedChromaticAnchors(to: sample)
+
+        if preCorrectionSaturation.map({ $0 < 0.08 }) == true {
+            return [FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestNeutralName(to: sample)), weight: 1)]
+        }
 
         if isUnsupportedBrightWarmTint(sample, hasSpatialEvidence: hasSpatialEvidence) {
             return [FamilyContribution(family: "white", weight: 1)]
@@ -483,6 +493,10 @@ enum FashionColorCatalog {
         }
 
         return HSL(hue: hue < 0 ? hue + 1 : hue, saturation: saturation, lightness: lightness)
+    }
+
+    static func saturation(red: UInt8, green: UInt8, blue: UInt8) -> Double {
+        hsl(red: red, green: green, blue: blue).saturation
     }
 
     static func chromaticFamily(red: UInt8, green: UInt8, blue: UInt8) -> String {
@@ -978,7 +992,17 @@ enum GarmentColorPaletteEngine {
             hasSpatialEvidence: Bool,
             allowsHueTieBreak: Bool
         ) -> [FashionColorCatalog.FamilyContribution] {
-            let key = GarmentColorPaletteEngine.memoizedFamilyKey(red: red, green: green, blue: blue)
+            let preCorrectionSaturation = FashionColorCatalog.saturation(
+                red: originalRed,
+                green: originalGreen,
+                blue: originalBlue
+            )
+            let key = GarmentColorPaletteEngine.memoizedFamilyKey(
+                red: red,
+                green: green,
+                blue: blue,
+                wasPreCorrectionNeutral: preCorrectionSaturation < 0.08
+            )
             if let cached = cachedContributions[key] {
                 return cached
             }
@@ -994,7 +1018,8 @@ enum GarmentColorPaletteEngine {
                 blue: blue,
                 hasSpatialEvidence: hasSpatialEvidence,
                 allowsHueTieBreak: allowsHueTieBreak,
-                preferredChromaticFamily: preferredChromaticFamily
+                preferredChromaticFamily: preferredChromaticFamily,
+                preCorrectionSaturation: preCorrectionSaturation
             )
             cachedContributions[key] = evaluated
             evaluationCount += 1
@@ -1276,7 +1301,8 @@ enum GarmentColorPaletteEngine {
             red: red,
             green: green,
             blue: blue,
-            hasSpatialEvidence: false
+            hasSpatialEvidence: false,
+            preCorrectionSaturation: FashionColorCatalog.saturation(red: red, green: green, blue: blue)
         )
         let totals = contributions.reduce(into: [String: Double]()) { result, contribution in
             result[contribution.family, default: 0] += contribution.weight
@@ -1308,11 +1334,17 @@ enum GarmentColorPaletteEngine {
         return familyWeights.mapValues { $0.weight / total }
     }
 
-    private static func memoizedFamilyKey(red: UInt8, green: UInt8, blue: UInt8) -> UInt32 {
+    private static func memoizedFamilyKey(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        wasPreCorrectionNeutral: Bool
+    ) -> UInt32 {
         let redBin = UInt32(red >> 2)
         let greenBin = UInt32(green >> 2)
         let blueBin = UInt32(blue >> 2)
-        return (redBin << 12) | (greenBin << 6) | blueBin
+        let neutralBit = wasPreCorrectionNeutral ? UInt32(1) : UInt32(0)
+        return (neutralBit << 18) | (redBin << 12) | (greenBin << 6) | blueBin
     }
 
     private static func weightedColorSummary(
@@ -1340,7 +1372,12 @@ enum GarmentColorPaletteEngine {
                 allowsHueTieBreak: illuminantIsCredible,
                 preferredChromaticFamily: preferredFamily,
                 corroboratedChromaticFamilies: corroboratedFamilies,
-                enforcesLightNeutralEvidence: enforcesLightNeutralEvidence
+                enforcesLightNeutralEvidence: enforcesLightNeutralEvidence,
+                preCorrectionSaturation: FashionColorCatalog.saturation(
+                    red: original.red,
+                    green: original.green,
+                    blue: original.blue
+                )
             )
             return (sample: sample, evaluation: evaluation)
         }
