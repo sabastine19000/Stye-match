@@ -793,10 +793,214 @@ final class Build16PaletteTruthTests: XCTestCase {
         }
     }
 
+    func testMemoizedCandidateFamilyNamingCoversRepresentativeFamilies() {
+        let cases: [(UInt8, UInt8, UInt8)] = [
+            (255, 255, 255),
+            (150, 150, 150),
+            (48, 49, 52),
+            (95, 100, 120),
+            (190, 155, 110),
+            (140, 126, 112),
+            (45, 78, 180),
+            (172, 208, 226),
+            (50, 145, 75),
+            (115, 112, 55),
+            (235, 205, 55),
+            (225, 120, 45),
+            (205, 45, 50),
+            (225, 125, 165),
+            (112, 65, 150)
+        ]
+
+        for rgb in cases {
+            let fullFamily = FashionColorCatalog.nameContributions(
+                red: rgb.0,
+                green: rgb.1,
+                blue: rgb.2,
+                hasSpatialEvidence: false
+            )
+            .reduce(into: [String: Double]()) { result, contribution in
+                result[FashionColorFamilyCatalog.family(for: contribution.name), default: 0] += contribution.weight
+            }
+            .max {
+                if $0.value == $1.value { return $0.key > $1.key }
+                return $0.value < $1.value
+            }?.key
+
+            XCTAssertEqual(
+                GarmentColorPaletteEngine.fastCandidateFamily(red: rgb.0, green: rgb.1, blue: rgb.2),
+                fullFamily,
+                "Expected \(rgb) to match full family naming."
+            )
+        }
+    }
+
+    func testMemoizedCandidateFamilyNamingDoesNotCollapseOliveToBrown() {
+        XCTAssertEqual(
+            GarmentColorPaletteEngine.fastCandidateFamily(red: 115, green: 112, blue: 55),
+            "green"
+        )
+        XCTAssertEqual(
+            GarmentColorPaletteEngine.fastCandidateFamily(red: 112, green: 72, blue: 45),
+            "brown"
+        )
+    }
+
+    func testFastCandidateFamilySharesMemoizesRepeatedCorrectedColors() {
+        let memo = GarmentColorPaletteEngine.CandidateFamilyMemo()
+        let fixture = Array(repeating: GarmentPalettePixel(
+            red: 115,
+            green: 112,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 2)
+
+        _ = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+            in: fixture,
+            allowsSkinExclusion: false,
+            memo: memo
+        )
+
+        XCTAssertEqual(memo.evaluationCount, 1)
+    }
+
+    func testFastCandidateFamilySharesPreserveCredibleSetForFixture() {
+        let fixture = Array(repeating: GarmentPalettePixel(
+            red: 115,
+            green: 112,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 640)
+        + Array(repeating: GarmentPalettePixel(
+            red: 235,
+            green: 205,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 260)
+        + Array(repeating: GarmentPalettePixel(
+            red: 238,
+            green: 225,
+            blue: 190,
+            isStrongForegroundEvidence: true
+        ), count: 80)
+
+        let full = GarmentColorPaletteEngine.colorFamilyShares(
+            in: fixture,
+            allowsSkinExclusion: false,
+            source: .garmentCrop
+        )
+        let fast = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+            in: fixture,
+            allowsSkinExclusion: false
+        )
+
+        XCTAssertEqual(
+            GarmentPaletteSourceSelector.credibleFamilies(from: full),
+            GarmentPaletteSourceSelector.credibleFamilies(from: fast)
+        )
+    }
+
+    func testFastCandidateSharesPreserveSelectorOutcomeForCorroboratedWarmBandFixture() {
+        let oliveCrop = Array(repeating: GarmentPalettePixel(
+            red: 115,
+            green: 112,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 900)
+        let oliveForeground = Array(repeating: GarmentPalettePixel(
+            red: 160,
+            green: 145,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 760)
+        let yellowSaliency = Array(repeating: GarmentPalettePixel(
+            red: 235,
+            green: 205,
+            blue: 55,
+            isStrongForegroundEvidence: true
+        ), count: 620)
+
+        assertFastCandidateSelectionMatchesFull([
+            (.foregroundSubject, .garmentCrop, oliveCrop),
+            (.foregroundSubject, .foregroundSubject, oliveForeground),
+            (.saliencyCrop, .saliencyCrop, yellowSaliency)
+        ])
+    }
+
+    func testFastCandidateSharesPreserveSelectorOutcomeForDisagreementFixture() {
+        let blue = Array(repeating: GarmentPalettePixel(
+            red: 45,
+            green: 78,
+            blue: 180,
+            isStrongForegroundEvidence: true
+        ), count: 900)
+        let brown = Array(repeating: GarmentPalettePixel(
+            red: 112,
+            green: 72,
+            blue: 45,
+            isStrongForegroundEvidence: true
+        ), count: 850)
+
+        let selections = assertFastCandidateSelectionMatchesFull([
+            (.foregroundSubject, .foregroundSubject, blue),
+            (.personSegmentation, .personSegmentation, brown)
+        ])
+        XCTAssertTrue(selections.full.disagreement)
+        XCTAssertEqual(selections.full.confidenceReason, "credible sources disagree")
+    }
+
     func testScanPassesFlatLayBorderSamplesIntoIlluminantCalibration() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
         XCTAssertTrue(source.contains("let backgroundSamples = prefersPersonMask ? [] : paletteBackgroundSamples"))
         XCTAssertTrue(source.contains("illuminantReferenceSamples: backgroundSamples"))
         XCTAssertTrue(source.contains("namingCalibration="))
+    }
+
+    @discardableResult
+    private func assertFastCandidateSelectionMatchesFull(
+        _ fixtures: [(tier: GarmentMaskTier, source: GarmentPaletteSource, samples: [GarmentPalettePixel])],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> (
+        full: GarmentPaletteSourceSelector.Selection,
+        fast: GarmentPaletteSourceSelector.Selection
+    ) {
+        let fastMemo = GarmentColorPaletteEngine.CandidateFamilyMemo()
+        let fullCandidates = fixtures.map { fixture in
+            GarmentPaletteSampleCandidate(
+                samples: fixture.samples,
+                tier: fixture.tier,
+                source: fixture.source,
+                maskingApplied: true,
+                garmentSampleCount: fixture.samples.count,
+                familyShares: GarmentColorPaletteEngine.colorFamilyShares(
+                    in: fixture.samples,
+                    allowsSkinExclusion: false,
+                    source: fixture.source
+                )
+            )
+        }
+        let fastCandidates = fixtures.map { fixture in
+            GarmentPaletteSampleCandidate(
+                samples: fixture.samples,
+                tier: fixture.tier,
+                source: fixture.source,
+                maskingApplied: true,
+                garmentSampleCount: fixture.samples.count,
+                familyShares: GarmentColorPaletteEngine.fastCandidateFamilyShares(
+                    in: fixture.samples,
+                    allowsSkinExclusion: false,
+                    memo: fastMemo
+                )
+            )
+        }
+
+        let full = GarmentPaletteSourceSelector.select(fullCandidates)
+        let fast = GarmentPaletteSourceSelector.select(fastCandidates)
+        XCTAssertEqual(fast.candidate?.source, full.candidate?.source, file: file, line: line)
+        XCTAssertEqual(fast.candidate?.tier, full.candidate?.tier, file: file, line: line)
+        XCTAssertEqual(fast.disagreement, full.disagreement, file: file, line: line)
+        XCTAssertEqual(fast.confidenceReason, full.confidenceReason, file: file, line: line)
+        return (full, fast)
     }
 }

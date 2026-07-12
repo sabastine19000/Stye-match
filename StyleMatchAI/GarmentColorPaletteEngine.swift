@@ -142,6 +142,11 @@ enum FashionColorCatalog {
         let weight: Double
     }
 
+    struct FamilyContribution: Equatable {
+        let family: String
+        let weight: Double
+    }
+
     struct NamingEvaluation: Equatable {
         let contributions: [NameContribution]
         let calibrationDecision: String?
@@ -256,6 +261,69 @@ enum FashionColorCatalog {
             contributions: contributions,
             calibrationDecision: calibrationDecision
         )
+    }
+
+    static func familyContributions(
+        red: UInt8,
+        green: UInt8,
+        blue: UInt8,
+        hasSpatialEvidence: Bool,
+        allowsHueTieBreak: Bool = true,
+        preferredChromaticFamily: String? = nil,
+        corroboratedChromaticFamilies: Set<String> = [],
+        enforcesLightNeutralEvidence: Bool = false
+    ) -> [FamilyContribution] {
+        let sample = hsl(red: red, green: green, blue: blue)
+        let ranked = rankedChromaticAnchors(to: sample)
+
+        if isUnsupportedBrightWarmTint(sample, hasSpatialEvidence: hasSpatialEvidence) {
+            return [FamilyContribution(family: "white", weight: 1)]
+        }
+
+        if hasCoherentDarkChromaticSignal(red: red, green: green, blue: blue, sample: sample) {
+            return [
+                FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestChromaticName(
+                    to: sample,
+                    allowsHueTieBreak: allowsHueTieBreak,
+                    preferredFamily: preferredChromaticFamily,
+                    ranked: ranked
+                )), weight: 0.65),
+                FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestNeutralName(to: sample)), weight: 0.35)
+            ]
+        }
+
+        if sample.saturation <= 0.08 {
+            return [FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestNeutralName(to: sample)), weight: 1)]
+        }
+
+        if sample.saturation < 0.16 {
+            let chromaticName = nearestChromaticName(
+                to: sample,
+                allowsHueTieBreak: allowsHueTieBreak,
+                preferredFamily: preferredChromaticFamily,
+                ranked: ranked
+            )
+            let chromaticFamily = FashionColorFamilyCatalog.family(for: chromaticName)
+            if enforcesLightNeutralEvidence,
+               sample.lightness >= 0.62,
+               !hasSpatialEvidence,
+               !corroboratedChromaticFamilies.contains(chromaticFamily) {
+                return [FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestNeutralName(to: sample)), weight: 1)]
+            }
+
+            let chromaticWeight = (sample.saturation - 0.08) / 0.08
+            return [
+                FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestNeutralName(to: sample)), weight: 1 - chromaticWeight),
+                FamilyContribution(family: chromaticFamily, weight: chromaticWeight)
+            ].filter { $0.weight > 0 }
+        }
+
+        return [FamilyContribution(family: FashionColorFamilyCatalog.family(for: nearestChromaticName(
+            to: sample,
+            allowsHueTieBreak: allowsHueTieBreak,
+            preferredFamily: preferredChromaticFamily,
+            ranked: ranked
+        )), weight: 1)]
     }
 
     private static func nearestNeutralName(to sample: HSL) -> String {
@@ -678,7 +746,11 @@ enum GarmentPaletteSourceSelector {
     }
 
     private static func credibleFamilies(_ candidate: GarmentPaletteSampleCandidate) -> Set<String> {
-        Set(candidate.familyShares.filter { $0.value >= GarmentColorPaletteEngine.minimumRetainedClusterShare }.map(\.key))
+        credibleFamilies(from: candidate.familyShares)
+    }
+
+    static func credibleFamilies(from familyShares: [String: Double]) -> Set<String> {
+        Set(familyShares.filter { $0.value >= GarmentColorPaletteEngine.minimumRetainedClusterShare }.map(\.key))
     }
 
     private static func averageAgreement(
@@ -890,6 +962,44 @@ enum GarmentColorPaletteEngine {
         let clusterWeightDecisions: [(name: String, foregroundConcentration: Double, downWeighted: Bool)]
         let familyForegroundConcentrations: [String: Double]
         let namingCalibrationDecisions: [String]
+    }
+
+    final class CandidateFamilyMemo {
+        fileprivate var cachedContributions: [UInt32: [FashionColorCatalog.FamilyContribution]] = [:]
+        private(set) var evaluationCount = 0
+
+        fileprivate func contributions(
+            red: UInt8,
+            green: UInt8,
+            blue: UInt8,
+            originalRed: UInt8,
+            originalGreen: UInt8,
+            originalBlue: UInt8,
+            hasSpatialEvidence: Bool,
+            allowsHueTieBreak: Bool
+        ) -> [FashionColorCatalog.FamilyContribution] {
+            let key = GarmentColorPaletteEngine.memoizedFamilyKey(red: red, green: green, blue: blue)
+            if let cached = cachedContributions[key] {
+                return cached
+            }
+
+            let preferredChromaticFamily = FashionColorCatalog.chromaticFamily(
+                red: originalRed,
+                green: originalGreen,
+                blue: originalBlue
+            )
+            let evaluated = FashionColorCatalog.familyContributions(
+                red: red,
+                green: green,
+                blue: blue,
+                hasSpatialEvidence: hasSpatialEvidence,
+                allowsHueTieBreak: allowsHueTieBreak,
+                preferredChromaticFamily: preferredChromaticFamily
+            )
+            cachedContributions[key] = evaluated
+            evaluationCount += 1
+            return evaluated
+        }
     }
 
     static func extractPalette(
@@ -1104,6 +1214,79 @@ enum GarmentColorPaletteEngine {
         return shares
     }
 
+    static func fastCandidateFamilyShares(
+        in samples: [GarmentPalettePixel],
+        allowsSkinExclusion: Bool,
+        backgroundFamilyShares: [String: Double] = [:],
+        illuminantReferenceSamples: [GarmentPalettePixel] = [],
+        memo: CandidateFamilyMemo? = nil
+    ) -> [String: Double] {
+        let personSamples = samples.filter(\.isInsidePersonMask)
+        let skinReference = allowsSkinExclusion
+            ? coherentSkinReference(from: personSamples.filter(\.isLikelySkinZone))
+            : nil
+        let garmentSamples = personSamples.filter { sample in
+            guard let skinReference else { return true }
+            return normalizedDistance(sample, skinReference) > skinReference.threshold
+        }
+        guard !garmentSamples.isEmpty else { return [:] }
+
+        let correction = illuminantAwareCorrection(
+            for: garmentSamples,
+            brightReferenceSamples: illuminantReferenceSamples
+        )
+        let memo = memo ?? CandidateFamilyMemo()
+        var familyTotals: [String: Double] = [:]
+        var familyForegroundTotals: [String: Double] = [:]
+
+        for sample in garmentSamples {
+            let corrected = correction.correct(sample)
+            let contributions = memo.contributions(
+                red: corrected.red,
+                green: corrected.green,
+                blue: corrected.blue,
+                originalRed: sample.red,
+                originalGreen: sample.green,
+                originalBlue: sample.blue,
+                hasSpatialEvidence: sample.isStrongForegroundEvidence,
+                allowsHueTieBreak: correction.usesCredibleIlluminant
+            )
+            for contribution in contributions {
+                familyTotals[contribution.family, default: 0] += contribution.weight
+                if sample.isStrongForegroundEvidence {
+                    familyForegroundTotals[contribution.family, default: 0] += contribution.weight
+                }
+            }
+        }
+
+        var effectiveTotals: [String: Double] = [:]
+        for (family, total) in familyTotals {
+            let foregroundConcentration = familyForegroundTotals[family, default: 0] / max(0.0001, total)
+            let backgroundShare = backgroundFamilyShares[family] ?? 0
+            let shouldDownWeight = backgroundShare >= 0.18 && foregroundConcentration < 0.35
+            effectiveTotals[family] = total * (shouldDownWeight ? 0.25 : 1.0)
+        }
+
+        let effectiveSampleCount = max(1, effectiveTotals.values.reduce(0, +))
+        return effectiveTotals.mapValues { $0 / effectiveSampleCount }
+    }
+
+    static func fastCandidateFamily(red: UInt8, green: UInt8, blue: UInt8) -> String {
+        let contributions = FashionColorCatalog.familyContributions(
+            red: red,
+            green: green,
+            blue: blue,
+            hasSpatialEvidence: false
+        )
+        let totals = contributions.reduce(into: [String: Double]()) { result, contribution in
+            result[contribution.family, default: 0] += contribution.weight
+        }
+        return totals.max {
+            if $0.value == $1.value { return $0.key > $1.key }
+            return $0.value < $1.value
+        }?.key ?? "neutral"
+    }
+
     static func backgroundFamilyShares(from samples: [GarmentPalettePixel]) -> [String: Double] {
         let border = samples.filter { sample in
             sample.x <= 0.10 || sample.x >= 0.90 || sample.y <= 0.10 || sample.y >= 0.90
@@ -1123,6 +1306,13 @@ enum GarmentColorPaletteEngine {
         let familyWeights = FashionColorFamilyCatalog.aggregatedWeights(nameWeights)
         let total = max(0.0001, familyWeights.values.reduce(0) { $0 + $1.weight })
         return familyWeights.mapValues { $0.weight / total }
+    }
+
+    private static func memoizedFamilyKey(red: UInt8, green: UInt8, blue: UInt8) -> UInt32 {
+        let redBin = UInt32(red >> 2)
+        let greenBin = UInt32(green >> 2)
+        let blueBin = UInt32(blue >> 2)
+        return (redBin << 12) | (greenBin << 6) | blueBin
     }
 
     private static func weightedColorSummary(

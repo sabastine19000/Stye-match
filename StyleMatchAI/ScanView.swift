@@ -9191,6 +9191,7 @@ private extension UIImage {
             height: 100,
             hasHuman: prefersPersonMask
         ))
+        let candidateFamilyMemo = GarmentColorPaletteEngine.CandidateFamilyMemo()
         #if DEBUG
         sourcesMs += (ProcessInfo.processInfo.systemUptime - candidateSourcesStart) * 1_000
         #endif
@@ -9199,20 +9200,20 @@ private extension UIImage {
                 in: candidate.samples,
                 allowsSkinExclusion: prefersPersonMask
             )
+            let fastFamilyShares = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+                in: candidate.samples,
+                allowsSkinExclusion: prefersPersonMask,
+                backgroundFamilyShares: backgroundReferences,
+                illuminantReferenceSamples: backgroundSamples,
+                memo: candidateFamilyMemo
+            )
             return GarmentPaletteSampleCandidate(
                 samples: candidate.samples,
                 tier: candidate.tier,
                 source: candidate.source,
                 maskingApplied: candidate.maskingApplied,
                 garmentSampleCount: garmentSampleCount,
-                familyShares: GarmentColorPaletteEngine.colorFamilyShares(
-                    in: candidate.samples,
-                    allowsSkinExclusion: prefersPersonMask,
-                    source: candidate.source,
-                    backgroundFamilyShares: backgroundReferences,
-                    illuminantReferenceSamples: backgroundSamples,
-                    debugTiming: debugTiming
-                )
+                familyShares: fastFamilyShares
             )
         }
         #if DEBUG
