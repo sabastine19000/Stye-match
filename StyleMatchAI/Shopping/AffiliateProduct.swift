@@ -65,7 +65,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
     let priceRange: ClosedRange<Decimal>?
     let occasionTags: [String]?
     let brand: String?
-    let imageURL: URL
+    let imageURL: URL?
     let retailer: Retailer
     let affiliateURL: URL
     let countryCode: String?
@@ -80,6 +80,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
     let saleEndsAt: Date?
     let currencyCode: String?
     let availableCountries: [String]?
+    let availability: String?
     let availableColors: [String]?
     let customerRating: Double?
     let reviewCount: Int?
@@ -97,7 +98,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         priceRange: ClosedRange<Decimal>? = nil,
         occasionTags: [String]? = nil,
         brand: String? = nil,
-        imageURL: URL,
+        imageURL: URL? = nil,
         retailer: Retailer,
         affiliateURL: URL,
         countryCode: String? = nil,
@@ -112,6 +113,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         saleEndsAt: Date?,
         currencyCode: String? = nil,
         availableCountries: [String]? = nil,
+        availability: String? = nil,
         availableColors: [String]?,
         customerRating: Double?,
         reviewCount: Int?,
@@ -128,7 +130,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         self.priceRange = priceRange
         self.occasionTags = occasionTags
         self.brand = brand
-        self.imageURL = imageURL
+        self.imageURL = ProductImageURLValidator.validated(imageURL)
         self.retailer = retailer
         self.affiliateURL = affiliateURL
         self.countryCode = countryCode
@@ -143,12 +145,41 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         self.saleEndsAt = saleEndsAt
         self.currencyCode = currencyCode
         self.availableCountries = availableCountries
+        self.availability = availability
         self.availableColors = availableColors
         self.customerRating = customerRating
         self.reviewCount = reviewCount
         self.estimatedShippingText = estimatedShippingText
         self.tags = tags
         self.genderPresentation = genderPresentation
+    }
+
+    /// The only URL shopping views may pass to an image loader. Invalid, blank,
+    /// relative, and non-HTTP(S) values resolve to nil and therefore cannot start a request.
+    var remoteImageRequestURL: URL? {
+        ProductImageURLValidator.validated(imageURL)
+    }
+}
+
+enum ProductImageURLValidator {
+    static func validated(_ url: URL?) -> URL? {
+        guard let url,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "https",
+              let host = components.host,
+              !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return url
+    }
+
+    static func validated(_ rawValue: String?) -> URL? {
+        guard let trimmed = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else {
+            return nil
+        }
+        return validated(URL(string: trimmed))
     }
 }
 
@@ -168,6 +199,91 @@ struct SupportedStore: Codable, Identifiable, Equatable {
     let affiliateNetwork: String?
     let apiStatus: String
     let isEnabled: Bool
+    let websiteURL: URL?
+    let searchURLTemplate: String?
+    let affiliateTrackingActive: Bool?
+    let disclosureText: String?
+
+    init(
+        id: String,
+        name: String,
+        domains: [String],
+        categories: [ProductCategory],
+        affiliateNetwork: String?,
+        apiStatus: String,
+        isEnabled: Bool,
+        websiteURL: URL? = nil,
+        searchURLTemplate: String? = nil,
+        affiliateTrackingActive: Bool? = nil,
+        disclosureText: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.domains = domains
+        self.categories = categories
+        self.affiliateNetwork = affiliateNetwork
+        self.apiStatus = apiStatus
+        self.isEnabled = isEnabled
+        self.websiteURL = websiteURL
+        self.searchURLTemplate = searchURLTemplate
+        self.affiliateTrackingActive = affiliateTrackingActive
+        self.disclosureText = disclosureText
+    }
+
+    var primaryDomain: String? {
+        domains.first?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+    }
+
+    var directAccessURL: URL? {
+        if let websiteURL,
+           websiteURL.scheme?.lowercased() == "https" {
+            return websiteURL
+        }
+        guard let domain = primaryDomain else { return nil }
+        return URL(string: "https://www.\(domain)")
+    }
+
+    func searchURL(for query: String) -> URL? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let template = searchURLTemplate?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !template.isEmpty else {
+            return directAccessURL
+        }
+        let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        return URL(string: template.replacingOccurrences(of: "{QUERY}", with: encoded))
+    }
+
+    var integrationLabel: String {
+        apiStatus.localizedCaseInsensitiveContains("placeholder") || apiStatus.localizedCaseInsensitiveContains("pending")
+            ? "Direct Store Access"
+            : "Catalog Integration Coming Soon"
+    }
+
+    var hasAffiliateTracking: Bool {
+        affiliateTrackingActive == true || affiliateNetwork?.localizedCaseInsensitiveContains("amazon") == true
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case domains
+        case categories
+        case affiliateNetwork
+        case apiStatus
+        case isEnabled
+        case websiteURL
+        case searchURLTemplate
+        case affiliateTrackingActive
+        case disclosureText
+    }
+}
+
+private extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 struct ShoppingSearchCriteria: Equatable {

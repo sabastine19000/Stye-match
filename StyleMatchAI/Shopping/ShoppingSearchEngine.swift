@@ -1,40 +1,90 @@
 import Foundation
 
 enum ShoppingSearchEngine {
-    static func filter(products: [AffiliateProduct], criteria: ShoppingSearchCriteria) -> [AffiliateProduct] {
-        guard !criteria.isEmpty else {
-            return products
-        }
+    enum RelaxableFilter: String, CaseIterable, Equatable {
+        case occasion
+        case style
+        case maxPrice
+        case color
+        case size
+        case brand
+        case store
+        case category
 
-        return products.filter { product in
-            matchesQuery(product, criteria.query)
-                && matchesStore(product, criteria.storeName)
-                && matchesBrand(product, criteria.brand)
-                && matchesCategory(product, criteria.category)
-                && matchesColor(product, criteria.color)
-                && matchesSize(product, criteria.size)
-                && matchesStyle(product, criteria.style)
-                && matchesGender(product, criteria.genderPresentation)
-                && matchesPrice(product, min: criteria.minimumPrice, max: criteria.maximumPrice)
-                && matchesOccasion(product, criteria.occasion)
+        var displayName: String {
+            switch self {
+            case .occasion: return "occasion"
+            case .style: return "style"
+            case .maxPrice: return "max price"
+            case .color: return "color"
+            case .size: return "size"
+            case .brand: return "brand"
+            case .store: return "store"
+            case .category: return "category"
+            }
         }
     }
 
-    static func filter(products: [AffiliateProduct], query: ProductSearchQuery, now: Date = Date()) -> [AffiliateProduct] {
-        let filtered = products.filter { product in
-            matchesQuery(product, query.text ?? "")
-                && matchesAny(product.retailer.name, query.retailers)
-                && matchesAny(product.brand, query.brands, requireValueWhenFiltering: true)
-                && matchesAny(product.category, query.categories)
-                && matchesAny(product.colors, query.colors)
-                && matchesAny(product.sizes ?? [], query.sizes)
-                && matchesGender(product, query.genderPresentation)
-                && matchesPrice(product, range: query.priceRange)
-                && matchesAny((product.occasionTags ?? []) + product.tags, query.occasions)
-                && matchesSale(product, onSaleOnly: query.onSaleOnly, now: now)
+    struct RelaxedFilterResult: Equatable {
+        let exactResults: [AffiliateProduct]
+        let relaxedResults: [AffiliateProduct]
+        let relaxedFilter: RelaxableFilter?
+
+        var displayedResults: [AffiliateProduct] {
+            relaxedFilter == nil ? exactResults : relaxedResults
+        }
+    }
+
+    static func filter(products: [AffiliateProduct], criteria: ShoppingSearchCriteria) -> [AffiliateProduct] {
+        relaxedFilter(products: products, criteria: criteria).displayedResults
+    }
+
+    static func relaxedFilter(products: [AffiliateProduct], criteria: ShoppingSearchCriteria) -> RelaxedFilterResult {
+        guard !criteria.isEmpty else {
+            return RelaxedFilterResult(exactResults: products, relaxedResults: [], relaxedFilter: nil)
         }
 
-        return sorted(filtered, by: query.sort)
+        return relaxedFilter(
+            products: products,
+            predicates: [
+                SearchPredicate(kind: nil, isActive: !criteria.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) { matchesQuery($0, criteria.query) },
+                SearchPredicate(kind: .store, isActive: active(criteria.storeName)) { matchesStore($0, criteria.storeName) },
+                SearchPredicate(kind: .brand, isActive: active(criteria.brand)) { matchesBrand($0, criteria.brand) },
+                SearchPredicate(kind: .category, isActive: criteria.category != nil) { matchesCategory($0, criteria.category) },
+                SearchPredicate(kind: .color, isActive: active(criteria.color)) { matchesColor($0, criteria.color) },
+                SearchPredicate(kind: .size, isActive: active(criteria.size)) { matchesSize($0, criteria.size) },
+                SearchPredicate(kind: .style, isActive: active(criteria.style)) { matchesStyle($0, criteria.style) },
+                SearchPredicate(kind: nil, isActive: active(criteria.genderPresentation)) { matchesGender($0, criteria.genderPresentation) },
+                SearchPredicate(kind: .maxPrice, isActive: criteria.maximumPrice != nil) { matchesPrice($0, min: criteria.minimumPrice, max: criteria.maximumPrice) },
+                SearchPredicate(kind: nil, isActive: criteria.minimumPrice != nil && criteria.maximumPrice == nil) { matchesPrice($0, min: criteria.minimumPrice, max: criteria.maximumPrice) },
+                SearchPredicate(kind: .occasion, isActive: active(criteria.occasion)) { matchesOccasion($0, criteria.occasion) }
+            ]
+        )
+    }
+
+    static func filter(products: [AffiliateProduct], query: ProductSearchQuery, now: Date = Date()) -> [AffiliateProduct] {
+        relaxedFilter(products: products, query: query, now: now).displayedResults
+    }
+
+    static func relaxedFilter(products: [AffiliateProduct], query: ProductSearchQuery, now: Date = Date()) -> RelaxedFilterResult {
+        let result = relaxedFilter(
+            products: products,
+            predicates: [
+                SearchPredicate(kind: nil, isActive: active(query.text)) { matchesQuery($0, query.text ?? "") },
+                SearchPredicate(kind: .store, isActive: active(query.retailers)) { matchesAny($0.retailer.name, query.retailers) },
+                SearchPredicate(kind: .brand, isActive: active(query.brands)) { matchesAny($0.brand, query.brands, requireValueWhenFiltering: true) },
+                SearchPredicate(kind: .category, isActive: query.categories?.isEmpty == false) { matchesAny($0.category, query.categories) },
+                SearchPredicate(kind: .color, isActive: active(query.colors)) { matchesAny($0.colors, query.colors) },
+                SearchPredicate(kind: .size, isActive: active(query.sizes)) { matchesAny($0.sizes ?? [], query.sizes) },
+                SearchPredicate(kind: nil, isActive: active(query.genderPresentation)) { matchesGender($0, query.genderPresentation) },
+                SearchPredicate(kind: .maxPrice, isActive: query.priceRange != nil) { matchesPrice($0, range: query.priceRange) },
+                SearchPredicate(kind: .occasion, isActive: active(query.occasions)) { matchesAny(($0.occasionTags ?? []) + $0.tags, query.occasions) },
+                SearchPredicate(kind: nil, isActive: query.onSaleOnly) { matchesSale($0, onSaleOnly: query.onSaleOnly, now: now) }
+            ],
+            sort: { sorted($0, by: query.sort) }
+        )
+
+        return result
     }
 
     static func filterStores(_ stores: [SupportedStore], query: String) -> [SupportedStore] {
@@ -218,6 +268,59 @@ enum ShoppingSearchEngine {
 
     private static let highPriceSentinel = Decimal(999_999_999)
     private static let lowPriceSentinel = Decimal(-1)
+
+    private static let relaxationPriority: [RelaxableFilter] = [
+        .occasion,
+        .style,
+        .maxPrice,
+        .color,
+        .size,
+        .brand,
+        .category
+    ]
+
+    private struct SearchPredicate {
+        let kind: RelaxableFilter?
+        let isActive: Bool
+        let matches: (AffiliateProduct) -> Bool
+    }
+
+    private static func relaxedFilter(
+        products: [AffiliateProduct],
+        predicates: [SearchPredicate],
+        sort: ([AffiliateProduct]) -> [AffiliateProduct] = { $0 }
+    ) -> RelaxedFilterResult {
+        let exact = sort(products.filter { product in
+            predicates.allSatisfy { !$0.isActive || $0.matches(product) }
+        })
+        guard exact.isEmpty else {
+            return RelaxedFilterResult(exactResults: exact, relaxedResults: [], relaxedFilter: nil)
+        }
+
+        for kind in relaxationPriority {
+            guard predicates.contains(where: { $0.kind == kind && $0.isActive }) else {
+                continue
+            }
+            let relaxed = sort(products.filter { product in
+                predicates.allSatisfy { predicate in
+                    !predicate.isActive || predicate.kind == kind || predicate.matches(product)
+                }
+            })
+            if !relaxed.isEmpty {
+                return RelaxedFilterResult(exactResults: exact, relaxedResults: relaxed, relaxedFilter: kind)
+            }
+        }
+
+        return RelaxedFilterResult(exactResults: exact, relaxedResults: [], relaxedFilter: nil)
+    }
+
+    private static func active(_ value: String?) -> Bool {
+        !(value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    private static func active(_ values: [String]?) -> Bool {
+        !(values?.map(normalize).filter { !$0.isEmpty }.isEmpty ?? true)
+    }
 
     private static func normalize(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

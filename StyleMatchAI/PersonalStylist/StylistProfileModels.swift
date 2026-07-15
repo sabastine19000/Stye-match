@@ -193,6 +193,14 @@ enum StyleMatchAppleCredentialProfileApplier {
     }
 }
 
+struct StyleMatchAppleSignInPayload {
+    let userID: String
+    let email: String?
+    let givenName: String?
+    let familyName: String?
+    let sourceUserID: String
+}
+
 enum StyleMatchAccountModeDisplay {
     static func accountStatusTitle(for rawValue: String) -> String {
         switch rawValue {
@@ -213,7 +221,19 @@ struct StylistProfile: Codable, Identifiable {
     var favoriteColors: [String]
     var dislikedColors: [String]
     var favoriteBrands: [String]
+    var declaredUndertone: DeclaredUndertone?
     var preferredFit: FitPreference
+    var styleGoals: [String]
+    var preferredNeutrals: [String]
+    var preferredAccentColors: [String]
+    var comfortPreferences: [String]
+    var preferredPantRise: String
+    var shoppingFocus: String
+    var preferredShoppingCategories: [String]
+    var workSetting: String
+    var travelFrequency: String
+    var hobbiesActivities: [String]
+    var stylistVoice: String
     var budgetRange: BudgetRange
     var climate: String
     var workDressCode: String
@@ -232,7 +252,19 @@ struct StylistProfile: Codable, Identifiable {
         favoriteColors: [String],
         dislikedColors: [String],
         favoriteBrands: [String],
+        declaredUndertone: DeclaredUndertone? = nil,
         preferredFit: FitPreference,
+        styleGoals: [String] = [],
+        preferredNeutrals: [String] = [],
+        preferredAccentColors: [String] = [],
+        comfortPreferences: [String] = [],
+        preferredPantRise: String = "",
+        shoppingFocus: String = "",
+        preferredShoppingCategories: [String] = [],
+        workSetting: String = "",
+        travelFrequency: String = "",
+        hobbiesActivities: [String] = [],
+        stylistVoice: String = "",
         budgetRange: BudgetRange,
         climate: String,
         workDressCode: String,
@@ -250,7 +282,19 @@ struct StylistProfile: Codable, Identifiable {
         self.favoriteColors = favoriteColors
         self.dislikedColors = dislikedColors
         self.favoriteBrands = favoriteBrands
+        self.declaredUndertone = declaredUndertone
         self.preferredFit = preferredFit
+        self.styleGoals = styleGoals
+        self.preferredNeutrals = preferredNeutrals
+        self.preferredAccentColors = preferredAccentColors
+        self.comfortPreferences = comfortPreferences
+        self.preferredPantRise = preferredPantRise
+        self.shoppingFocus = shoppingFocus
+        self.preferredShoppingCategories = preferredShoppingCategories
+        self.workSetting = workSetting
+        self.travelFrequency = travelFrequency
+        self.hobbiesActivities = hobbiesActivities
+        self.stylistVoice = stylistVoice
         self.budgetRange = budgetRange
         self.climate = climate
         self.workDressCode = workDressCode
@@ -272,7 +316,19 @@ struct StylistProfile: Codable, Identifiable {
         favoriteColors = try container.decodeIfPresent([String].self, forKey: .favoriteColors) ?? []
         dislikedColors = try container.decodeIfPresent([String].self, forKey: .dislikedColors) ?? []
         favoriteBrands = try container.decodeIfPresent([String].self, forKey: .favoriteBrands) ?? []
+        declaredUndertone = try container.decodeIfPresent(DeclaredUndertone.self, forKey: .declaredUndertone)
         preferredFit = try container.decodeIfPresent(FitPreference.self, forKey: .preferredFit) ?? .unset
+        styleGoals = try container.decodeIfPresent([String].self, forKey: .styleGoals) ?? []
+        preferredNeutrals = try container.decodeIfPresent([String].self, forKey: .preferredNeutrals) ?? []
+        preferredAccentColors = try container.decodeIfPresent([String].self, forKey: .preferredAccentColors) ?? []
+        comfortPreferences = try container.decodeIfPresent([String].self, forKey: .comfortPreferences) ?? []
+        preferredPantRise = try container.decodeIfPresent(String.self, forKey: .preferredPantRise) ?? ""
+        shoppingFocus = try container.decodeIfPresent(String.self, forKey: .shoppingFocus) ?? ""
+        preferredShoppingCategories = try container.decodeIfPresent([String].self, forKey: .preferredShoppingCategories) ?? []
+        workSetting = try container.decodeIfPresent(String.self, forKey: .workSetting) ?? ""
+        travelFrequency = try container.decodeIfPresent(String.self, forKey: .travelFrequency) ?? ""
+        hobbiesActivities = try container.decodeIfPresent([String].self, forKey: .hobbiesActivities) ?? []
+        stylistVoice = try container.decodeIfPresent(String.self, forKey: .stylistVoice) ?? ""
         budgetRange = try container.decodeIfPresent(BudgetRange.self, forKey: .budgetRange) ?? .neutral
         climate = try container.decodeIfPresent(String.self, forKey: .climate) ?? ""
         workDressCode = try container.decodeIfPresent(String.self, forKey: .workDressCode) ?? ""
@@ -286,12 +342,127 @@ struct StylistProfile: Codable, Identifiable {
     }
 }
 
+struct StyleProfilePersonalizationContext: Codable {
+    var styleGoals: [String]
+    var favoriteColors: [String]
+    var avoidedColors: [String]
+    var favoriteBrands: [String]
+    var declaredUndertone: DeclaredUndertone?
+    var preferredFit: FitPreference?
+    var preferredNeutrals: [String]
+    var preferredAccentColors: [String]
+    var preferredPantRise: String?
+    var clothingSizes: ClothingSizes
+    var comfortPreferences: [String]
+    var budgetRange: BudgetRange?
+    var shoppingFocus: String?
+    var preferredShoppingCategories: [String]
+    var workSetting: String?
+    var travelFrequency: String?
+    var hobbiesActivities: [String]
+    var stylistVoice: String?
+
+    var hasUserConfirmedPreferences: Bool {
+        !styleGoals.isEmpty
+            || !favoriteColors.isEmpty
+            || !avoidedColors.isEmpty
+            || !favoriteBrands.isEmpty
+            || declaredUndertone != nil
+            || preferredFit != nil
+            || !preferredNeutrals.isEmpty
+            || !preferredAccentColors.isEmpty
+            || preferredPantRise != nil
+            || clothingSizes.hasAnyValue
+            || !comfortPreferences.isEmpty
+            || budgetRange != nil
+            || shoppingFocus != nil
+            || !preferredShoppingCategories.isEmpty
+            || workSetting != nil
+            || travelFrequency != nil
+            || !hobbiesActivities.isEmpty
+            || stylistVoice != nil
+    }
+}
+
+extension StylistProfile {
+    var personalizationContext: StyleProfilePersonalizationContext {
+        StyleProfilePersonalizationContext(
+            styleGoals: Self.confirmedList(styleGoals),
+            favoriteColors: Self.confirmedList(favoriteColors),
+            avoidedColors: Self.confirmedList(dislikedColors),
+            favoriteBrands: Self.confirmedList(favoriteBrands),
+            declaredUndertone: declaredUndertone?.contextValue == nil ? nil : declaredUndertone,
+            preferredFit: preferredFit.isSet ? preferredFit : nil,
+            preferredNeutrals: Self.confirmedList(preferredNeutrals),
+            preferredAccentColors: Self.confirmedList(preferredAccentColors),
+            preferredPantRise: Self.confirmedText(preferredPantRise),
+            clothingSizes: clothingSizes.confirmedOnly,
+            comfortPreferences: Self.confirmedList(comfortPreferences),
+            budgetRange: budgetRange.isUserConfirmed ? budgetRange : nil,
+            shoppingFocus: Self.confirmedText(shoppingFocus),
+            preferredShoppingCategories: Self.confirmedList(preferredShoppingCategories),
+            workSetting: Self.confirmedText(workSetting),
+            travelFrequency: Self.confirmedText(travelFrequency),
+            hobbiesActivities: Self.confirmedList(hobbiesActivities),
+            stylistVoice: Self.confirmedText(stylistVoice)
+        )
+    }
+
+    private static func confirmedList(_ values: [String]) -> [String] {
+        values
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func confirmedText(_ value: String) -> String? {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+}
+
 struct TopStylePreferences: Codable, Equatable {
     var colors: [String]
     var categories: [String]
     var styleTags: [String]
 
     static let empty = TopStylePreferences(colors: [], categories: [], styleTags: [])
+}
+
+enum DeclaredUndertone: String, Codable, CaseIterable {
+    case warm
+    case cool
+    case neutral
+    case olive
+    case notSure
+    case preferNotToSay
+
+    static func fromProfileInput(_ value: String?) -> DeclaredUndertone? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        return DeclaredUndertone(rawValue: trimmed)
+    }
+
+    var contextValue: String? {
+        switch self {
+        case .warm: return "warm"
+        case .cool: return "cool"
+        case .neutral: return "neutral"
+        case .olive: return "olive"
+        case .notSure: return nil
+        case .preferNotToSay: return nil
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .warm: return "Warm"
+        case .cool: return "Cool"
+        case .neutral: return "Neutral"
+        case .olive: return "Olive"
+        case .notSure: return "Not sure"
+        case .preferNotToSay: return "Prefer not to say"
+        }
+    }
 }
 
 enum FitPreference: String, Codable, CaseIterable {
@@ -320,6 +491,19 @@ struct BudgetRange: Codable {
     var preferredTier: String
 
     static let neutral = BudgetRange(minPrice: 0, maxPrice: 0, preferredTier: "")
+
+    var isUserConfirmed: Bool {
+        let defaultMin = 50.0
+        let defaultMax = 200.0
+        let defaultTier = "Mid"
+        let tier = preferredTier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard minPrice > 0 || maxPrice > 0 || !tier.isEmpty else {
+            return false
+        }
+        return abs(minPrice - defaultMin) > 0.01
+            || abs(maxPrice - defaultMax) > 0.01
+            || tier.caseInsensitiveCompare(defaultTier) != .orderedSame
+    }
 }
 
 struct BodyProportions: Codable {
@@ -347,6 +531,25 @@ struct ClothingSizes: Codable {
         self.shoeSize = shoeSize
         self.jacketSize = jacketSize
         self.dressSize = dressSize
+    }
+
+    var confirmedOnly: ClothingSizes {
+        ClothingSizes(
+            shirtSize: Self.confirmed(shirtSize),
+            pantSize: Self.confirmed(pantSize),
+            shoeSize: Self.confirmed(shoeSize),
+            jacketSize: Self.confirmed(jacketSize),
+            dressSize: Self.confirmed(dressSize)
+        )
+    }
+
+    var hasAnyValue: Bool {
+        [shirtSize, pantSize, shoeSize, jacketSize, dressSize].contains { Self.confirmed($0) != nil }
+    }
+
+    private static func confirmed(_ value: String?) -> String? {
+        let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return cleaned.isEmpty ? nil : cleaned
     }
 }
 

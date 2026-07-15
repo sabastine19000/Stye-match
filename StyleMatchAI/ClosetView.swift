@@ -61,6 +61,13 @@ struct ClosetView: View {
             return shirtSizes
         }
     }
+    private func optionsIncludingCurrent(_ options: [String], current: String) -> [String] {
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !options.contains(trimmed) else {
+            return options
+        }
+        return [trimmed] + options
+    }
     private let occasions = ["Everyday", "Work", "Church", "Dinner", "Travel", "Gym", "Formal", "Party", "Wedding", "Date Night"]
     private let seasons = ["All Season", "Spring", "Summer", "Fall", "Winter", "Travel"]
     private let weatherUses = ["Mild", "Hot", "Cold", "Rain", "Wind", "Humid", "Sunny", "Travel"]
@@ -655,7 +662,8 @@ struct ClosetView: View {
 
             labeledControl(colorLabel) {
                 Picker(colorLabel, selection: $color) {
-                    ForEach(colors, id: \.self) { Text($0).tag($0) }
+                    Text("Clear").tag("")
+                    ForEach(optionsIncludingCurrent(colors, current: color), id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.menu)
             }
@@ -672,7 +680,8 @@ struct ClosetView: View {
                             .textFieldStyle(.roundedBorder)
                     } else {
                         Picker(sizeLabel, selection: $size) {
-                            ForEach(availableSizes, id: \.self) { Text($0).tag($0) }
+                            Text("Clear").tag("")
+                            ForEach(optionsIncludingCurrent(availableSizes, current: size), id: \.self) { Text($0).tag($0) }
                         }
                         .pickerStyle(.menu)
                     }
@@ -681,7 +690,8 @@ struct ClosetView: View {
 
             labeledControl("Occasion") {
                 Picker("Occasion", selection: $occasion) {
-                    ForEach(occasions, id: \.self) { Text($0).tag($0) }
+                    Text("Clear").tag("")
+                    ForEach(optionsIncludingCurrent(occasions, current: occasion), id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.menu)
             }
@@ -689,14 +699,16 @@ struct ClosetView: View {
             HStack(spacing: 12) {
                 labeledControl("Season") {
                     Picker("Season", selection: $season) {
-                        ForEach(seasons, id: \.self) { Text($0).tag($0) }
+                        Text("Clear").tag("")
+                        ForEach(optionsIncludingCurrent(seasons, current: season), id: \.self) { Text($0).tag($0) }
                     }
                     .pickerStyle(.menu)
                 }
 
                 labeledControl("Weather use") {
                     Picker("Weather use", selection: $weatherUse) {
-                        ForEach(weatherUses, id: \.self) { Text($0).tag($0) }
+                        Text("Clear").tag("")
+                        ForEach(optionsIncludingCurrent(weatherUses, current: weatherUse), id: \.self) { Text($0).tag($0) }
                     }
                     .pickerStyle(.menu)
                 }
@@ -975,10 +987,12 @@ struct ClosetView: View {
                     Image(systemName: icon)
                         .font(.title3)
                         .foregroundStyle(tint)
+                        .accessibilityHidden(true)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
 
                 Text(value)
@@ -1005,6 +1019,9 @@ struct ClosetView: View {
             .shadow(color: tint.opacity(0.08), radius: 8, x: 0, y: 4)
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(value)")
+        .accessibilityHint("Opens \(title)")
     }
 
     private func dashboardSection<Content: View>(title: String, icon: String, sheet: ClosetDashboardSheet? = nil, @ViewBuilder content: () -> Content) -> some View {
@@ -1012,6 +1029,7 @@ struct ClosetView: View {
             HStack {
                 Label(title, systemImage: icon)
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -1019,10 +1037,10 @@ struct ClosetView: View {
                     Button {
                         activeSheet = sheet
                     } label: {
-                        Label("View", systemImage: "chevron.right")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .labelStyle(.titleAndIcon)
+                    Label("View", systemImage: "chevron.right")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(AppTab.closet.palette.accent)
@@ -1093,6 +1111,9 @@ struct ClosetView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHint("Opens \(title)")
     }
 
     private func clothingThumbnailCard(_ item: ClosetItem) -> some View {
@@ -1208,10 +1229,12 @@ struct ClosetView: View {
                     Image(systemName: icon)
                         .font(.headline)
                         .foregroundStyle(tint)
+                        .accessibilityHidden(true)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
 
                 Text(title)
@@ -1229,6 +1252,9 @@ struct ClosetView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(detail)")
+        .accessibilityHint("Opens \(title)")
     }
 
     private var sizeProfileCard: some View {
@@ -1243,14 +1269,16 @@ struct ClosetView: View {
 
             labeledControl("Sizing category") {
                 Picker("Sizing category", selection: $sizeCategory) {
-                    ForEach(sizeCategories, id: \.self) { Text($0).tag($0) }
+                    Text("Not set").tag("")
+                    ForEach(optionsIncludingCurrent(sizeCategories, current: sizeCategory), id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.segmented)
             }
 
             labeledControl("Shirt size") {
                 Picker("Shirt size", selection: $shirtSize) {
-                    ForEach(shirtSizes, id: \.self) { Text($0).tag($0) }
+                    Text("Clear").tag("")
+                    ForEach(optionsIncludingCurrent(shirtSizes, current: shirtSize), id: \.self) { Text($0).tag($0) }
                 }
                 .pickerStyle(.menu)
             }
@@ -1296,14 +1324,16 @@ struct ClosetView: View {
             HStack(spacing: 12) {
                 labeledControl("Shoe size") {
                     Picker("Shoe size", selection: $shoeSize) {
-                        ForEach(shoeSizes, id: \.self) { Text($0).tag($0) }
+                        Text("Clear").tag("")
+                        ForEach(optionsIncludingCurrent(shoeSizes, current: shoeSize), id: \.self) { Text($0).tag($0) }
                     }
                     .pickerStyle(.menu)
                 }
 
                 labeledControl("Preferred fit") {
                     Picker("Preferred fit", selection: $fitPreference) {
-                        ForEach(fitPreferenceOptions, id: \.self) { Text($0).tag($0) }
+                        Text("Clear").tag("")
+                        ForEach(optionsIncludingCurrent(fitPreferenceOptions, current: fitPreference), id: \.self) { Text($0).tag($0) }
                     }
                     .pickerStyle(.menu)
                 }

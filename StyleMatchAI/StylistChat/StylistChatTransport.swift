@@ -10,39 +10,9 @@ protocol StylistChatTransport {
 
 struct StylistChatConfiguration {
     let baseURL: URL
-    let sharedSecret: String
 
-    static func fromSecretsProvider(_ provider: StylistChatSecretsProviding = BundleStylistChatSecretsProvider()) -> StylistChatConfiguration? {
-        guard let baseURL = provider.workerBaseURL,
-              let sharedSecret = provider.appSharedSecret,
-              !sharedSecret.isEmpty else {
-            return nil
-        }
-        return StylistChatConfiguration(baseURL: baseURL, sharedSecret: sharedSecret)
-    }
-}
-
-protocol StylistChatSecretsProviding {
-    var workerBaseURL: URL? { get }
-    var appSharedSecret: String? { get }
-}
-
-struct BundleStylistChatSecretsProvider: StylistChatSecretsProviding {
-    // Threat model: this is not an AI provider key. It is a lightweight app-auth shared secret
-    // injected through local build settings/xcconfig, useful for beta abuse resistance but not
-    // equivalent to a server-held secret because determined attackers can inspect app binaries.
-    var workerBaseURL: URL? {
-        stringValue("STYLIST_CHAT_PROXY_BASE_URL").flatMap(URL.init(string:))
-    }
-
-    var appSharedSecret: String? {
-        stringValue("STYLIST_CHAT_APP_SHARED_SECRET")
-    }
-
-    private func stringValue(_ key: String) -> String? {
-        let value = Bundle.main.object(forInfoDictionaryKey: key) as? String
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed?.isEmpty == false ? trimmed : nil
+    static var production: StylistChatConfiguration? {
+        StylistChatConfiguration(baseURL: AppBackendConfiguration.production().apiBaseURL)
     }
 }
 
@@ -65,16 +35,6 @@ struct StylistChatAuthHeaders {
         return hash
     }
 
-    static func authorization(secret: String, deviceHash: String, unixMinute: Int) -> String {
-        hmacSHA256Hex(message: "\(deviceHash).\(unixMinute)", secret: secret)
-    }
-
-    static func hmacSHA256Hex(message: String, secret: String) -> String {
-        let key = SymmetricKey(data: Data(secret.utf8))
-        let signature = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: key)
-        return signature.map { String(format: "%02x", $0) }.joined()
-    }
-
     static func sha256Hex(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
@@ -93,19 +53,16 @@ struct StylistChatAuthHeaders {
 final class LiveChatTransport: StylistChatTransport {
     private let configuration: StylistChatConfiguration
     private let session: URLSession
-    private let defaults: UserDefaults
-    private let now: () -> Date
+    private let accountSession: () -> StyleMatchAccountSession?
 
     init(
         configuration: StylistChatConfiguration,
         session: URLSession = .shared,
-        defaults: UserDefaults = .standard,
-        now: @escaping () -> Date = Date.init
+        accountSession: @escaping () -> StyleMatchAccountSession? = StyleMatchAccountSessionStore.load
     ) {
         self.configuration = configuration
         self.session = session
-        self.defaults = defaults
-        self.now = now
+        self.accountSession = accountSession
     }
 
     func send(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
@@ -143,17 +100,10 @@ final class LiveChatTransport: StylistChatTransport {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
-        let deviceHash = StylistChatAuthHeaders.deviceHash(defaults: defaults)
-        let unixMinute = Int(now().timeIntervalSince1970 / 60)
-        urlRequest.setValue(deviceHash, forHTTPHeaderField: "X-Device-Hash")
-        urlRequest.setValue(
-            StylistChatAuthHeaders.authorization(
-                secret: configuration.sharedSecret,
-                deviceHash: deviceHash,
-                unixMinute: unixMinute
-            ),
-            forHTTPHeaderField: "X-App-Auth"
-        )
+        guard let accountSession = accountSession(), accountSession.expiresAt > Date() else {
+            throw StylistChatError.unauthorized
+        }
+        urlRequest.setValue("Bearer \(accountSession.token)", forHTTPHeaderField: "Authorization")
         return urlRequest
     }
 

@@ -1,5 +1,5 @@
 {
-  "catalogBaseURL": "https://stylematch-affiliate-proxy.sabastine-7000.workers.dev",
+  "catalogBaseURL": "https://api.stylematchpro.com",
   "liveSearchProxyBaseURL": null,
   "allowedClientSideAPIKeyNames": []
 }

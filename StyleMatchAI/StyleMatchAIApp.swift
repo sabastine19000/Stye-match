@@ -1,4 +1,5 @@
 import SwiftUI
+import AuthenticationServices
 #if canImport(BackgroundTasks) && os(iOS)
 import BackgroundTasks
 #endif
@@ -14,7 +15,11 @@ private enum StartupDataRepair {
 #if DEBUG
         PersonalStylistPhase2Diagnostics.runStorageIsolationSmokeTest()
 #endif
+        let shouldRestoreCapturedAccountData = AccountScopedStorage.prepareForLaunch(defaults: defaults)
         StyleMatchAppLaunchMigrations.run(defaults: defaults)
+        if shouldRestoreCapturedAccountData {
+            AccountScopedStorage.restoreCapturedLaunchData(defaults: defaults)
+        }
         runOneTimeCrashRecovery(defaults: defaults)
         repairBoolDefault("hasCompletedOnboarding", fallback: true, defaults: defaults)
         repairBoolDefault("hasChosenAccessMode", fallback: false, defaults: defaults)
@@ -100,10 +105,8 @@ struct StyleMatchAIApp: App {
 
     init() {
         StartupDataRepair.run()
-        #if canImport(BackgroundTasks) && os(iOS)
         SaleWatcherBackgroundRefresh.register()
         SaleWatcherBackgroundRefresh.scheduleNextRefresh()
-        #endif
     }
 
     var body: some Scene {
@@ -120,7 +123,50 @@ final class StyleMatchAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppleCredentialRevoked),
+            name: ASAuthorizationAppleIDProvider.credentialRevokedNotification,
+            object: nil
+        )
+        verifyAppleCredentialState()
         return true
+    }
+
+    @objc private func handleAppleCredentialRevoked() {
+        moveRevokedAppleSessionToGuest()
+    }
+
+    private func verifyAppleCredentialState() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: "customerAccountMode") == CustomerAccountMode.apple.rawValue,
+              let userID = defaults.string(forKey: "customerAppleUserID"),
+              !userID.isEmpty else {
+            return
+        }
+
+        ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { state, _ in
+            guard state == .revoked || state == .notFound else { return }
+            DispatchQueue.main.async {
+                self.moveRevokedAppleSessionToGuest()
+            }
+        }
+    }
+
+    private func moveRevokedAppleSessionToGuest() {
+        let defaults = UserDefaults.standard
+        AccountScopedStorage.switchUser(
+            from: AccountScopedStorage.activePresentationUserID(defaults: defaults),
+            to: "guest",
+            transferSourceData: false,
+            defaults: defaults
+        )
+        StyleMatchAccountSessionStore.delete()
+        defaults.set(CustomerAccountMode.guest.rawValue, forKey: "customerAccountMode")
+        defaults.removeObject(forKey: "customerAccountEmail")
+        defaults.removeObject(forKey: "customerAppleUserID")
+        defaults.set(false, forKey: "customerAccountSyncEnabled")
+        defaults.set(true, forKey: "hasChosenAccessMode")
     }
 
     func userNotificationCenter(
@@ -173,6 +219,7 @@ private struct EmergencyRecoveryView: View {
 private struct AppLaunchFlowView: View {
     @AppStorage("hasChosenAccessMode") private var hasChosenAccessMode = false
     @State private var isShowingSplash = true
+    @State private var pendingSharedCardToken: String?
 
     var body: some View {
         ZStack {
@@ -196,6 +243,33 @@ private struct AppLaunchFlowView: View {
                 }
             }
         }
+        .onOpenURL { url in
+            routeSharedCard(url)
+        }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            guard let url = activity.webpageURL else { return }
+            routeSharedCard(url)
+        }
+        .sheet(item: sharedCardSheetBinding) { route in
+            SharedScoreCardRecipientView(token: route.token)
+        }
+    }
+
+    private var sharedCardSheetBinding: Binding<ShareableScoreCardRoute?> {
+        Binding(
+            get: {
+                pendingSharedCardToken.map(ShareableScoreCardRoute.init(token:))
+            },
+            set: { route in
+                pendingSharedCardToken = route?.token
+            }
+        )
+    }
+
+    private func routeSharedCard(_ url: URL) {
+        guard let route = ShareableScoreCardRoute.parse(url) else { return }
+        pendingSharedCardToken = route.token
+        hasChosenAccessMode = true
     }
 }
 

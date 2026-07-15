@@ -386,8 +386,11 @@ struct AIAssistantsView: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.title3)
                     .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss insight")
+            .accessibilityHint("Closes this personal insight")
         }
         .padding()
         .appCard(.ai, radius: 14)
@@ -1330,8 +1333,8 @@ struct AIAssistantsView: View {
 
                 progressGraphCard(
                     title: "Money Saved",
-                    value: "$\(moneySavedEstimate)",
-                    subtitle: "Closet-first savings",
+                    value: "Not tracked",
+                    subtitle: "StyleMatch does not estimate spending",
                     icon: "dollarsign.circle.fill",
                     tint: .orange,
                     values: moneySavedValues
@@ -1431,7 +1434,7 @@ struct AIAssistantsView: View {
     }
 
     private func miniBarGraph(_ values: [Double], tint: Color) -> some View {
-        let safeValues = values.isEmpty ? [20, 35, 50, 65, 80] : values
+        let safeValues = values.isEmpty ? [0] : values
         let maxValue = max(safeValues.max() ?? 100, 1)
 
         return GeometryReader { proxy in
@@ -1909,7 +1912,7 @@ struct AIAssistantsView: View {
     private var weeklyStyleValues: [Double] {
         let scores = decodedRecentScans.prefix(7).map { Double($0.score) }.reversed()
         let values = Array(scores)
-        return values.isEmpty ? [68, 72, 76, 80, 84] : values
+        return values
     }
 
     private var averageStyleScore: Int {
@@ -1917,7 +1920,8 @@ struct AIAssistantsView: View {
     }
 
     private var confidenceScore: Int {
-        min(100, max(50, averageStyleScore + min(decodedClosetItems.count, 10)))
+        guard !weeklyStyleValues.isEmpty else { return 0 }
+        return min(100, max(50, averageStyleScore + min(decodedClosetItems.count, 10)))
     }
 
     private var confidenceValues: [Double] {
@@ -1935,7 +1939,7 @@ struct AIAssistantsView: View {
         }.reversed()
 
         let result = Array(values)
-        return result.isEmpty ? [64, 70, 74, 79, 83] : result
+        return result
     }
 
     private var colorMatchingScore: Int {
@@ -1943,19 +1947,19 @@ struct AIAssistantsView: View {
     }
 
     private var wardrobeGrowthValues: [Double] {
-        let count = max(decodedClosetItems.count, 1)
+        let count = decodedClosetItems.count
+        guard count > 0 else { return [] }
         return (1...5).map { step in
             Double(max(1, (count * step) / 5))
         }
     }
 
     private var moneySavedEstimate: Int {
-        decodedClosetItems.count * 8 + decodedRecentScans.reduce(0) { $0 + max(0, $1.scanCount - 1) * 5 }
+        0
     }
 
     private var moneySavedValues: [Double] {
-        let saved = max(moneySavedEstimate, 10)
-        return (1...5).map { Double(saved * $0 / 5) }
+        []
     }
 
     private var shoppingHistoryCount: Int {
@@ -1963,7 +1967,8 @@ struct AIAssistantsView: View {
     }
 
     private var shoppingHistoryValues: [Double] {
-        let count = max(shoppingHistoryCount, 1)
+        let count = shoppingHistoryCount
+        guard count > 0 else { return [] }
         return (1...5).map { Double(max(1, (count * $0) / 5)) }
     }
 
@@ -2130,7 +2135,7 @@ struct AIAssistantsView: View {
     }
 
     private var favoriteBrandName: String {
-        favoriteBrandRows.first?.name ?? favoriteBrands.split(separator: ",").first.map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? "Nike"
+        favoriteBrandRows.first?.name ?? favoriteBrands.split(separator: ",").first.map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? "Not set"
     }
 
     private var favoriteBrandValueText: String {
@@ -2143,21 +2148,21 @@ struct AIAssistantsView: View {
             casualWords.contains { item.occasion.localizedCaseInsensitiveContains($0) }
         }.count
 
-        return percent(count: casualCount == 0 ? 4 : casualCount, total: max(decodedClosetItems.count, 5))
+        return decodedClosetItems.isEmpty ? 0 : percent(count: casualCount, total: decodedClosetItems.count)
     }
 
     private var colorHabitValues: [Double] {
         let rows = rankedCounts(decodedClosetItems.map(\.color)).prefix(5).map { Double($0.count) }
-        return rows.isEmpty ? [43, 24, 15, 10, 8] : rows
+        return rows
     }
 
     private var closetBalanceValues: [Double] {
         let rows = rankedCounts(decodedClosetItems.map(\.occasion)).prefix(5).map { Double($0.count) }
-        return rows.isEmpty ? [82, 12, 6, 4, 2] : rows
+        return rows
     }
 
     private var virtualClosetItemCountText: String {
-        decodedClosetItems.isEmpty ? "148" : "\(decodedClosetItems.count)"
+        "\(decodedClosetItems.count)"
     }
 
     private var virtualClosetFavoriteCountText: String {
@@ -2166,7 +2171,7 @@ struct AIAssistantsView: View {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
 
-        return favorites.isEmpty ? "12" : "\(favorites.count)"
+        return "\(favorites.count)"
     }
 
     private var virtualClosetCategoryCountText: String {
@@ -2177,17 +2182,18 @@ struct AIAssistantsView: View {
                 .filter { !$0.isEmpty }
         )
 
-        return categories.isEmpty ? "8" : "\(categories.count)"
+        return "\(categories.count)"
     }
 
     private var shoeCountValues: [Double] {
-        let count = max(shoeCount, 1)
+        let count = shoeCount
+        guard count > 0 else { return [] }
         return (1...5).map { Double(max(1, count * $0 / 5)) }
     }
 
     private var brandFocusValues: [Double] {
         let rows = favoriteBrandRows.prefix(5).compactMap { Double($0.value.replacingOccurrences(of: "x", with: "")) }
-        return rows.isEmpty ? [4, 3, 2, 1, 1] : rows
+        return rows
     }
 
     private var favoriteBrandRows: [(name: String, value: String)] {
@@ -2590,7 +2596,7 @@ struct AIAssistantsView: View {
         case "Fashion Journal":
             return "Fashion Journal: \(fashionJournalOutfitsWornCount) outfits, average score \(fashionJournalAverageScoreText), best score \(fashionJournalBestScoreText), improvement \(fashionJournalImprovementText)."
         case "Style Progress Reports":
-            return "Style stats: weekly score \(averageStyleScore), confidence \(confidenceScore), color matching \(colorMatchingScore), wardrobe \(decodedClosetItems.count) pieces, saved $\(moneySavedEstimate)."
+            return "Style stats: weekly score \(averageStyleScore), confidence \(confidenceScore), color matching \(colorMatchingScore), wardrobe \(decodedClosetItems.count) pieces. Spending savings are not tracked."
         case "Size Profile":
             let trimmed = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty
@@ -2815,15 +2821,17 @@ struct AIAssistantsView: View {
                 } label: {
                     if isTestingChatGPT {
                         ProgressView()
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)
                     } else {
                         Image(systemName: "paperplane.fill")
-                            .frame(width: 34, height: 34)
+                            .frame(width: 44, height: 44)
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppTab.ai.palette.accent)
                 .disabled(isTestingChatGPT || !openAIKeyIsSaved || livePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Send AI message")
+                .accessibilityHint("Sends your message to StyleMatch Pro AI")
 
                 Button {
                     chatMessages = [
@@ -2832,10 +2840,12 @@ struct AIAssistantsView: View {
                     liveStatus = nil
                 } label: {
                     Image(systemName: "trash")
-                        .frame(width: 30, height: 34)
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.bordered)
                 .tint(.red)
+                .accessibilityLabel("Clear chat")
+                .accessibilityHint("Clears the current AI chat messages")
             }
         }
     }
@@ -3020,10 +3030,10 @@ struct AIAssistantsView: View {
         [
             StyleMemoryItem(title: "Favorite colors", value: cleanMemoryValue(favoriteColors, fallback: topColorText), icon: "paintpalette.fill", tint: .purple),
             StyleMemoryItem(title: "Favorite brands", value: cleanMemoryValue(favoriteBrands, fallback: topBrandText), icon: "tag.fill", tint: .blue),
-            StyleMemoryItem(title: "Preferred fit", value: cleanMemoryValue(fitPreference, fallback: "Regular"), icon: "person.crop.rectangle", tint: .green),
-            StyleMemoryItem(title: "Budget", value: cleanMemoryValue(budget, fallback: "$50 - $200"), icon: "dollarsign.circle.fill", tint: .orange),
-            StyleMemoryItem(title: "Weather", value: cleanMemoryValue(weatherLocationText, fallback: "Sunny, 82°"), icon: "cloud.sun.fill", tint: .cyan),
-            StyleMemoryItem(title: "Dress code", value: cleanMemoryValue(plannedOccasionSummary, fallback: "Smart casual"), icon: "checkmark.seal.fill", tint: .mint),
+            StyleMemoryItem(title: "Preferred fit", value: cleanMemoryValue(fitPreference, fallback: "Not set"), icon: "person.crop.rectangle", tint: .green),
+            StyleMemoryItem(title: "Budget", value: cleanMemoryValue(budget, fallback: "Not set"), icon: "dollarsign.circle.fill", tint: .orange),
+            StyleMemoryItem(title: "Weather", value: cleanMemoryValue(weatherLocationText, fallback: "Not set"), icon: "cloud.sun.fill", tint: .cyan),
+            StyleMemoryItem(title: "Dress code", value: cleanMemoryValue(plannedOccasionSummary, fallback: "Not set"), icon: "checkmark.seal.fill", tint: .mint),
             StyleMemoryItem(title: "Shopping habits", value: shoppingHabitsSummary, icon: "bag.fill", tint: AppTab.shop.palette.accent),
             StyleMemoryItem(title: "Past ratings", value: pastOutfitRatingsSummary, icon: "chart.line.uptrend.xyaxis", tint: AppTab.ai.palette.accent),
             StyleMemoryItem(title: "Worn often", value: frequentlyWornOutfitsSummary, icon: "repeat.circle.fill", tint: .pink)
@@ -3031,7 +3041,7 @@ struct AIAssistantsView: View {
     }
 
     private var aiKnowsClosetCountText: String {
-        decodedClosetItems.isEmpty ? "148" : "\(decodedClosetItems.count)"
+        "\(decodedClosetItems.count)"
     }
 
     private var sizeProfileDisplayText: String {
@@ -3096,12 +3106,12 @@ struct AIAssistantsView: View {
             .filter { !$0.isEmpty }
             .prefix(2)
 
-        return colors.isEmpty ? "Blue, Black" : colors.joined(separator: ", ")
+        return colors.isEmpty ? "Not set" : colors.joined(separator: ", ")
     }
 
     private var budgetDisplayText: String {
         let trimmed = budget.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "$50-$150" : trimmed.replacingOccurrences(of: " - ", with: "-")
+        return trimmed.isEmpty ? "Not set" : trimmed.replacingOccurrences(of: " - ", with: "-")
     }
 
     private var preferredStyleDisplayText: String {

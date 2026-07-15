@@ -11,44 +11,40 @@ struct OpenAIStylistClient {
     }
 
     func askStylist(profile: StyleMatchStylistProfile, messages: [AIChatMessage], question: String) async throws -> String {
-        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw OpenAIStylistError.missingAPIKey
+        guard let configuration = StylistChatConfiguration.production else {
+            throw OpenAIStylistError.invalidResponse
         }
 
-        var lastError: Error?
-        for selectedModel in fallbackModelNames(preferred: resolvedModelName(from: model)) {
-            do {
-                return try await askChatCompletions(
-                    profile: profile,
-                    messages: messages,
-                    question: question,
-                    model: selectedModel,
-                    tokenLimitStyle: .maxCompletionTokens
-                )
-            } catch OpenAIStylistError.api(let message) where shouldRetryWithLegacyMaxTokens(message) {
-                do {
-                    return try await askChatCompletions(
-                        profile: profile,
-                        messages: messages,
-                        question: question,
-                        model: selectedModel,
-                        tokenLimitStyle: .maxTokens
-                    )
-                } catch {
-                    lastError = error
-                    if !shouldTryFallbackModel(after: error) {
-                        throw error
-                    }
-                }
-            } catch {
-                lastError = error
-                if !shouldTryFallbackModel(after: error) {
-                    throw error
-                }
+        let requestMessages = messages.suffix(11).map { message in
+            ChatRequest.RequestMessage(
+                role: message.role == .customer ? "user" : "assistant",
+                content: message.text
+            )
+        } + [ChatRequest.RequestMessage(role: "user", content: question)]
+        let context = ChatContext(
+            profileSummary: profileContextBlock(profile: profile, question: question),
+            recentOutfits: conversationText(from: messages),
+            scoreBreakdown: [profile.pastOutfitRatings, profile.appContext]
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .joined(separator: "\n")
+        )
+        let request = ChatRequest(messages: requestMessages, context: context, stream: true)
+        let transport = LiveChatTransport(configuration: configuration)
+        var response = ""
+
+        do {
+            for try await token in transport.send(request) {
+                response += token
             }
+        } catch let error as StylistChatError {
+            throw OpenAIStylistError.api(message: error.errorDescription ?? "The AI Stylist is unavailable right now.")
+        } catch {
+            throw OpenAIStylistError.api(message: "The AI Stylist is unavailable right now.")
         }
 
-        throw lastError ?? OpenAIStylistError.emptyOutput
+        let cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { throw OpenAIStylistError.emptyOutput }
+        return cleaned
     }
 
     private func askChatCompletions(
@@ -58,55 +54,10 @@ struct OpenAIStylistClient {
         model selectedModel: String,
         tokenLimitStyle: OpenAIChatCompletionRequest.TokenLimitStyle
     ) async throws -> String {
-        guard let url = URL(string: "https://api.openai.com/v1/chat/completions") else {
-            throw OpenAIStylistError.invalidResponse
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-
-        // Approved live AI dispatch point:
-        // ContentView chat/founder verification, ScanView score explanation/design assist,
-        // AIAssistantsView main stylist chat, AIStyleAdvisor quick advice, and ShopView sale ranking.
-        // Every request receives PersonalizationContextBuilder context plus the canonical score guard here.
-        let body = OpenAIChatCompletionRequest(
-            model: selectedModel,
-            maxTokens: 1_800,
-            tokenLimitStyle: tokenLimitStyle,
-            temperature: supportsCustomTemperature(selectedModel) ? (question.localizedCaseInsensitiveContains("Return ONLY valid JSON") ? 0.2 : 0.7) : nil,
-            messages: chatCompletionMessages(profile: profile, messages: messages, question: question)
-        )
-
-        #if DEBUG
-        print(debugPromptLog(for: body.messages, model: selectedModel))
-        #endif
-
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw OpenAIStylistError.invalidResponse
-        }
-
-        if !(200...299).contains(httpResponse.statusCode) {
-            let apiError = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data)
-            throw OpenAIStylistError.api(message: readableAPIError(statusCode: httpResponse.statusCode, message: apiError?.error.message, model: selectedModel))
-        }
-
-        let decoded = try JSONDecoder().decode(OpenAIChatCompletionResponse.self, from: data)
-        let text = decoded.choices
-            .map(\.message.content)
-            .joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !text.isEmpty else {
-            throw OpenAIStylistError.emptyOutput
-        }
-
-        return text
+        // Kept only as a source-compatible private shim for older local tests. Production AI
+        // requests are dispatched through LiveChatTransport above; provider credentials never
+        // leave the Worker.
+        throw OpenAIStylistError.invalidResponse
     }
 
     private func chatCompletionMessages(profile: StyleMatchStylistProfile, messages: [AIChatMessage], question: String) -> [OpenAIChatCompletionRequest.Message] {

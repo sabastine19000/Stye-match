@@ -15,17 +15,18 @@ struct StoreSearchView: View {
     @State private var maxPrice = 250.0
     @State private var onSaleOnly = false
     @State private var sort: SearchSort = .relevance
+    @State private var catalogProducts: [AffiliateProduct] = []
     @State private var products: [AffiliateProduct] = []
     @State private var rankedProducts: [RankedProduct] = []
-    @State private var retailers: [Retailer] = []
+    @State private var relaxedSearchResult: ShoppingSearchEngine.RelaxedFilterResult?
+    @State private var retailers: [SupportedStore] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var partialFailureNote: String?
     @State private var showFilters = false
     @State private var showDisclosure = false
     @State private var searchTask: Task<Void, Never>?
-
-    private let localStore = ShoppingLocalStore()
+    @StateObject private var localStore = ShoppingLocalStore()
 
     var body: some View {
         ScrollView {
@@ -45,6 +46,12 @@ struct StoreSearchView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    if isSelectedRetailerUnavailable {
+                        selectedRetailerUnavailableState
+                    } else if let relaxedFilter = relaxedSearchResult?.relaxedFilter {
+                        relaxedFilterNotice(relaxedFilter)
+                    }
+
                     LazyVStack(spacing: 12) {
                         ForEach(rankedProducts) { ranked in
                             SearchProductCard(
@@ -60,7 +67,7 @@ struct StoreSearchView: View {
                         }
                     }
 
-                    if rankedProducts.isEmpty {
+                    if rankedProducts.isEmpty && !isSelectedRetailerUnavailable {
                         Text("No matches - try fewer filters")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -137,6 +144,12 @@ struct StoreSearchView: View {
         #endif
     }
 
+    private func openStoreDirectly(_ url: URL) {
+        #if canImport(UIKit)
+        UIApplication.shared.open(url, options: [:])
+        #endif
+    }
+
     private var searchBar: some View {
         HStack {
             Image(systemName: "magnifyingglass")
@@ -155,8 +168,14 @@ struct StoreSearchView: View {
                     selectedRetailers.removeAll()
                     debouncedSearch()
                 }
-                ForEach(retailers.map(\.name), id: \.self) { name in
-                    chip(name, isSelected: selectedRetailers.contains(name)) {
+                ForEach(retailers) { retailer in
+                    let name = retailer.name
+                    let isUnavailable = !availableRetailerNames.contains(name.lowercased())
+                    chip(
+                        isUnavailable ? "\(name) Direct" : name,
+                        isSelected: selectedRetailers.contains(name),
+                        isInactive: isUnavailable && !selectedRetailers.contains(name)
+                    ) {
                         if selectedRetailers.contains(name) {
                             selectedRetailers.remove(name)
                         } else {
@@ -169,7 +188,7 @@ struct StoreSearchView: View {
         }
     }
 
-    private func chip(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+    private func chip(_ title: String, isSelected: Bool, isInactive: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.subheadline)
@@ -178,8 +197,89 @@ struct StoreSearchView: View {
                 .padding(.vertical, 8)
                 .background(isSelected ? Color.orange.opacity(0.22) : Color(.secondarySystemBackground))
                 .clipShape(Capsule())
+                .opacity(isInactive ? 0.45 : 1)
         }
         .buttonStyle(.plain)
+    }
+
+    private func relaxedFilterNotice(_ filter: ShoppingSearchEngine.RelaxableFilter) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .foregroundStyle(Color.orange)
+            Text("No exact matches — showing results without your \(filter.displayName) filter")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .appCard(.shop, radius: 10)
+    }
+
+    private var availableRetailerNames: Set<String> {
+        Set(catalogProducts.map { $0.retailer.name.lowercased() })
+    }
+
+    private var isSelectedRetailerUnavailable: Bool {
+        guard !selectedRetailers.isEmpty else { return false }
+        return rankedProducts.isEmpty
+            && selectedRetailers.allSatisfy { !availableRetailerNames.contains($0.lowercased()) }
+    }
+
+    private var selectedRetailerUnavailableState: some View {
+        let retailerName = selectedRetailers.sorted().joined(separator: ", ")
+        let selectedStores = retailers.filter { selectedRetailers.contains($0.name) }
+        let primaryStore = selectedStores.first
+        let actionURL = primaryStore?.searchURL(for: text) ?? primaryStore?.directAccessURL
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "storefront")
+                    .foregroundStyle(Color.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(retailerName)
+                        .font(.headline)
+                    Text(primaryStore?.integrationLabel ?? "Catalog Integration Coming Soon")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.orange)
+                    Text("New products are coming soon for \(retailerName). StyleMatch Pro does not currently have live catalog products for this retailer, and we will not substitute products from another retailer.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if let disclosure = primaryStore?.disclosureText?.nilIfEmpty {
+                        Text(disclosure)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    selectedRetailers.removeAll()
+                    debouncedSearch()
+                } label: {
+                    Label("Show All Products", systemImage: "bag")
+                }
+                .buttonStyle(.borderedProminent)
+
+                if let actionURL {
+                    Button {
+                        openStoreDirectly(actionURL)
+                    } label: {
+                        Label("Open \(retailerName)", systemImage: "safari")
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        selectedRetailers.removeAll()
+                        debouncedSearch()
+                    } label: {
+                        Label("Choose Another Store", systemImage: "storefront")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding()
+        .appCard(.shop, radius: 10)
     }
 
     private var loadingSkeletons: some View {
@@ -254,11 +354,8 @@ struct StoreSearchView: View {
     }
 
     private func loadRetailersAndSearch() async {
-        if let configURL = Bundle.main.url(forResource: "RetailerConfig", withExtension: "json"),
-           let data = try? Data(contentsOf: configURL),
-           let config = try? JSONDecoder.catalog.decode(RetailerConfig.self, from: data) {
-            retailers = config.retailers
-        }
+        let stores = (try? await BundledStoreDirectoryProvider().stores()) ?? []
+        retailers = stores.filter(\.isEnabled)
         await runSearch()
     }
 
@@ -279,10 +376,12 @@ struct StoreSearchView: View {
         }
 
         do {
-            let provider: ProductSearchProvider = CatalogSearchProvider(catalogProvider: SharedCatalogProvider())
-            let results = try await provider.search(currentQuery())
+            let safeProducts = try await SharedProductCatalogLoader.shared.products()
+            let results = ShoppingSearchEngine.relaxedFilter(products: safeProducts, query: currentQuery())
             await MainActor.run {
-                products = results
+                catalogProducts = safeProducts
+                products = results.displayedResults
+                relaxedSearchResult = results
                 rerank()
                 isLoading = false
             }
@@ -339,16 +438,7 @@ private struct SearchProductCard: View {
         let viewModel = AffiliateProductViewModel(product: product, reasonText: reason)
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 12) {
-                AsyncImage(url: product.imageURL) { phase in
-                    switch phase {
-                    case .success(let image): image.resizable().scaledToFill()
-                    default:
-                        ZStack {
-                            Color(.secondarySystemBackground)
-                            Image(systemName: "bag.fill").foregroundStyle(.secondary)
-                        }
-                    }
-                }
+                ShoppingProductImage(imageURL: product.remoteImageRequestURL)
                 .frame(width: 82, height: 82)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -360,8 +450,11 @@ private struct SearchProductCard: View {
                         Spacer()
                         Button(action: onFavorite) {
                             Image(systemName: isFavorite ? "heart.fill" : "heart")
+                                .frame(width: 44, height: 44)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel(isFavorite ? "Remove from favorites" : "Favorite product")
+                        .accessibilityHint("Updates your saved shopping favorites")
                     }
                     if let brand = viewModel.brandText {
                         Text(brand)

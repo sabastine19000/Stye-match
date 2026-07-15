@@ -18,6 +18,9 @@ struct LoginWelcomeView: View {
 
     @State private var signInMessage: String?
     @State private var showGuestTransferOffer = false
+    @State private var pendingAppleSignIn: StyleMatchAppleSignInPayload?
+    @State private var pendingAppleNonce: String?
+    @State private var isAccountRequestInFlight = false
 
     private let background = Color(hex: 0x080812)
     private let panel = Color(hex: 0x151523)
@@ -73,12 +76,11 @@ struct LoginWelcomeView: View {
             titleVisibility: .visible
         ) {
             Button("Transfer My Guest Data") {
-                transferGuestDataToApple()
+                completePendingAppleSignIn(transferGuestData: true)
             }
 
             Button("Continue Without Transfer") {
-                guestDataTransferSummary = "Apple sign-in is active. Local guest data was kept on this iPhone."
-                hasChosenAccessMode = true
+                completePendingAppleSignIn(transferGuestData: false)
             }
         } message: {
             Text("StyleMatch Pro can keep your local scan history, favorites, closet, style preferences, and profile information with your Apple sign-in.")
@@ -124,12 +126,20 @@ struct LoginWelcomeView: View {
         VStack(spacing: 18) {
             SignInWithAppleButton(.continue) { request in
                 request.requestedScopes = [.fullName, .email]
+                prepareAppleRequest(request)
             } onCompletion: { result in
                 handleAppleSignIn(result)
             }
             .signInWithAppleButtonStyle(.white)
             .frame(height: 56)
             .clipShape(RoundedRectangle(cornerRadius: 16))
+            .disabled(isAccountRequestInFlight)
+
+            if isAccountRequestInFlight {
+                ProgressView("Securing your account…")
+                    .tint(gold)
+                    .foregroundStyle(gold)
+            }
 
             Rectangle()
                 .fill(gold.opacity(0.18))
@@ -166,6 +176,11 @@ struct LoginWelcomeView: View {
     }
 
     private func continueAsGuest() {
+        AccountScopedStorage.switchUser(
+            from: AccountScopedStorage.activePresentationUserID(),
+            to: "guest",
+            transferSourceData: false
+        )
         customerAccountMode = CustomerAccountMode.guest.rawValue
         customerAccountEmail = ""
         customerAppleUserID = ""
@@ -194,42 +209,60 @@ struct LoginWelcomeView: View {
                 return
             }
 
-            let signedInUserID = credential.user
-            customerAccountMode = CustomerAccountMode.apple.rawValue
-            customerAppleUserID = signedInUserID
-            accountSyncEnabled = true
-
-            let appliedProfile = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
-                userID: signedInUserID,
+            guard let nonce = pendingAppleNonce else {
+                signInMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
+                return
+            }
+            let payload = StyleMatchAppleSignInPayload(
+                userID: credential.user,
                 email: credential.email,
-                appleGivenName: credential.fullName?.givenName,
-                appleFamilyName: credential.fullName?.familyName,
-                localDisplayName: profileName
-            )
-            logProfileNameEvent(
-                stage: "sign-in",
-                source: appliedProfile.source,
-                appleNameProvided: credential.fullName?.givenName != nil || credential.fullName?.familyName != nil,
-                localNamePresent: StyleMatchAccountNameResolver.clean(profileName) != nil,
-                storedNamePresent: appliedProfile.givenName != nil
+                givenName: credential.fullName?.givenName,
+                familyName: credential.fullName?.familyName,
+                sourceUserID: AccountScopedStorage.activePresentationUserID()
             )
 
-            if let email = appliedProfile.email {
-                customerAccountEmail = email
+            pendingAppleNonce = nil
+            isAccountRequestInFlight = true
+            Task {
+                do {
+                    let session = try await StyleMatchAccountClient().exchange(
+                        authorizationCode: credential.authorizationCode,
+                        identityToken: credential.identityToken,
+                        nonce: nonce
+                    )
+                    try StyleMatchAccountSessionStore.save(session)
+                    if payload.sourceUserID == "guest",
+                       hasTransferableGuestData,
+                       !AccountScopedStorage.hasUserData(for: payload.userID) {
+                        pendingAppleSignIn = payload
+                        showGuestTransferOffer = true
+                    } else {
+                        completeAppleSignIn(payload, transferGuestData: false)
+                    }
+                    signInMessage = nil
+                } catch {
+                    StyleMatchAccountSessionStore.delete()
+                    signInMessage = (error as? StyleMatchAccountError)?.localizedDescription
+                        ?? StyleMatchAccountError.serviceUnavailable.localizedDescription
+                }
+                isAccountRequestInFlight = false
             }
-            if let displayName = appliedProfile.displayName {
-                profileName = displayName
-            }
+        case .failure:
+            pendingAppleNonce = nil
+            isAccountRequestInFlight = false
+            signInMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
+        }
+    }
 
-            if hasTransferableGuestData {
-                showGuestTransferOffer = true
-            } else {
-                guestDataLinkedToApple = true
-                guestDataTransferSummary = "Apple sign-in is active. New style data will be saved to this account when sync is available."
-                hasChosenAccessMode = true
-            }
-        case .failure(let error):
-            signInMessage = "Apple sign-in was not completed: \(error.localizedDescription)"
+    private func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        do {
+            let nonce = try StyleMatchAppleNonce.make()
+            pendingAppleNonce = nonce
+            request.nonce = StyleMatchAppleNonce.hash(nonce)
+            signInMessage = nil
+        } catch {
+            pendingAppleNonce = nil
+            signInMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
         }
     }
 
@@ -244,38 +277,78 @@ struct LoginWelcomeView: View {
         )
     }
 
-    private func transferGuestDataToApple() {
+    private func completePendingAppleSignIn(transferGuestData: Bool) {
+        guard let pendingAppleSignIn else { return }
+        completeAppleSignIn(pendingAppleSignIn, transferGuestData: transferGuestData)
+        self.pendingAppleSignIn = nil
+    }
+
+    private func completeAppleSignIn(_ payload: StyleMatchAppleSignInPayload, transferGuestData: Bool) {
         var transferred: [String] = []
 
-        if !outfitScanHistoryData.isEmpty {
+        if transferGuestData, !outfitScanHistoryData.isEmpty {
             transferred.append("scan history")
         }
 
         let hasIntentionalProfileSave = FounderProfileDefaultsMigration.hasIntentionalProfileSave()
 
-        if hasIntentionalProfileSave,
+        if transferGuestData, hasIntentionalProfileSave,
            LoginWelcomeProfileData.hasValue(favoriteOutfits) {
             transferred.append("favorites")
         }
 
-        if !closetItemsData.isEmpty {
+        if transferGuestData, !closetItemsData.isEmpty {
             transferred.append("closet")
         }
 
-        if hasIntentionalProfileSave,
+        if transferGuestData, hasIntentionalProfileSave,
            LoginWelcomeProfileData.hasValue(stylePreferences) || LoginWelcomeProfileData.hasValue(favoriteColors) {
             transferred.append("style preferences")
         }
 
-        if hasIntentionalProfileSave,
+        if transferGuestData, hasIntentionalProfileSave,
            StyleMatchAccountNameResolver.profileGivenName(from: profileName) != nil {
             transferred.append("profile")
         }
 
+        AccountScopedStorage.switchUser(
+            from: payload.sourceUserID,
+            to: payload.userID,
+            transferSourceData: transferGuestData
+        )
+        customerAccountMode = CustomerAccountMode.apple.rawValue
+        customerAppleUserID = payload.userID
+        accountSyncEnabled = true
+
+        let restoredLocalName = UserDefaults.standard.string(forKey: "profileName")
+        let appliedProfile = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+            userID: payload.userID,
+            email: payload.email,
+            appleGivenName: payload.givenName,
+            appleFamilyName: payload.familyName,
+            localDisplayName: restoredLocalName
+        )
+        logProfileNameEvent(
+            stage: "sign-in",
+            source: appliedProfile.source,
+            appleNameProvided: payload.givenName != nil || payload.familyName != nil,
+            localNamePresent: StyleMatchAccountNameResolver.clean(restoredLocalName) != nil,
+            storedNamePresent: appliedProfile.givenName != nil
+        )
+
+        customerAccountEmail = appliedProfile.email ?? ""
+        profileName = appliedProfile.displayName ?? restoredLocalName ?? ""
+
         guestDataLinkedToApple = true
-        guestDataTransferSummary = transferred.isEmpty
-            ? "Apple sign-in is active. New style data will be saved to this account when sync is available."
-            : "Transferred guest \(transferred.joined(separator: ", ")) to Apple sign-in on this device."
+        if transferGuestData {
+            guestDataTransferSummary = transferred.isEmpty
+                ? "Apple sign-in is active. No guest style data needed to be transferred."
+                : "Transferred guest \(transferred.joined(separator: ", ")) to Apple sign-in on this device."
+        } else if payload.sourceUserID == "guest" {
+            guestDataTransferSummary = "Apple sign-in is active. Local guest data remains separate on this iPhone."
+        } else {
+            guestDataTransferSummary = "Apple sign-in is active. This account's saved data is now loaded."
+        }
         hasChosenAccessMode = true
     }
 }

@@ -226,6 +226,7 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
     @State private var mountedTabs: Set<AppTab> = [.home]
+    @State private var homeNavigationResetID = 0
     @StateObject private var liveWeather = StyleMatchLiveWeatherManager()
     @StateObject private var outfitMemoryStore = OutfitMemoryStore()
     @State private var pendingFeedbackPrompt: ScheduledFeedbackPrompt?
@@ -246,7 +247,6 @@ struct ContentView: View {
         .tint(activeTheme.palette(for: selectedTab).accent)
         .preferredColorScheme(activeTheme.preferredColorScheme)
         .onAppear {
-            applyProfileDefaults()
             liveWeather.refresh()
             checkForPendingFeedbackPrompt()
             refreshSaleWatcher()
@@ -275,13 +275,15 @@ struct ContentView: View {
             preservedTab(.home) {
                 HomeView(
                     selectedTab: $selectedTab,
+                    navigationResetID: homeNavigationResetID,
                     feedbackPrompt: pendingFeedbackPrompt,
                     onHomeAppear: checkForPendingFeedbackPrompt,
                     onFeedbackWornAnswer: answerFeedbackWorn,
                     onFeedbackLikedAnswer: answerFeedbackLiked,
                     onFeedbackDislikeReason: answerFeedbackDislikeReason,
                     onFeedbackDismiss: dismissActiveFeedbackPrompt,
-                    onFeedbackComplete: clearActiveFeedbackPrompt
+                    onFeedbackComplete: clearActiveFeedbackPrompt,
+                    onSelectTab: selectTab
                 )
             }
 
@@ -310,7 +312,7 @@ struct ContentView: View {
             if mountedTabs.contains(.ai) {
                 preservedTab(.ai) {
                     if FeatureFlags.conversationalStylist {
-                        StylistChatView()
+                        StylistChatView(voiceInputEnabled: false)
                     } else {
                         StableAIFallbackView(selectedTab: $selectedTab)
                     }
@@ -319,7 +321,7 @@ struct ContentView: View {
 
             if mountedTabs.contains(.profile) {
                 preservedTab(.profile) {
-                    ProfileView(selectedTab: $selectedTab)
+                    ProfileView(selectedTab: $selectedTab, voiceControlsEnabled: false)
                 }
             }
         }
@@ -330,6 +332,19 @@ struct ContentView: View {
             .opacity(selectedTab == tab ? 1 : 0)
             .allowsHitTesting(selectedTab == tab)
             .accessibilityHidden(selectedTab != tab)
+    }
+
+    private func selectTab(_ tab: AppTab) {
+        if tab == .home {
+            homeNavigationResetID &+= 1
+        }
+        guard selectedTab != tab else { return }
+        mountedTabs.insert(tab)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            selectedTab = tab
+        }
     }
 
     private func checkForPendingFeedbackPrompt() {
@@ -409,13 +424,7 @@ struct ContentView: View {
         let selectedPalette = activeTheme.palette(for: tab)
 
         return Button {
-            guard selectedTab != tab else { return }
-            mountedTabs.insert(tab)
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                selectedTab = tab
-            }
+            selectTab(tab)
         } label: {
             VStack(spacing: 4) {
                 ZStack(alignment: .topTrailing) {
@@ -451,20 +460,11 @@ struct ContentView: View {
         .zIndex(isSelected ? 1 : 0)
     }
 
-    private func applyProfileDefaults() {
-        let savedSize = UserDefaults.standard.string(forKey: "sizeProfile") ?? ""
-        guard !savedSize.localizedCaseInsensitiveContains("24W-60W")
-                || !savedSize.localizedCaseInsensitiveContains("XXS-8XL") else {
+    private func refreshSaleWatcher() {
+        guard FeatureFlags.saleNotificationsEnabled else {
+            shoppingSaleUnreadCount = 0
             return
         }
-
-        UserDefaults.standard.set(
-            "Pants: 24W-60W x 26L-40L, saved 36W x 36L; Shirts: XXS-8XL; Shoes: 5-18; Fit: slim, straight, relaxed, curvy, petite, tall",
-            forKey: "sizeProfile"
-        )
-    }
-
-    private func refreshSaleWatcher() {
         Task {
             _ = await SaleWatcher().checkForNewSales()
             let unread = SaleWatcher().unreadSaleEventCount()
@@ -1732,8 +1732,11 @@ struct StableAIFallbackView: View {
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 34))
+                                .frame(width: 44, height: 44)
                         }
                         .disabled(isSendingStylistMessage || chatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Send stylist message")
+                        .accessibilityHint("Sends your question to the stylist")
                     }
                     .padding(.horizontal)
                 }
@@ -1911,11 +1914,6 @@ struct StableAIFallbackView: View {
     }
 
     private func liveChatGPTReply(to text: String, conversation: [AIChatMessage]) async throws -> String {
-        guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !savedKey.isEmpty else {
-            throw OpenAIStylistError.missingAPIKey
-        }
-
         let profile = StyleMatchStylistProfile(
             name: displayName,
             favoriteColors: favoriteColors,
@@ -1943,7 +1941,7 @@ struct StableAIFallbackView: View {
             """
         )
 
-        let client = OpenAIStylistClient(apiKey: savedKey, model: openAIModel)
+        let client = OpenAIStylistClient(apiKey: "", model: openAIModel)
 
         let guidedQuestion = """
         Answer the customer's exact message as StyleMatch Pro AI Stylist.
@@ -2092,7 +2090,6 @@ struct StableAIFallbackView: View {
         Occasion/Formality: \(analysis.occasionFit); \(analysis.formality)
         Environment: \(analysis.environment)
         Lighting/Image quality: \(analysis.imageQuality)
-        Skin tone style note: \(analysis.skinToneStyleNote)
         Style notes: \(analysis.summary)
         Confidence: \(confidence)
         """
@@ -2372,7 +2369,7 @@ struct StableAIFallbackView: View {
 
     private var weatherTemperatureText: String {
         let trimmed = weather.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "74°F" : trimmed
+        return trimmed.isEmpty ? "No weather saved" : trimmed
     }
 
     private var weatherConditionText: String {

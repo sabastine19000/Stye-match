@@ -180,6 +180,7 @@ struct StyleMatchAIProviderAdapters {
         )
     }
 
+    #if DEBUG
     private static func analyzeWithChatGPT(imageBase64: String, context: StyleMatchAIContext, apiKey: String, model: String = "gpt-4o-mini") async throws -> ProviderAnalysisResult {
         let requestBody = OpenAIImageRequest(
             model: model,
@@ -422,6 +423,7 @@ struct StyleMatchAIProviderAdapters {
             throw AIProviderAdapterError.imageAnalysisUnavailable(provider: provider.rawValue)
         }
     }
+    #endif
 }
 
 enum AIProviderAdapterError: LocalizedError {
@@ -447,6 +449,7 @@ enum AIProviderAdapterError: LocalizedError {
     }
 }
 
+#if DEBUG
 private struct OpenAIImageRequest: Encodable {
     let model: String
     let maxCompletionTokens: Int
@@ -652,3 +655,4 @@ private struct PerplexityChatResponse: Decodable {
         let content: String
     }
 }
+#endif

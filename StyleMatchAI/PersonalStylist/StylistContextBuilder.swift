@@ -88,6 +88,50 @@ struct PersonalizationContextBuilder {
         )
     }
 
+    static func conversationalStylistContext() -> ChatContext {
+        ChatContext(
+            profileSummary: """
+            Conversational Personal Stylist Phase 3C context.
+            Use only the user's current message and any explicit scan facts provided in this request.
+            For outfit-combination requests, give concise options with top, bottom, shoes, optional layer/accessories, colors, occasion/formality, and why it works.
+            Keep any user-provided anchor item fixed unless they ask for replacements.
+            Label items as From this scan, From your closet, Suggested addition, or General styling idea only when that source is explicit.
+            Do not change, recalculate, or reinterpret StyleMatch Pro scores.
+            Do not use appearance, complexion, undertone, body-shape, weight, BMI, race, ethnicity, attractiveness, hidden profile, or deleted profile data.
+            """,
+            recentOutfits: outfitCombinationGuidance,
+            scoreBreakdown: nil
+        )
+    }
+
+    static func scanStylistContext(for analysis: OutfitAnalysisResult) -> ChatContext {
+        let garments = compactList(analysis.safeDetectedClothingItems, fallback: "outfit")
+        let colors = compactList(analysis.colorPalette, fallback: "")
+        let colorText = colors.isEmpty ? "not confidently available" : colors
+        let breakdown = analysis.scoreBreakdown?.stylistChatSummary
+
+        return ChatContext(
+            profileSummary: """
+            Conversational Personal Stylist Phase 3C scan context.
+            Use only these selected scan facts and the user's message.
+            For outfit-combination requests, give concise options with top, bottom, shoes, optional layer/accessories, colors, occasion/formality, and why it works.
+            Preserve scan-derived items unless the user asks for replacements, and label them From this scan rather than owned.
+            If color or garment detection seems uncertain, say so and ask which shade/item is closer.
+            Do not change, recalculate, or reinterpret StyleMatch Pro scores.
+            Do not use appearance, complexion, undertone, body-shape, weight, BMI, race, ethnicity, attractiveness, hidden profile, or deleted profile data.
+            """,
+            recentOutfits: """
+            Selected scan: score \(analysis.score)/100; detected garments: \(garments); garment colors: \(colorText); detected style: \(analysis.outfitDescription); occasion/formality: \(analysis.occasionFit), \(analysis.formality); image quality: \(analysis.imageQuality).
+            \(outfitCombinationGuidance)
+            """,
+            scoreBreakdown: breakdown.map { "Existing score only: \($0)" }
+        )
+    }
+
+    private static let outfitCombinationGuidance = """
+    Outfit combinations: support one or three options, casual/smart/business/elevated/minimal/bold/warm/cool/day/evening modes when requested or implied. Use garment-color reasoning only: neutrals, contrast, warm/cool balance, saturation, earth tones, accent colors, shoe/belt coordination, pattern scale, and fabric/season. Common colors include black, white, cream, gray, charcoal, navy, light blue, olive, khaki, tan, brown, burgundy, rust, red, green, pastels, and denim washes. Never claim ownership, fit guarantee, brand, price, inventory, appearance-based color match, or body effect unless supplied by the user.
+    """
+
     static func promptSection(
         title: String = "PERSONAL STYLIST CONTEXT",
         profile: StylistProfile,

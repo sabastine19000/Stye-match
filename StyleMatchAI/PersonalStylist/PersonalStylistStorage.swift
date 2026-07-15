@@ -57,19 +57,74 @@ enum PersonalStylistStorage {
             scopedKey(ShoppingLocalStore.wishlistBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.cartBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.shoppingCardsBaseKey, userID: userID),
+            scopedKey(ShoppingLocalStore.saleAlertProductIDsBaseKey, userID: userID),
+            scopedKey(ShoppingLocalStore.latestKnownPricesBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.saleNotificationsEnabledBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.saleStateSnapshotsBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.lastKnownSaleStateBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.notifiedSalePairsBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.saleNotificationHistoryBaseKey, userID: userID),
             scopedKey(ShoppingLocalStore.recentSaleEventsBaseKey, userID: userID),
-            scopedKey(ShoppingLocalStore.viewedSaleEventIDsBaseKey, userID: userID)
+            scopedKey(ShoppingLocalStore.viewedSaleEventIDsBaseKey, userID: userID),
+            scopedKey(ShoppingLocalStore.affiliateDisclosureExpandedBaseKey, userID: userID),
+            scopedKey(ShoppingLocalStore.affiliateDisclosureSeenExpandedBaseKey, userID: userID),
+            scopedKey(ShareableScoreCardLocalStore.baseKey, userID: userID),
+            scopedKey("personalStylistFeedbackLastPromptedAt", userID: userID),
+            scopedKey("personalStylistFeedbackFirstSessionSeen", userID: userID),
+            scopedKey("customerAccountEmail", userID: userID)
         ] {
             defaults.removeObject(forKey: key)
         }
         PersonalStylistSnapshotStore.deleteData(store: "StylistProfile", userID: userID)
         PersonalStylistSnapshotStore.deleteData(store: "OutfitMemoryStore", userID: userID)
     }
+
+    static func transferPersonalization(
+        from sourceUserID: String,
+        to destinationUserID: String,
+        defaults: UserDefaults = .standard
+    ) {
+        let source = normalizedUserID(sourceUserID)
+        let destination = normalizedUserID(destinationUserID)
+        guard source != destination else { return }
+
+        for baseKey in personalizationBaseKeys {
+            let sourceKey = scopedKey(baseKey, userID: source)
+            let destinationKey = scopedKey(baseKey, userID: destination)
+            guard defaults.object(forKey: destinationKey) == nil,
+                  let value = defaults.object(forKey: sourceKey) else {
+                continue
+            }
+            defaults.set(value, forKey: destinationKey)
+        }
+    }
+
+    private static let personalizationBaseKeys = [
+        legacyProfileKey,
+        legacyMemoriesKey,
+        legacyFeedbackCountKey,
+        ShoppingLocalStore.recentlyViewedBaseKey,
+        ShoppingLocalStore.dismissedBaseKey,
+        ShoppingLocalStore.savedFavoritesBaseKey,
+        ShoppingLocalStore.wishlistBaseKey,
+        ShoppingLocalStore.cartBaseKey,
+        ShoppingLocalStore.shoppingCardsBaseKey,
+        ShoppingLocalStore.saleAlertProductIDsBaseKey,
+        ShoppingLocalStore.latestKnownPricesBaseKey,
+        ShoppingLocalStore.saleNotificationsEnabledBaseKey,
+        ShoppingLocalStore.saleStateSnapshotsBaseKey,
+        ShoppingLocalStore.lastKnownSaleStateBaseKey,
+        ShoppingLocalStore.notifiedSalePairsBaseKey,
+        ShoppingLocalStore.saleNotificationHistoryBaseKey,
+        ShoppingLocalStore.recentSaleEventsBaseKey,
+        ShoppingLocalStore.viewedSaleEventIDsBaseKey,
+        ShoppingLocalStore.affiliateDisclosureExpandedBaseKey,
+        ShoppingLocalStore.affiliateDisclosureSeenExpandedBaseKey,
+        ShareableScoreCardLocalStore.baseKey,
+        "personalStylistFeedbackLastPromptedAt",
+        "personalStylistFeedbackFirstSessionSeen",
+        "customerAccountEmail"
+    ]
 
     static func migrateLegacyKeysIfNeeded(defaults: UserDefaults = .standard) {
         let userID = activeUserID(defaults: defaults)
@@ -95,6 +150,231 @@ enum PersonalStylistStorage {
     }
 }
 
+enum AccountScopedStorage {
+    static let activeUserMarkerKey = "accountScopedActiveUserID"
+    static let migrationVersionKey = "accountScopedStorageVersion"
+    static let currentMigrationVersion = 1
+
+    /// Existing screens continue using these shared presentation keys. At an
+    /// account boundary they are snapshotted and restored under the destination
+    /// user, preventing one local account from rendering another account's data.
+    static let userDataKeys = [
+        "profileName",
+        "favoriteColors",
+        "favoriteBrands",
+        "favoriteStores",
+        "shoppingBudget",
+        "budget",
+        "styleGoals",
+        "preferredNeutrals",
+        "preferredAccentColors",
+        "comfortPreferences",
+        "preferredPantRise",
+        "shoppingFocus",
+        "preferredShoppingCategories",
+        "workSetting",
+        "travelFrequency",
+        "hobbiesActivities",
+        "stylistVoice",
+        "styleConsultationCompletedAt",
+        "sizeProfile",
+        "sizeCategory",
+        "shirtSize",
+        "pantsSize",
+        "dressSize",
+        "waistSize",
+        "inseamLength",
+        "neckSize",
+        "sleeveLength",
+        "shoeSize",
+        "fitPreference",
+        "stylePreferences",
+        "occasions",
+        "plannedOccasion",
+        "dressCode",
+        "occasionFormality",
+        "weather",
+        "weatherCity",
+        "weatherCondition",
+        "weatherSource",
+        "weatherLocation",
+        "liveWeatherUpdatedAt",
+        "weatherFeelsLike",
+        "weatherRainChance",
+        "weatherHumidity",
+        "weatherWindSpeed",
+        "weatherUVIndex",
+        "weatherHourlyForecast",
+        "weatherDailyForecast",
+        "weatherAlert",
+        "weatherErrorMessage",
+        "pastPurchases",
+        "fashionJournalCompliments",
+        "favoriteOutfits",
+        "outfitDislikes",
+        "clothingPreferences",
+        "closetInventory",
+        "closetItemsData",
+        "favoriteClosetItemIDs",
+        "wishlistProductNamesData",
+        "outfitScanHistoryData",
+        "aiStylistConversationData",
+        "aiStylistArchivedConversationsData",
+        "aiInsightConversationData",
+        "shareAppContextWithChatGPT",
+        "hasSeenAIStylistWelcome",
+        "openAIModel",
+        "profileLastSavedAt",
+        "profileNeedsCloudSync"
+    ]
+
+    static let sensitiveDeviceKeys = [
+        "stylistChatDeviceHash",
+        "stylistChatFallbackDeviceID",
+        "shoppingPendingSaleProductID"
+    ]
+
+    static func sessionUserID(defaults: UserDefaults = .standard) -> String {
+        let mode = defaults.string(forKey: "customerAccountMode") ?? "guest"
+        guard mode == "apple",
+              let appleUserID = defaults.string(forKey: "customerAppleUserID"),
+              !appleUserID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "guest"
+        }
+        return PersonalStylistStorage.normalizedUserID(appleUserID)
+    }
+
+    static func activePresentationUserID(defaults: UserDefaults = .standard) -> String {
+        PersonalStylistStorage.normalizedUserID(
+            defaults.string(forKey: activeUserMarkerKey) ?? sessionUserID(defaults: defaults)
+        )
+    }
+
+    /// Called before older launch migrations. Returning true means this launch
+    /// captured legacy shared data and must restore it after those migrations.
+    @discardableResult
+    static func prepareForLaunch(defaults: UserDefaults = .standard) -> Bool {
+        let sessionUser = sessionUserID(defaults: defaults)
+
+        guard let storedActiveUser = defaults.string(forKey: activeUserMarkerKey) else {
+            snapshotSharedData(for: sessionUser, defaults: defaults)
+            defaults.set(sessionUser, forKey: activeUserMarkerKey)
+            defaults.set(currentMigrationVersion, forKey: migrationVersionKey)
+            return true
+        }
+
+        let activeUser = PersonalStylistStorage.normalizedUserID(storedActiveUser)
+        guard activeUser != sessionUser else { return false }
+
+        snapshotSharedData(for: activeUser, defaults: defaults)
+        clearSharedData(defaults: defaults)
+        restoreSharedData(for: sessionUser, defaults: defaults)
+        defaults.set(sessionUser, forKey: activeUserMarkerKey)
+        return false
+    }
+
+    static func restoreCapturedLaunchData(defaults: UserDefaults = .standard) {
+        let activeUser = defaults.string(forKey: activeUserMarkerKey) ?? sessionUserID(defaults: defaults)
+        clearSharedData(defaults: defaults)
+        restoreSharedData(for: activeUser, defaults: defaults)
+    }
+
+    static func switchUser(
+        from sourceUserID: String,
+        to destinationUserID: String,
+        transferSourceData: Bool,
+        defaults: UserDefaults = .standard
+    ) {
+        let source = PersonalStylistStorage.normalizedUserID(sourceUserID)
+        let destination = PersonalStylistStorage.normalizedUserID(destinationUserID)
+        guard source != destination else {
+            defaults.set(destination, forKey: activeUserMarkerKey)
+            return
+        }
+
+        snapshotSharedData(for: source, defaults: defaults)
+        if transferSourceData, !hasUserData(for: destination, defaults: defaults) {
+            copySnapshot(from: source, to: destination, defaults: defaults)
+            PersonalStylistStorage.transferPersonalization(from: source, to: destination, defaults: defaults)
+        }
+
+        clearSharedData(defaults: defaults)
+        restoreSharedData(for: destination, defaults: defaults)
+        defaults.set(destination, forKey: activeUserMarkerKey)
+    }
+
+    static func hasUserData(for userID: String, defaults: UserDefaults = .standard) -> Bool {
+        let normalized = PersonalStylistStorage.normalizedUserID(userID)
+        if userDataKeys.contains(where: { defaults.object(forKey: snapshotKey($0, userID: normalized)) != nil }) {
+            return true
+        }
+
+        return [
+            PersonalStylistStorage.legacyProfileKey,
+            PersonalStylistStorage.legacyMemoriesKey,
+            ShoppingLocalStore.savedFavoritesBaseKey,
+            ShoppingLocalStore.wishlistBaseKey
+        ].contains { baseKey in
+            defaults.object(forKey: PersonalStylistStorage.scopedKey(baseKey, userID: normalized)) != nil
+        }
+    }
+
+    static func deleteUserData(for userID: String, defaults: UserDefaults = .standard) {
+        let normalized = PersonalStylistStorage.normalizedUserID(userID)
+        userDataKeys.forEach { defaults.removeObject(forKey: snapshotKey($0, userID: normalized)) }
+        PersonalStylistStorage.deletePersonalization(for: normalized, defaults: defaults)
+        ShoppingLocalStore.deleteShoppingData(for: normalized, defaults: defaults)
+        ChatConversationStore.deleteAll(for: normalized)
+
+        if PersonalStylistStorage.normalizedUserID(defaults.string(forKey: activeUserMarkerKey) ?? "guest") == normalized {
+            clearSharedData(defaults: defaults)
+        }
+    }
+
+    static func deleteSensitiveDeviceState(defaults: UserDefaults = .standard) {
+        sensitiveDeviceKeys.forEach { defaults.removeObject(forKey: $0) }
+    }
+
+    private static func snapshotSharedData(for userID: String, defaults: UserDefaults) {
+        let normalized = PersonalStylistStorage.normalizedUserID(userID)
+        for key in userDataKeys {
+            let destination = snapshotKey(key, userID: normalized)
+            if let value = defaults.object(forKey: key) {
+                defaults.set(value, forKey: destination)
+            } else {
+                defaults.removeObject(forKey: destination)
+            }
+        }
+    }
+
+    private static func restoreSharedData(for userID: String, defaults: UserDefaults) {
+        let normalized = PersonalStylistStorage.normalizedUserID(userID)
+        for key in userDataKeys {
+            if let value = defaults.object(forKey: snapshotKey(key, userID: normalized)) {
+                defaults.set(value, forKey: key)
+            }
+        }
+    }
+
+    private static func clearSharedData(defaults: UserDefaults) {
+        userDataKeys.forEach { defaults.removeObject(forKey: $0) }
+    }
+
+    private static func copySnapshot(from sourceUserID: String, to destinationUserID: String, defaults: UserDefaults) {
+        for key in userDataKeys {
+            let source = snapshotKey(key, userID: sourceUserID)
+            let destination = snapshotKey(key, userID: destinationUserID)
+            if let value = defaults.object(forKey: source) {
+                defaults.set(value, forKey: destination)
+            }
+        }
+    }
+
+    private static func snapshotKey(_ key: String, userID: String) -> String {
+        PersonalStylistStorage.scopedKey("accountScoped.\(key)", userID: userID)
+    }
+}
+
 enum LegacyProfileKeyMigration {
     static let migrationFlag = "didPurgeLegacyProfileKeys_v1_3"
 
@@ -105,6 +385,18 @@ enum LegacyProfileKeyMigration {
         "favoriteStores",
         "shoppingBudget",
         "budget",
+        "styleGoals",
+        "preferredNeutrals",
+        "preferredAccentColors",
+        "comfortPreferences",
+        "preferredPantRise",
+        "shoppingFocus",
+        "preferredShoppingCategories",
+        "workSetting",
+        "travelFrequency",
+        "hobbiesActivities",
+        "stylistVoice",
+        "styleConsultationCompletedAt",
         "sizeProfile",
         "sizeCategory",
         "shirtSize",

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ProfileView: View {
     @Binding var selectedTab: AppTab
+    private let voiceControlsEnabled: Bool
     @AppStorage("customerAccountMode") private var customerAccountMode = CustomerAccountMode.guest.rawValue
     @AppStorage("customerAccountEmail") private var customerAccountEmail = ""
     @AppStorage("customerAppleUserID") private var customerAppleUserID = ""
@@ -15,6 +16,18 @@ struct ProfileView: View {
     @AppStorage("favoriteBrands") private var favoriteBrands = ""
     @AppStorage("favoriteStores") private var favoriteStores = ""
     @AppStorage("shoppingBudget") private var budget = ""
+    @AppStorage("styleGoals") private var styleGoals = ""
+    @AppStorage("preferredNeutrals") private var preferredNeutrals = ""
+    @AppStorage("preferredAccentColors") private var preferredAccentColors = ""
+    @AppStorage("comfortPreferences") private var comfortPreferences = ""
+    @AppStorage("preferredPantRise") private var preferredPantRise = ""
+    @AppStorage("shoppingFocus") private var shoppingFocus = ""
+    @AppStorage("preferredShoppingCategories") private var preferredShoppingCategories = ""
+    @AppStorage("workSetting") private var workSetting = ""
+    @AppStorage("travelFrequency") private var travelFrequency = ""
+    @AppStorage("hobbiesActivities") private var hobbiesActivities = ""
+    @AppStorage("stylistVoice") private var stylistVoice = ""
+    @AppStorage("styleConsultationCompletedAt") private var styleConsultationCompletedAt = ""
     @AppStorage("sizeProfile") private var sizeProfile = ""
     @AppStorage("shirtSize") private var shirtSize = ""
     @AppStorage("pantsSize") private var pantsSize = ""
@@ -52,8 +65,17 @@ struct ProfileView: View {
     @AppStorage("profileNeedsCloudSync") private var profileNeedsCloudSync = false
     @State private var showDeleteDataConfirmation = false
     @State private var showGuestTransferOffer = false
+    @State private var pendingAppleSignIn: StyleMatchAppleSignInPayload?
+    @State private var pendingAppleNonce: String?
+    @State private var isAccountRequestInFlight = false
+    @State private var isPreparingAccountDeletion = false
+    @State private var showSignOutConfirmation = false
+    @State private var showDeleteAccountConfirmation = false
     @State private var isShowingThemeSettings = false
     @State private var isShowingSupport = false
+    @State private var isShowingSharedLinks = false
+    @State private var isShowingStyleConsultation = false
+    @State private var showStyleConsultationResetConfirmation = false
     @State private var showProfileSavedConfirmation = false
     @State private var showUnsavedProfileWarning = false
     @State private var profileDraft = ProfileEditDraft()
@@ -63,7 +85,13 @@ struct ProfileView: View {
     @State private var dataDeletionMessage: String?
     @State private var pantsSizeLastEditSource: PantsSizeEditSource = .manual
     @State private var showsAdditionalMeasurements = false
+    @State private var showUndertoneHelp = false
     @StateObject private var voiceAssistant = VoiceStylistService()
+
+    init(selectedTab: Binding<AppTab>, voiceControlsEnabled: Bool = true) {
+        self._selectedTab = selectedTab
+        self.voiceControlsEnabled = voiceControlsEnabled
+    }
 
     private var selectedAccountMode: CustomerAccountMode {
         CustomerAccountMode(rawValue: customerAccountMode) ?? .guest
@@ -96,145 +124,349 @@ struct ProfileView: View {
     private let shoeSizeOptions = (5...18).map { "\($0)" }
     private let womenShoeSizeOptions = ["4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "13"]
     private let youthShoeSizeOptions = ["Toddler 5", "Toddler 6", "Toddler 7", "Toddler 8", "Toddler 9", "Toddler 10", "Little Kid 11", "Little Kid 12", "Little Kid 13", "Big Kid 1", "Big Kid 2", "Big Kid 3", "Big Kid 4", "Big Kid 5", "Big Kid 6", "Big Kid 7"]
-    private let fitPreferenceOptions = ["Slim", "Regular", "Relaxed", "Oversized", "Tailored"]
+    private let fitPreferenceOptions = ["Slim", "Regular", "Relaxed", "Oversized"]
+    private let undertoneOptions = DeclaredUndertone.allCases
+    private let styleIdentityOptions = ["Casual", "Business Casual", "Classic", "Minimalist", "Streetwear", "Athletic", "Luxury", "Trend-Focused", "Smart Casual"]
+    private let styleGoalOptions = ["Dress more professionally", "Build confidence", "Improve color matching", "Create better everyday outfits", "Build a versatile wardrobe", "Spend more intentionally", "Prepare outfits faster", "Try new styles"]
+    private let neutralColorOptions = ["Black", "White", "Gray", "Navy", "Cream", "Tan", "Brown", "Olive"]
+    private let accentColorOptions = ["Blue", "Green", "Red", "Burgundy", "Gold", "Silver", "Pink", "Purple"]
+    private let pantRiseOptions = ["Low", "Mid", "High", "No preference"]
+    private let comfortPreferenceOptions = ["I avoid tight shirts", "I prefer lightweight fabrics", "I prefer longer tops", "I avoid short sleeves", "I avoid shorts", "I prefer stretch fabrics", "I prefer simple patterns", "I avoid bright colors", "I prioritize comfort", "I prefer easy-care clothing"]
+    private let shoppingFocusOptions = ["Value-focused", "Balanced", "Luxury-focused"]
+    private let shoppingCategoryOptions = ["Tops", "Bottoms", "Shoes", "Accessories", "Outerwear", "Dresses", "Workwear", "Athletic"]
+    private let workSettingOptions = ["Remote", "Office", "Hybrid", "Uniform or dress code", "Creative", "Active or outdoors", "Student", "Not applicable"]
+    private let travelFrequencyOptions = ["Rarely", "A few times a year", "Monthly", "Often", "No preference"]
+    private let stylistVoiceOptions = ["Encouraging Coach", "Luxury Fashion Expert", "Minimalist Consultant", "Trend Advisor", "Straightforward Critic"]
     private let weatherConditionOptions = ["Mild", "Hot", "Cold", "Rainy", "Windy", "Humid", "Sunny"]
     private let occasionFormalityOptions = ["Casual", "Smart casual", "Polished", "Formal", "Travel comfort"]
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    PageColorBand(
-                        tab: .profile,
-                        title: "Profile",
-                        subtitle: "Pink profile space for sizes, weather, and preferences.",
-                        icon: "person.fill"
-                    )
-                    .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-                    .listRowBackground(Color.clear)
-                }
-
-                Section("Account") {
-                    Label(accountStatusTitle, systemImage: accountIcon)
-                        .font(.headline)
-
-                    Text(selectedAccountMode.description)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    if selectedAccountMode == .guest {
-                        SignInWithAppleButton(.continue) { request in
-                            request.requestedScopes = [.fullName, .email]
-                        } onCompletion: { result in
-                            handleAppleSignIn(result)
-                        }
-                        .signInWithAppleButtonStyle(.black)
-                        .frame(height: 48)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                        Text("You are using StyleMatch Pro as a guest. Sign in with Apple to save your profile, closet, favorites, and scan history.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if selectedAccountMode == .apple {
-                        Toggle("Enable cloud sync when available", isOn: $accountSyncEnabled)
-
-                        Text(accountSyncEnabled ? "Cloud sync will be used only for account features like wishlist, closet backup, and order history." : "Sync is off. Style Match Pro keeps profile and scan data on this phone.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                        Label("Signed in with Apple. Your profile can be saved and synced when cloud sync is available.", systemImage: "checkmark.seal.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.green)
-
-                        if !guestDataTransferSummary.isEmpty {
-                            Label(guestDataTransferSummary, systemImage: guestDataLinkedToApple ? "checkmark.shield" : "iphone")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        // Manage Account screen deferred to 1.6 — data actions live in the Data & Privacy section below.
-                        Button {
-                            useGuestMode()
-                        } label: {
-                            Label("Use Guest Mode on This Phone", systemImage: "person")
-                        }
-                    }
-
-                }
-
-                Section("Personal Information") {
-                    profileInfoRow("Name", cleanValue(resolvedProfileDisplayName, fallback: "Not set"), icon: "person.fill")
-                    profileInfoRow("Email", cleanValue(resolvedAccountEmail, fallback: "Hidden or not shared"), icon: "envelope.fill")
-                    profileInfoRow("Account Type", selectedAccountMode.accountStatusTitle, icon: accountIcon)
-                    profileInfoRow("Preferred Weather City", cleanValue(weatherCity, fallback: "Not set"), icon: "mappin.and.ellipse")
-
-                    Label("Private tokens, passwords, API keys, and developer credentials are not shown in StyleMatch Pro.", systemImage: "lock.shield")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("AI Stylist Settings") {
-                    profileInfoRow("StyleMatch Pro AI Stylist", "Powered by StyleMatch Pro AI", icon: "sparkles")
-
+                profileOverviewSections
+                stylePreferenceSections
+                personalizationAndPrivacySections
+                dataControlAndSettingsSections
+            }
+            .scrollContentBackground(.hidden)
+            .appScreenBackground(.profile)
+            .tint(AppTab.profile.palette.accent)
+            .navigationTitle("Profile")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        selectedTab = .ai
+                        attemptProfileExit()
                     } label: {
-                        Label("Ask My Stylist", systemImage: "bubble.left.and.bubble.right.fill")
+                        Label("Back", systemImage: "chevron.left")
                     }
-
-                    Toggle("Personal Style Memory", isOn: $shareAppContextWithChatGPT)
-
-                    Text("StyleMatch Pro uses your saved preferences to provide more personalized outfit recommendations.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    profileInfoRow("AI Confidence", "\(aiConfidence)%", icon: "checkmark.seal.fill")
-                    profileInfoRow("Profile Completeness", "\(profileCompleteness)%", icon: "person.crop.circle.badge.checkmark")
-                    profileInfoRow("Saved Scans", "\(savedScanCount)", icon: "photo.stack")
-                    profileInfoRow("Closet Items", "\(closetItemCount)", icon: "tshirt.fill")
+                    .accessibilityLabel("Back to Home")
                 }
 
-                Section("Voice Assistant") {
-                    Toggle("Speak outfit guidance", isOn: $voiceAssistantEnabled)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Save") {
+                        saveProfileDraft()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!hasUnsavedProfileChanges)
+                }
+            }
+            .onAppear {
+                updateSizeProfileSummary()
+                loadProfileDraftIfNeeded()
+            }
+            .alert("Profile saved successfully.", isPresented: $showProfileSavedConfirmation) {
+                Button("OK", role: .cancel) {
+                }
+            } message: {
+                Text(accountSyncEnabled ? "Saved locally and marked for account sync when cloud sync is available." : "Saved locally on this phone.")
+            }
+            .modifier(ProfileAccountConfirmationModifier(
+                showSignOutConfirmation: $showSignOutConfirmation,
+                showDeleteAccountConfirmation: $showDeleteAccountConfirmation,
+                isPreparingAccountDeletion: $isPreparingAccountDeletion,
+                signOut: signOut
+            ))
+            .confirmationDialog(
+                "Reset Style Consultation?",
+                isPresented: $showStyleConsultationResetConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Reset Style Consultation", role: .destructive) {
+                    resetStyleConsultation()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This clears optional consultation answers only. Saved scans, account data, closet items, shopping data, and outfit scores stay unchanged.")
+            }
+            .confirmationDialog(
+                "You have unsaved profile changes.",
+                isPresented: $showUnsavedProfileWarning,
+                titleVisibility: .visible
+            ) {
+                Button("Save Profile") {
+                    saveProfileDraft()
+                    selectedTab = .home
+                }
 
-                    if voiceAssistantEnabled,
-                       voiceAssistant.isUsingDefaultQualityVoice,
-                       !voiceStylistDefaultVoiceHintDismissed {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("For a smoother voice, download an enhanced voice in iPhone Settings > Accessibility > Spoken Content > Voices.", systemImage: "speaker.wave.2.fill")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Button("Got it") {
-                                voiceStylistDefaultVoiceHintDismissed = true
+                Button("Leave Without Saving", role: .destructive) {
+                    loadProfileDraft(force: true)
+                    selectedTab = .home
+                }
+
+                Button("Cancel", role: .cancel) {
+                }
+            } message: {
+                Text("Save your profile so StyleMatch Pro can use the latest sizes, colors, budget, occasions, and shopping preferences.")
+            }
+            .confirmationDialog(
+                "Delete saved Style Match Pro data?",
+                isPresented: $showDeleteDataConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Saved Data", role: .destructive) {
+                    deleteSavedData()
+                }
+                Button("Cancel", role: .cancel) {
+                }
+            } message: {
+                Text("This removes saved account choice, profile, assistant choice, closet inventory, style preferences, and scan history from this phone.")
+            }
+            .confirmationDialog(
+                "Transfer Guest Data?",
+                isPresented: $showGuestTransferOffer,
+                titleVisibility: .visible
+            ) {
+                Button("Transfer My Guest Data") {
+                    completePendingAppleSignIn(transferGuestData: true)
+                }
+
+                Button("Continue Without Transfer") {
+                    completePendingAppleSignIn(transferGuestData: false)
+                }
+            } message: {
+                Text("StyleMatch Pro can keep your local scan history, favorites, closet, style preferences, and profile information with your Apple sign-in.")
+            }
+            .sheet(isPresented: $isShowingThemeSettings) {
+                ThemeSettingsView(selectedTheme: $selectedAppTheme)
+            }
+            .sheet(isPresented: $isShowingSupport) {
+                SupportView(selectedTab: $selectedTab)
+            }
+            .sheet(isPresented: $isShowingSharedLinks) {
+                ShareableScoreCardManagerView()
+            }
+            .sheet(isPresented: $isShowingStyleConsultation) {
+                StyleConsultationSheet(
+                    draft: $profileDraft,
+                    styleIdentityOptions: styleIdentityOptions,
+                    styleGoalOptions: styleGoalOptions,
+                    fitPreferenceOptions: fitPreferenceOptions,
+                    undertoneOptions: undertoneOptions,
+                    neutralColorOptions: neutralColorOptions,
+                    accentColorOptions: accentColorOptions,
+                    pantRiseOptions: pantRiseOptions,
+                    comfortPreferenceOptions: comfortPreferenceOptions,
+                    shoppingFocusOptions: shoppingFocusOptions,
+                    shoppingCategoryOptions: shoppingCategoryOptions,
+                    workSettingOptions: workSettingOptions,
+                    travelFrequencyOptions: travelFrequencyOptions,
+                    stylistVoiceOptions: stylistVoiceOptions,
+                    markDirty: updateProfileDirtyState,
+                    complete: completeStyleConsultation,
+                    skip: {
+                        isShowingStyleConsultation = false
+                    }
+                )
+            }
+            .sheet(isPresented: $showUndertoneHelp) {
+                NavigationStack {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Color Undertone")
+                            .font(.title2)
+                            .fontWeight(.bold)
+
+                        Text("This is optional. Choose Not sure or leave it blank if you do not want to provide it.")
+                            .foregroundStyle(.secondary)
+
+                        Label("Vein check: blue or purple can suggest cool; green can suggest warm; a mix can suggest neutral.", systemImage: "hand.raised")
+                        Label("Jewelry check: silver often suits cool, gold often suits warm, and both can suit neutral.", systemImage: "sparkles")
+                        Label("Use what feels accurate. StyleMatch Pro treats this as your preference, not a fact about your identity.", systemImage: "person.crop.circle.badge.checkmark")
+
+                        Spacer()
+                    }
+                    .padding()
+                    .navigationTitle("How do I know?")
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                showUndertoneHelp = false
                             }
-                            .font(.caption)
                         }
                     }
+                }
+                .presentationDetents([.medium, .large])
+            }
+        }
+    }
 
+    @ViewBuilder
+    private var profileOverviewSections: some View {
+        AnyView(profileHeaderSection)
+        AnyView(accountSection)
+        AnyView(personalInformationSection)
+        AnyView(aiStylistSettingsSection)
+        AnyView(personalStyleProfileSection)
+        AnyView(voiceAssistantSection)
+    }
+
+    private var profileHeaderSection: some View {
+        Section {
+            PageColorBand(
+                tab: .profile,
+                title: "Profile",
+                subtitle: "Pink profile space for sizes, weather, and preferences.",
+                icon: "person.fill"
+            )
+            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    private var personalInformationSection: some View {
+        Section("Personal Information") {
+            profileInfoRow("Name", cleanValue(resolvedProfileDisplayName, fallback: "Not set"), icon: "person.fill")
+            profileInfoRow("Email", cleanValue(resolvedAccountEmail, fallback: "Hidden or not shared"), icon: "envelope.fill")
+            profileInfoRow("Account Type", selectedAccountMode.accountStatusTitle, icon: accountIcon)
+            profileInfoRow("Preferred Weather City", cleanValue(weatherCity, fallback: "Not set"), icon: "mappin.and.ellipse")
+
+            Label("Private tokens, passwords, API keys, and developer credentials are not shown in StyleMatch Pro.", systemImage: "lock.shield")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var aiStylistSettingsSection: some View {
+        Section("AI Stylist Settings") {
+            profileInfoRow("StyleMatch Pro AI Stylist", "Powered by StyleMatch Pro AI", icon: "sparkles")
+
+            Button {
+                selectedTab = .ai
+            } label: {
+                Label("Ask My Stylist", systemImage: "bubble.left.and.bubble.right.fill")
+            }
+
+            Toggle("Personal Style Memory", isOn: $shareAppContextWithChatGPT)
+
+            Text("StyleMatch Pro uses your saved preferences to provide more personalized outfit recommendations.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            profileInfoRow("AI Confidence", "\(aiConfidence)%", icon: "checkmark.seal.fill")
+            profileInfoRow("Profile Completeness", "\(profileCompleteness)%", icon: "person.crop.circle.badge.checkmark")
+            profileInfoRow("Saved Scans", "\(savedScanCount)", icon: "photo.stack")
+            profileInfoRow(
+                "Closet Items",
+                "\(closetItemCount)",
+                icon: "tshirt.fill",
+                accessibilityLabel: "Open Virtual Closet, \(closetItemCount) \(closetItemCount == 1 ? "item" : "items")"
+            ) {
+                selectedTab = .closet
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var personalStyleProfileSection: some View {
+        Section("Personal Style Profile") {
+            NavigationLink {
+                StyleDNAScreen(
+                    draft: profileDraft,
+                    consultationCompletedAt: styleConsultationCompletedAt,
+                    edit: { isShowingStyleConsultation = true },
+                    reset: resetStyleConsultation
+                )
+            } label: {
+                Label("Style DNA", systemImage: "person.crop.rectangle.stack")
+            }
+
+            Button {
+                isShowingStyleConsultation = true
+            } label: {
+                Label(styleConsultationCompletedAt.isEmpty ? "Start Style Consultation" : "Edit Style Consultation", systemImage: "person.text.rectangle")
+            }
+
+            if !styleConsultationCompletedAt.isEmpty {
+                Button(role: .destructive) {
+                    showStyleConsultationResetConfirmation = true
+                } label: {
+                    Label("Reset Style Consultation", systemImage: "arrow.counterclockwise")
+                }
+            }
+
+            Text("Optional. Teach your stylist what you like, what feels comfortable, and how you shop. You can skip, finish later, edit, or reset it anytime.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var voiceAssistantSection: some View {
+        Section("Voice Assistant") {
+            if voiceControlsEnabled {
+                Toggle("Speak outfit guidance", isOn: $voiceAssistantEnabled)
+
+                if voiceAssistantEnabled,
+                   voiceAssistant.isUsingDefaultQualityVoice,
+                   !voiceStylistDefaultVoiceHintDismissed {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Voice pace")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                        Slider(value: $voiceAssistantSpeechRate, in: 0.75...1.1, step: 0.05)
-                        Text("Brief foreground voice summaries for scan results, scan issues, and profile saves. This does not run in the background.")
+                        Label("For a smoother voice, download an enhanced voice in iPhone Settings > Accessibility > Spoken Content > Voices.", systemImage: "speaker.wave.2.fill")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                    }
-
-                    Button {
-                        if voiceAssistant.isSpeaking {
-                            voiceAssistant.stop()
-                        } else {
-                            voiceAssistant.previewVoice()
+                        Button("Got it") {
+                            voiceStylistDefaultVoiceHintDismissed = true
                         }
-                    } label: {
-                        Label(voiceAssistant.isSpeaking ? "Stop Preview" : "Preview Voice", systemImage: voiceAssistant.isSpeaking ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.caption)
                     }
-                    .disabled(!voiceAssistantEnabled)
                 }
 
-                Section("Style Profile") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Voice pace")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Slider(value: $voiceAssistantSpeechRate, in: 0.75...1.1, step: 0.05)
+                    Text("Brief foreground voice summaries for scan results, scan issues, and profile saves. This does not run in the background.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Button {
+                    if voiceAssistant.isSpeaking {
+                        voiceAssistant.stop()
+                    } else {
+                        voiceAssistant.previewVoice()
+                    }
+                } label: {
+                    Label(voiceAssistant.isSpeaking ? "Stop Preview" : "Preview Voice", systemImage: voiceAssistant.isSpeaking ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                }
+                .disabled(!voiceAssistantEnabled)
+
+                if let playbackError = voiceAssistant.playbackErrorMessage {
+                    Label(playbackError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel("Voice playback error. \(playbackError)")
+                }
+            } else {
+                Label("Voice controls disabled for launch diagnosis", systemImage: "speaker.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stylePreferenceSections: some View {
+                    Section("Style Profile") {
                     profileDraftField("Name", text: draftBinding(\.name), prompt: "Your display name")
                     profileDraftField("Favorite Colors", text: draftBinding(\.favoriteColors), prompt: "Black, navy, white")
                     profileDraftField("Favorite Brands", text: draftBinding(\.favoriteBrands), prompt: "e.g. favorite brands")
@@ -249,6 +481,39 @@ struct ProfileView: View {
                     profileDraftField("Closet Inventory", text: draftBinding(\.closetInventory), prompt: "e.g. closet staples")
                 }
 
+                Section("Color & Fit") {
+                    Picker("Color undertone (optional)", selection: draftBinding(\.declaredUndertone)) {
+                        Text("Not provided").tag("")
+                        ForEach(undertoneOptions, id: \.rawValue) { undertone in
+                            Text(undertone.displayName).tag(undertone.rawValue)
+                        }
+                    }
+
+                    Button {
+                        showUndertoneHelp = true
+                    } label: {
+                        Label("How do I know?", systemImage: "info.circle")
+                    }
+
+                    Picker("Preferred fit", selection: draftBinding(\.fitPreference)) {
+                        Text("Not provided").tag("")
+                        ForEach(optionsIncludingCurrent(fitPreferenceOptions, current: profileDraft.fitPreference), id: \.self) { fit in
+                            Text(fit).tag(fit)
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        clearColorAndFitProfile()
+                    } label: {
+                        Label("Clear Color & Fit", systemImage: "xmark.circle")
+                    }
+                    .disabled(profileDraft.declaredUndertone.isEmpty && profileDraft.fitPreference.isEmpty)
+
+                    Label("Optional. Used only for fashion color and fit suggestions. If saved, these preferences may be included in AI styling requests; they are never used to identify race, ethnicity, or sensitive traits, and they never change your outfit score.", systemImage: "lock.shield")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Weather Planning") {
                     profileInfoRow("Live Weather Status", weatherStatusText, icon: "cloud.sun.fill")
                     profileInfoRow("Location Permission", locationPermissionText, icon: "location.fill")
@@ -259,7 +524,8 @@ struct ProfileView: View {
                     TextField("Weather", text: $weather)
 
                     Picker("Weather condition", selection: $weatherCondition) {
-                        ForEach(weatherConditionOptions, id: \.self) { condition in
+                        Text("Not set").tag("")
+                        ForEach(optionsIncludingCurrent(weatherConditionOptions, current: weatherCondition), id: \.self) { condition in
                             Text(condition).tag(condition)
                         }
                     }
@@ -286,7 +552,8 @@ struct ProfileView: View {
                         .textInputAutocapitalization(.words)
 
                     Picker("Formality", selection: $occasionFormality) {
-                        ForEach(occasionFormalityOptions, id: \.self) { option in
+                        Text("Not set").tag("")
+                        ForEach(optionsIncludingCurrent(occasionFormalityOptions, current: occasionFormality), id: \.self) { option in
                             Text(option).tag(option)
                         }
                     }
@@ -296,8 +563,9 @@ struct ProfileView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Size Profile") {
+                    Section("Size Profile") {
                     Picker("Size category", selection: sizeCategoryBinding()) {
+                        Text("Not set").tag("")
                         ForEach(SizeProfileCategory.allCases) { category in
                             Text(category.rawValue).tag(category.rawValue)
                         }
@@ -310,48 +578,19 @@ struct ProfileView: View {
                     Label("Saved privately on this phone and used only for fit, sizing, and clothing recommendations.", systemImage: "lock.shield")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
+                    }
+    }
 
-                Section("Personalization") {
+    @ViewBuilder
+    private var personalizationAndPrivacySections: some View {
+                    Section("Personalization") {
                     Text("Style Match Pro now saves your preferred AI assistant, colors, brands, budget, sizes, past purchases, favorite outfits, weather, occasions, and closet inventory before suggesting anything new.")
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Profile Completeness") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("\(profileCompleteness)% Complete")
-                                .font(.title2)
-                                .fontWeight(.bold)
+                profileCompletenessSection
 
-                            Spacer()
-                        }
-
-                        ProgressView(value: Double(profileCompleteness), total: 100)
-                            .tint(AppTab.profile.palette.accent)
-
-                        if missingProfileFields.isEmpty {
-                            Label("Your profile is ready for personalized recommendations.", systemImage: "checkmark.seal.fill")
-                                .foregroundStyle(.green)
-                        } else {
-                            Text("Missing:")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.secondary)
-
-                            ForEach(missingProfileFields, id: \.self) { field in
-                                Label(field, systemImage: "square")
-                                    .font(.subheadline)
-                            }
-                        }
-
-                        Text("Completing these improves recommendations.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Your Privacy") {
+                    Section("Your Privacy") {
                     Text("Your data stays on your device whenever possible. Cloud AI is used only when needed. You control your information.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -361,11 +600,20 @@ struct ProfileView: View {
                     privacyPromiseRow("You control your information.")
                     privacyPromiseRow("Delete your data anytime.")
                     privacyPromiseRow("You can turn Personal Style Memory off at any time.")
-                }
+                    }
+    }
 
-                Section("Data Control") {
+    @ViewBuilder
+    private var dataControlAndSettingsSections: some View {
+                    Section("Data Control") {
                     Text(StyleMatchPrivacyMode.deletionRule)
                         .foregroundStyle(.secondary)
+
+                    Button {
+                        isShowingSharedLinks = true
+                    } label: {
+                        Label("Manage Shared Links", systemImage: "link")
+                    }
 
                     Button {
                         outfitScanHistoryData = Data()
@@ -473,101 +721,69 @@ struct ProfileView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section {
+                    Section {
                     Color.clear
                         .frame(height: 180)
                         .accessibilityHidden(true)
-                }
-                .listRowBackground(Color.clear)
-            }
-            .scrollContentBackground(.hidden)
-            .appScreenBackground(.profile)
-            .tint(AppTab.profile.palette.accent)
-            .navigationTitle("Profile")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        attemptProfileExit()
-                    } label: {
-                        Label("Back", systemImage: "chevron.left")
                     }
-                    .accessibilityLabel("Back to Home")
+                    .listRowBackground(Color.clear)
+    }
+
+    private var profileCompletenessSection: some View {
+        Section("Profile Completeness") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("\(profileCompleteness)% Complete")
+                        .font(.title2)
+                        .fontWeight(.bold)
+
+                    Spacer()
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Save") {
-                        saveProfileDraft()
+                ProgressView(value: Double(profileCompleteness), total: 100)
+                    .tint(AppTab.profile.palette.accent)
+
+                if missingProfileFields.isEmpty {
+                    Label("Your profile is ready for personalized recommendations.", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Text("Missing:")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(missingProfileFields, id: \.self) { field in
+                        Label(field, systemImage: "square")
+                            .font(.subheadline)
                     }
-                    .fontWeight(.semibold)
-                    .disabled(!hasUnsavedProfileChanges)
-                }
-            }
-            .onAppear {
-                updateSizeProfileSummary()
-                loadProfileDraftIfNeeded()
-            }
-            .alert("Profile saved successfully.", isPresented: $showProfileSavedConfirmation) {
-                Button("OK", role: .cancel) {
-                }
-            } message: {
-                Text(accountSyncEnabled ? "Saved locally and marked for account sync when cloud sync is available." : "Saved locally on this phone.")
-            }
-            .confirmationDialog(
-                "You have unsaved profile changes.",
-                isPresented: $showUnsavedProfileWarning,
-                titleVisibility: .visible
-            ) {
-                Button("Save Profile") {
-                    saveProfileDraft()
-                    selectedTab = .home
                 }
 
-                Button("Leave Without Saving", role: .destructive) {
-                    loadProfileDraft(force: true)
-                    selectedTab = .home
-                }
-
-                Button("Cancel", role: .cancel) {
-                }
-            } message: {
-                Text("Save your profile so StyleMatch Pro can use the latest sizes, colors, budget, occasions, and shopping preferences.")
-            }
-            .confirmationDialog(
-                "Delete saved Style Match Pro data?",
-                isPresented: $showDeleteDataConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Delete Saved Data", role: .destructive) {
-                    deleteSavedData()
-                }
-                Button("Cancel", role: .cancel) {
-                }
-            } message: {
-                Text("This removes saved account choice, profile, assistant choice, closet inventory, style preferences, and scan history from this phone.")
-            }
-            .confirmationDialog(
-                "Transfer Guest Data?",
-                isPresented: $showGuestTransferOffer,
-                titleVisibility: .visible
-            ) {
-                Button("Transfer My Guest Data") {
-                    transferGuestDataToApple()
-                }
-
-                Button("Continue Without Transfer") {
-                    guestDataTransferSummary = "Apple sign-in is active. Local guest data was kept on this iPhone."
-                    dataDeletionMessage = guestDataTransferSummary
-                }
-            } message: {
-                Text("StyleMatch Pro can keep your local scan history, favorites, closet, style preferences, and profile information with your Apple sign-in.")
-            }
-            .sheet(isPresented: $isShowingThemeSettings) {
-                ThemeSettingsView(selectedTheme: $selectedAppTheme)
-            }
-            .sheet(isPresented: $isShowingSupport) {
-                SupportView(selectedTab: $selectedTab)
+                Text("Completing these improves recommendations.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var accountSection: some View {
+        ProfileAccountSection(
+            selectedAccountMode: selectedAccountMode,
+            accountStatusTitle: accountStatusTitle,
+            accountIcon: accountIcon,
+            accountSyncEnabled: $accountSyncEnabled,
+            guestDataLinkedToApple: guestDataLinkedToApple,
+            guestDataTransferSummary: guestDataTransferSummary,
+            isAccountRequestInFlight: isAccountRequestInFlight,
+            isPreparingAccountDeletion: $isPreparingAccountDeletion,
+            showSignOutConfirmation: $showSignOutConfirmation,
+            showDeleteAccountConfirmation: $showDeleteAccountConfirmation,
+            prepareAppleRequest: prepareAppleRequest,
+            handleAppleSignIn: handleAppleSignIn,
+            handleDeletionAuthorization: handleDeletionAuthorization,
+            cancelDeletionAuthorization: {
+                pendingAppleNonce = nil
+            }
+        )
     }
 
     private var activeTheme: StyleMatchAppTheme {
@@ -763,6 +979,7 @@ struct ProfileView: View {
         switch category {
         case .men:
             Picker("Men's shirt size", selection: draftBinding(\.shirtSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(shirtSizeOptions, current: profileDraft.shirtSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
@@ -782,6 +999,7 @@ struct ProfileView: View {
             }
 
             Picker("Men's shoe size", selection: draftBinding(\.shoeSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(shoeSizeOptions, current: profileDraft.shoeSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
@@ -790,24 +1008,28 @@ struct ProfileView: View {
             fitPicker
         case .women:
             Picker("Women's top size", selection: draftBinding(\.shirtSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(womenTopSizeOptions, current: profileDraft.shirtSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
             }
 
             Picker("Women's bottoms size", selection: draftBinding(\.pantsSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(womenBottomSizeOptions, current: profileDraft.pantsSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
             }
 
             Picker("Dress size", selection: draftBinding(\.dressSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(dressSizeOptions, current: profileDraft.dressSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
             }
 
             Picker("Women's shoe size", selection: draftBinding(\.shoeSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(womenShoeSizeOptions, current: profileDraft.shoeSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
@@ -816,6 +1038,7 @@ struct ProfileView: View {
             fitPicker
         case .unisex:
             Picker("Unisex top size", selection: draftBinding(\.shirtSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(shirtSizeOptions, current: profileDraft.shirtSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
@@ -828,6 +1051,7 @@ struct ProfileView: View {
             generatedPantsSizeRow(for: profileDraft)
 
             Picker("Shoe size", selection: draftBinding(\.shoeSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(shoeSizeOptions, current: profileDraft.shoeSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
@@ -836,18 +1060,21 @@ struct ProfileView: View {
             fitPicker
         case .kidsYouth:
             Picker("Kids / youth top size", selection: draftBinding(\.shirtSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(kidsYouthSizeOptions, current: profileDraft.shirtSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
             }
 
             Picker("Kids / youth bottoms size", selection: draftBinding(\.pantsSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(kidsYouthSizeOptions, current: profileDraft.pantsSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
             }
 
             Picker("Kids / youth shoe size", selection: draftBinding(\.shoeSize)) {
+                Text("Clear").tag("")
                 ForEach(optionsIncludingCurrent(youthShoeSizeOptions, current: profileDraft.shoeSize), id: \.self) { size in
                     Text(size).tag(size)
                 }
@@ -904,7 +1131,8 @@ struct ProfileView: View {
 
     private var fitPicker: some View {
         Picker("Preferred fit", selection: draftBinding(\.fitPreference)) {
-            ForEach(fitPreferenceOptions, id: \.self) { fit in
+            Text("Clear").tag("")
+            ForEach(optionsIncludingCurrent(fitPreferenceOptions, current: profileDraft.fitPreference), id: \.self) { fit in
                 Text(fit).tag(fit)
             }
         }
@@ -1005,11 +1233,19 @@ struct ProfileView: View {
         return trimmed.isEmpty ? fallback : trimmed
     }
 
-    private func profileInfoRow(_ title: String, _ value: String, icon: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+    @ViewBuilder
+    private func profileInfoRow(
+        _ title: String,
+        _ value: String,
+        icon: String,
+        accessibilityLabel: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        let content = HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
                 .foregroundStyle(AppTab.profile.palette.accent)
                 .frame(width: 24)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -1026,6 +1262,20 @@ struct ProfileView: View {
 
             Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .contentShape(Rectangle())
+
+        if let action {
+            Button(action: action) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel ?? "\(title), \(value)")
+            .accessibilityAddTraits(.isButton)
+        } else {
+            content
+        }
     }
 
     private func privacyPromiseRow(_ text: String) -> some View {
@@ -1038,20 +1288,23 @@ struct ProfileView: View {
         }
     }
 
-    private func useGuestMode() {
+    private func useGuestMode(message: String = "Guest mode is active. Your data stays on this phone.") {
+        AccountScopedStorage.switchUser(
+            from: AccountScopedStorage.activePresentationUserID(),
+            to: "guest",
+            transferSourceData: false
+        )
         customerAccountMode = CustomerAccountMode.guest.rawValue
         customerAccountEmail = ""
         customerAppleUserID = ""
-        name = ""
         accountSyncEnabled = false
         guestDataLinkedToApple = false
         guestDataTransferSummary = ""
-        dataDeletionMessage = "Guest mode is active. Your data stays on this phone."
+        loadProfileDraft(force: true)
+        dataDeletionMessage = message
     }
 
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
-        let wasGuest = selectedAccountMode == .guest
-
         switch result {
         case .success(let authorization):
             guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
@@ -1059,42 +1312,125 @@ struct ProfileView: View {
                 return
             }
 
-            let signedInUserID = credential.user
-            customerAccountMode = CustomerAccountMode.apple.rawValue
-            customerAppleUserID = signedInUserID
-            accountSyncEnabled = true
-
-            let appliedProfile = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
-                userID: signedInUserID,
+            guard let nonce = pendingAppleNonce else {
+                dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
+                return
+            }
+            let payload = StyleMatchAppleSignInPayload(
+                userID: credential.user,
                 email: credential.email,
-                appleGivenName: credential.fullName?.givenName,
-                appleFamilyName: credential.fullName?.familyName,
-                localDisplayName: name
-            )
-            logProfileNameEvent(
-                stage: "sign-in",
-                source: appliedProfile.source,
-                appleNameProvided: credential.fullName?.givenName != nil || credential.fullName?.familyName != nil,
-                localNamePresent: StyleMatchAccountNameResolver.clean(name) != nil,
-                storedNamePresent: appliedProfile.givenName != nil
+                givenName: credential.fullName?.givenName,
+                familyName: credential.fullName?.familyName,
+                sourceUserID: AccountScopedStorage.activePresentationUserID()
             )
 
-            if let email = appliedProfile.email {
-                customerAccountEmail = email
+            pendingAppleNonce = nil
+            isAccountRequestInFlight = true
+            Task {
+                do {
+                    let session = try await StyleMatchAccountClient().exchange(
+                        authorizationCode: credential.authorizationCode,
+                        identityToken: credential.identityToken,
+                        nonce: nonce
+                    )
+                    try StyleMatchAccountSessionStore.save(session)
+                    if payload.sourceUserID == "guest",
+                       hasTransferableGuestData,
+                       !AccountScopedStorage.hasUserData(for: payload.userID) {
+                        pendingAppleSignIn = payload
+                        showGuestTransferOffer = true
+                    } else {
+                        completeAppleSignIn(payload, transferGuestData: false)
+                    }
+                    dataDeletionMessage = "Signed in with Apple. Your account session is protected."
+                } catch {
+                    StyleMatchAccountSessionStore.delete()
+                    dataDeletionMessage = (error as? StyleMatchAccountError)?.localizedDescription
+                        ?? StyleMatchAccountError.serviceUnavailable.localizedDescription
+                }
+                isAccountRequestInFlight = false
             }
-            if let displayName = appliedProfile.displayName {
-                name = displayName
+        case .failure:
+            pendingAppleNonce = nil
+            isAccountRequestInFlight = false
+            dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
+        }
+    }
+
+    private func prepareAppleRequest(_ request: ASAuthorizationAppleIDRequest) {
+        do {
+            let nonce = try StyleMatchAppleNonce.make()
+            pendingAppleNonce = nonce
+            request.nonce = StyleMatchAppleNonce.hash(nonce)
+            dataDeletionMessage = nil
+        } catch {
+            pendingAppleNonce = nil
+            dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
+        }
+    }
+
+    private func signOut() {
+        let accountSession = StyleMatchAccountSessionStore.load()
+        isAccountRequestInFlight = true
+        Task {
+            var remoteSessionClosed = true
+            if let accountSession {
+                do {
+                    try await StyleMatchAccountClient().signOut(session: accountSession)
+                } catch {
+                    remoteSessionClosed = false
+                }
+            }
+            StyleMatchAccountSessionStore.delete()
+            useGuestMode(
+                message: remoteSessionClosed
+                    ? "You’re signed out. Your Apple account data remains separate on this phone."
+                    : "You’re signed out on this phone. The previous server session will expire automatically."
+            )
+            isAccountRequestInFlight = false
+        }
+    }
+
+    private func handleDeletionAuthorization(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let nonce = pendingAppleNonce else {
+                dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
+                return
+            }
+            guard PersonalStylistStorage.normalizedUserID(credential.user)
+                    == PersonalStylistStorage.normalizedUserID(customerAppleUserID) else {
+                pendingAppleNonce = nil
+                dataDeletionMessage = "Use the same Apple account that is currently connected to StyleMatch Pro."
+                return
             }
 
-            if wasGuest && hasTransferableGuestData {
-                showGuestTransferOffer = true
-            } else {
-                guestDataLinkedToApple = true
-                guestDataTransferSummary = "Apple sign-in is active. New style data will be saved to this account when sync is available."
-                dataDeletionMessage = "Signed in with Apple. Your Apple account is connected for Style Match Pro."
+            pendingAppleNonce = nil
+            isAccountRequestInFlight = true
+            Task {
+                do {
+                    let session = try await StyleMatchAccountClient().exchange(
+                        authorizationCode: credential.authorizationCode,
+                        identityToken: credential.identityToken,
+                        nonce: nonce
+                    )
+                    try StyleMatchAccountSessionStore.save(session)
+                    try await StyleMatchAccountClient().deleteAccount(session: session)
+                    StyleMatchAccountSessionStore.delete()
+                    isPreparingAccountDeletion = false
+                    deleteSavedData()
+                    dataDeletionMessage = "Your StyleMatch Pro account and saved data were deleted."
+                } catch {
+                    dataDeletionMessage = (error as? StyleMatchAccountError)?.localizedDescription
+                        ?? StyleMatchAccountError.serviceUnavailable.localizedDescription
+                }
+                isAccountRequestInFlight = false
             }
-        case .failure(let error):
-            dataDeletionMessage = "Apple sign-in was not completed: \(error.localizedDescription)"
+        case .failure:
+            pendingAppleNonce = nil
+            isAccountRequestInFlight = false
+            dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
         }
     }
 
@@ -1109,38 +1445,79 @@ struct ProfileView: View {
         )
     }
 
-    private func transferGuestDataToApple() {
+    private func completePendingAppleSignIn(transferGuestData: Bool) {
+        guard let pendingAppleSignIn else { return }
+        completeAppleSignIn(pendingAppleSignIn, transferGuestData: transferGuestData)
+        self.pendingAppleSignIn = nil
+    }
+
+    private func completeAppleSignIn(_ payload: StyleMatchAppleSignInPayload, transferGuestData: Bool) {
         var transferred: [String] = []
 
-        if !outfitScanHistoryData.isEmpty {
+        if transferGuestData, !outfitScanHistoryData.isEmpty {
             transferred.append("scan history")
         }
 
         let hasIntentionalProfileSave = FounderProfileDefaultsMigration.hasIntentionalProfileSave()
 
-        if hasIntentionalProfileSave,
+        if transferGuestData, hasIntentionalProfileSave,
            cleanOptional(favoriteOutfits) != nil {
             transferred.append("favorites")
         }
 
-        if !closetItemsData.isEmpty {
+        if transferGuestData, !closetItemsData.isEmpty {
             transferred.append("closet")
         }
 
-        if hasIntentionalProfileSave,
+        if transferGuestData, hasIntentionalProfileSave,
            cleanOptional(stylePreferences) != nil || cleanOptional(favoriteColors) != nil {
             transferred.append("style preferences")
         }
 
-        if hasIntentionalProfileSave,
+        if transferGuestData, hasIntentionalProfileSave,
            StyleMatchAccountNameResolver.profileGivenName(from: name) != nil {
             transferred.append("profile")
         }
 
+        AccountScopedStorage.switchUser(
+            from: payload.sourceUserID,
+            to: payload.userID,
+            transferSourceData: transferGuestData
+        )
+        customerAccountMode = CustomerAccountMode.apple.rawValue
+        customerAppleUserID = payload.userID
+        accountSyncEnabled = true
+
+        let restoredLocalName = UserDefaults.standard.string(forKey: "profileName")
+        let appliedProfile = StyleMatchAppleCredentialProfileApplier.applyAppleCredential(
+            userID: payload.userID,
+            email: payload.email,
+            appleGivenName: payload.givenName,
+            appleFamilyName: payload.familyName,
+            localDisplayName: restoredLocalName
+        )
+        logProfileNameEvent(
+            stage: "sign-in",
+            source: appliedProfile.source,
+            appleNameProvided: payload.givenName != nil || payload.familyName != nil,
+            localNamePresent: StyleMatchAccountNameResolver.clean(restoredLocalName) != nil,
+            storedNamePresent: appliedProfile.givenName != nil
+        )
+
+        customerAccountEmail = appliedProfile.email ?? ""
+        name = appliedProfile.displayName ?? restoredLocalName ?? ""
+
         guestDataLinkedToApple = true
-        guestDataTransferSummary = transferred.isEmpty
-            ? "Apple sign-in is active. New style data will be saved to this account when sync is available."
-            : "Transferred guest \(transferred.joined(separator: ", ")) to Apple sign-in on this device."
+        if transferGuestData {
+            guestDataTransferSummary = transferred.isEmpty
+                ? "Apple sign-in is active. No guest style data needed to be transferred."
+                : "Transferred guest \(transferred.joined(separator: ", ")) to Apple sign-in on this device."
+        } else if payload.sourceUserID == "guest" {
+            guestDataTransferSummary = "Apple sign-in is active. Local guest data remains separate on this iPhone."
+        } else {
+            guestDataTransferSummary = "Apple sign-in is active. This account's saved data is now loaded."
+        }
+        loadProfileDraft(force: true)
         dataDeletionMessage = guestDataTransferSummary
     }
 
@@ -1194,6 +1571,7 @@ struct ProfileView: View {
             favoriteBrands: favoriteBrands,
             favoriteStores: favoriteStores,
             budget: budget,
+            styleGoals: styleGoals,
             stylePreferences: stylePreferences,
             occasions: occasions,
             outfitDislikes: outfitDislikes,
@@ -1201,6 +1579,17 @@ struct ProfileView: View {
             pastPurchases: pastPurchases,
             favoriteOutfits: favoriteOutfits,
             closetInventory: closetInventory,
+            declaredUndertone: ProfileStore(userId: activeAccountUserID).currentProfile.declaredUndertone?.rawValue ?? "",
+            preferredNeutrals: preferredNeutrals,
+            preferredAccentColors: preferredAccentColors,
+            comfortPreferences: comfortPreferences,
+            preferredPantRise: preferredPantRise,
+            shoppingFocus: shoppingFocus,
+            preferredShoppingCategories: preferredShoppingCategories,
+            workSetting: workSetting,
+            travelFrequency: travelFrequency,
+            hobbiesActivities: hobbiesActivities,
+            stylistVoice: stylistVoice,
             sizeCategory: sizeCategory,
             shirtSize: shirtSize,
             pantsSize: pantsSize,
@@ -1243,6 +1632,7 @@ struct ProfileView: View {
         favoriteBrands = draft.favoriteBrands
         favoriteStores = draft.favoriteStores
         budget = draft.budget
+        styleGoals = draft.styleGoals
         stylePreferences = draft.stylePreferences
         occasions = draft.occasions
         outfitDislikes = draft.outfitDislikes
@@ -1250,6 +1640,16 @@ struct ProfileView: View {
         pastPurchases = draft.pastPurchases
         favoriteOutfits = draft.favoriteOutfits
         closetInventory = draft.closetInventory
+        preferredNeutrals = draft.preferredNeutrals
+        preferredAccentColors = draft.preferredAccentColors
+        comfortPreferences = draft.comfortPreferences
+        preferredPantRise = draft.preferredPantRise
+        shoppingFocus = draft.shoppingFocus
+        preferredShoppingCategories = draft.preferredShoppingCategories
+        workSetting = draft.workSetting
+        travelFrequency = draft.travelFrequency
+        hobbiesActivities = draft.hobbiesActivities
+        stylistVoice = draft.stylistVoice
         sizeCategory = draft.sizeCategory
         shirtSize = draft.shirtSize
         pantsSize = draft.pantsSize
@@ -1263,18 +1663,18 @@ struct ProfileView: View {
         sizeProfile = summaryText(for: draft)
         profileLastSavedAt = ISO8601DateFormatter().string(from: Date())
         profileNeedsCloudSync = accountSyncEnabled
+        syncPersonalStylistProfile(from: draft)
 
         let savedDraft = currentStoredProfileDraft()
         profileDraft = savedDraft
         savedProfileDraft = savedDraft
         pantsSizeLastEditSource = .manual
         hasUnsavedProfileChanges = false
-        syncPersonalStylistProfile(from: draft)
         dataDeletionMessage = accountSyncEnabled
             ? "Profile saved locally and marked for account sync when cloud sync is available."
             : "Profile saved locally on this phone."
         showProfileSavedConfirmation = true
-        if voiceAssistantEnabled {
+        if voiceControlsEnabled, voiceAssistantEnabled {
             voiceAssistant.speak(VoiceScriptBuilder.profileSaved())
         }
     }
@@ -1305,7 +1705,19 @@ struct ProfileView: View {
         profile.favoriteColors = splitProfileList(draft.favoriteColors)
         profile.dislikedColors = splitProfileList(draft.outfitDislikes)
         profile.favoriteBrands = splitProfileList(draft.favoriteBrands)
+        profile.declaredUndertone = DeclaredUndertone.fromProfileInput(draft.declaredUndertone)
         profile.preferredFit = FitPreference.fromProfileInput(draft.fitPreference)
+        profile.styleGoals = splitProfileList(draft.styleGoals)
+        profile.preferredNeutrals = splitProfileList(draft.preferredNeutrals)
+        profile.preferredAccentColors = splitProfileList(draft.preferredAccentColors)
+        profile.comfortPreferences = splitProfileList(draft.comfortPreferences)
+        profile.preferredPantRise = cleanOptional(draft.preferredPantRise) ?? ""
+        profile.shoppingFocus = cleanOptional(draft.shoppingFocus) ?? ""
+        profile.preferredShoppingCategories = splitProfileList(draft.preferredShoppingCategories)
+        profile.workSetting = cleanOptional(draft.workSetting) ?? ""
+        profile.travelFrequency = cleanOptional(draft.travelFrequency) ?? ""
+        profile.hobbiesActivities = splitProfileList(draft.hobbiesActivities)
+        profile.stylistVoice = cleanOptional(draft.stylistVoice) ?? ""
         profile.budgetRange = budgetRange(from: draft.budget)
         profile.climate = cleanOptional(weatherCondition) ?? ""
         profile.workDressCode = cleanOptional(dressCode) ?? ""
@@ -1361,7 +1773,6 @@ struct ProfileView: View {
 
     private func deleteSavedData() {
         PrivacyDataManager.shared.deleteAllLocalCustomerData()
-        FounderProfileDefaultsMigration.clearProfilePreferenceDefaults()
         customerAccountMode = CustomerAccountMode.guest.rawValue
         customerAccountEmail = ""
         customerAppleUserID = ""
@@ -1371,6 +1782,7 @@ struct ProfileView: View {
         favoriteBrands = ""
         favoriteStores = ""
         budget = ""
+        styleGoals = ""
         sizeProfile = ""
         sizeCategory = ""
         stylePreferences = ""
@@ -1385,6 +1797,17 @@ struct ProfileView: View {
         pastPurchases = ""
         favoriteOutfits = ""
         closetInventory = ""
+        preferredNeutrals = ""
+        preferredAccentColors = ""
+        comfortPreferences = ""
+        preferredPantRise = ""
+        shoppingFocus = ""
+        preferredShoppingCategories = ""
+        workSetting = ""
+        travelFrequency = ""
+        hobbiesActivities = ""
+        stylistVoice = ""
+        styleConsultationCompletedAt = ""
         shareAppContextWithChatGPT = false
         outfitDislikes = ""
         clothingPreferences = ""
@@ -1409,17 +1832,788 @@ struct ProfileView: View {
         favoriteBrands = ""
         favoriteStores = ""
         budget = ""
+        styleGoals = ""
         stylePreferences = ""
         occasions = ""
         favoriteOutfits = ""
         outfitDislikes = ""
         clothingPreferences = ""
+        preferredNeutrals = ""
+        preferredAccentColors = ""
+        comfortPreferences = ""
+        preferredPantRise = ""
+        shoppingFocus = ""
+        preferredShoppingCategories = ""
+        workSetting = ""
+        travelFrequency = ""
+        hobbiesActivities = ""
+        stylistVoice = ""
+        styleConsultationCompletedAt = ""
         loadProfileDraft(force: true)
         dataDeletionMessage = "Personal Style Memory was cleared and turned off."
     }
 
+    private func clearColorAndFitProfile() {
+        profileDraft.declaredUndertone = ""
+        profileDraft.fitPreference = ""
+        updateProfileDirtyState()
+    }
+
+    private func completeStyleConsultation() {
+        styleConsultationCompletedAt = ISO8601DateFormatter().string(from: Date())
+        saveProfileDraft()
+        isShowingStyleConsultation = false
+    }
+
+    private func resetStyleConsultation() {
+        profileDraft.styleGoals = ""
+        profileDraft.declaredUndertone = ""
+        profileDraft.preferredNeutrals = ""
+        profileDraft.preferredAccentColors = ""
+        profileDraft.comfortPreferences = ""
+        profileDraft.preferredPantRise = ""
+        profileDraft.shoppingFocus = ""
+        profileDraft.preferredShoppingCategories = ""
+        profileDraft.workSetting = ""
+        profileDraft.travelFrequency = ""
+        profileDraft.hobbiesActivities = ""
+        profileDraft.stylistVoice = ""
+        styleConsultationCompletedAt = ""
+        saveProfileDraft()
+    }
+
     private func updateSizeProfileSummary() {
         sizeProfile = summaryText(for: currentStoredProfileDraft())
+    }
+}
+
+private struct StyleConsultationSheet: View {
+    @Binding var draft: ProfileEditDraft
+    let styleIdentityOptions: [String]
+    let styleGoalOptions: [String]
+    let fitPreferenceOptions: [String]
+    let undertoneOptions: [DeclaredUndertone]
+    let neutralColorOptions: [String]
+    let accentColorOptions: [String]
+    let pantRiseOptions: [String]
+    let comfortPreferenceOptions: [String]
+    let shoppingFocusOptions: [String]
+    let shoppingCategoryOptions: [String]
+    let workSettingOptions: [String]
+    let travelFrequencyOptions: [String]
+    let stylistVoiceOptions: [String]
+    let markDirty: () -> Void
+    let complete: () -> Void
+    let skip: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AccessibilityFocusState private var focusedStep: StyleConsultationStep?
+    @State private var step: StyleConsultationStep = .welcome
+
+    private enum StyleConsultationStep: Int, CaseIterable, Identifiable {
+        case welcome
+        case styleIdentity
+        case fitProfile
+        case colorProfile
+        case comfortProfile
+        case shoppingProfile
+        case lifestyleProfile
+        case stylistVoice
+
+        var id: Int { rawValue }
+
+        var title: String {
+            switch self {
+            case .welcome: "Welcome"
+            case .styleIdentity: "Style Identity"
+            case .fitProfile: "Fit Profile"
+            case .colorProfile: "Color Profile"
+            case .comfortProfile: "Comfort Profile"
+            case .shoppingProfile: "Shopping Profile"
+            case .lifestyleProfile: "Lifestyle Profile"
+            case .stylistVoice: "Stylist Voice"
+            }
+        }
+
+        var progressText: String {
+            "Step \(rawValue + 1) of \(Self.allCases.count)"
+        }
+
+        var previous: StyleConsultationStep? {
+            Self.allCases.first { $0.rawValue == rawValue - 1 }
+        }
+
+        var next: StyleConsultationStep? {
+            Self.allCases.first { $0.rawValue == rawValue + 1 }
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                stepHeader
+                stepContent
+                stepNavigation
+            }
+            .navigationTitle(step.title)
+            .onAppear {
+                focusedStep = step
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Skip") {
+                        skip()
+                    }
+                    .accessibilityHint("Closes the optional style consultation. Unsaved changes remain in your profile draft.")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stepHeader: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(step.progressText)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                Text("Optional. Skip anytime, finish later, or edit from Profile.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityFocused($focusedStep, equals: step)
+        }
+    }
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch step {
+        case .welcome:
+            Section {
+                Text("Welcome to Your Style Consultation")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Teach your stylist what you like, what feels comfortable, and how you shop. Your answers personalize advice and shopping recommendations only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                StyleProfilePromiseView()
+            }
+        case .styleIdentity:
+            Section("Style Identity") {
+                Text("Choose the styles and goals that feel useful right now. You can leave anything blank.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                multiSelectGrid(options: styleIdentityOptions, keyPath: \.stylePreferences, accessibilityGroup: "style identity")
+                multiSelectGrid(options: styleGoalOptions, keyPath: \.styleGoals, accessibilityGroup: "style goals")
+            }
+        case .fitProfile:
+            Section("Fit Profile") {
+                Picker("Preferred fit", selection: binding(\.fitPreference)) {
+                    Text("Not provided").tag("")
+                    ForEach(fitPreferenceOptions, id: \.self) { Text($0).tag($0) }
+                }
+                profileValueRow("Shirt size", draft.shirtSize)
+                profileValueRow("Waist", draft.waistSize)
+                profileValueRow("Inseam", draft.inseamLength)
+                profileValueRow("Shoe size", draft.shoeSize)
+                profileValueRow("Sleeve length", draft.sleeveLength)
+                profileValueRow("Neck size", draft.neckSize)
+                Picker("Preferred pant rise", selection: binding(\.preferredPantRise)) {
+                    Text("Not provided").tag("")
+                    ForEach(pantRiseOptions, id: \.self) { Text($0).tag($0) }
+                }
+                Text("Sizes come from your existing Size Profile so measurements stay in one place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .colorProfile:
+            Section("Color Profile") {
+                profileDraftTextField("Favorite colors", keyPath: \.favoriteColors, prompt: "Navy, white, olive")
+                profileDraftTextField("Avoided colors", keyPath: \.outfitDislikes, prompt: "Neon, bright orange")
+                multiSelectGrid(options: neutralColorOptions, keyPath: \.preferredNeutrals, accessibilityGroup: "preferred neutrals")
+                multiSelectGrid(options: accentColorOptions, keyPath: \.preferredAccentColors, accessibilityGroup: "preferred accent colors")
+                Picker("Optional self-selected undertone", selection: binding(\.declaredUndertone)) {
+                    Text("Not provided").tag("")
+                    ForEach(undertoneOptions, id: \.rawValue) { undertone in
+                        Text(undertone.displayName).tag(undertone.rawValue)
+                    }
+                }
+                Text("Self-selected only. StyleMatch Pro does not estimate or infer undertone from images.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Color groups are optional and editable. If a color belongs in more than one group for you, keep both and adjust later.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .comfortProfile:
+            Section("Comfort Profile") {
+                Text("Select practical fit and comfort notes your stylist should respect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                multiSelectGrid(options: comfortPreferenceOptions, keyPath: \.comfortPreferences, accessibilityGroup: "comfort preferences")
+            }
+        case .shoppingProfile:
+            Section("Shopping Profile") {
+                profileDraftTextField("Favorite brands", keyPath: \.favoriteBrands, prompt: "Nike, Ralph Lauren, Levi's")
+                profileDraftTextField("Preferred retailers", keyPath: \.favoriteStores, prompt: "Macy's, Target, Nordstrom")
+                profileDraftTextField("Budget range", keyPath: \.budget, prompt: "$50 - $200")
+                Picker("Shopping preference", selection: binding(\.shoppingFocus)) {
+                    Text("Not provided").tag("")
+                    ForEach(shoppingFocusOptions, id: \.self) { Text($0).tag($0) }
+                }
+                multiSelectGrid(options: shoppingCategoryOptions, keyPath: \.preferredShoppingCategories, accessibilityGroup: "shopping categories")
+            }
+        case .lifestyleProfile:
+            Section("Lifestyle Profile") {
+                Picker("Work setting", selection: binding(\.workSetting)) {
+                    Text("Not provided").tag("")
+                    ForEach(workSettingOptions, id: \.self) { Text($0).tag($0) }
+                }
+                Text("Typical climate is managed in Weather Planning so location and climate stay in one place.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                profileDraftTextField("Common occasions", keyPath: \.occasions, prompt: "Work, travel, dinner")
+                Picker("Travel frequency", selection: binding(\.travelFrequency)) {
+                    Text("Not provided").tag("")
+                    ForEach(travelFrequencyOptions, id: \.self) { Text($0).tag($0) }
+                }
+                profileDraftTextField("Hobbies or activities", keyPath: \.hobbiesActivities, prompt: "Gym, church, travel")
+                Text("Keep this broad. Do not include sensitive employment details or precise location.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .stylistVoice:
+            Section("Stylist Voice") {
+                Picker("Stylist voice", selection: binding(\.stylistVoice)) {
+                    Text("Not provided").tag("")
+                    ForEach(stylistVoiceOptions, id: \.self) { Text($0).tag($0) }
+                }
+                Text("Stored for future coaching tone. This phase does not rewrite the AI assistant personality system.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var stepNavigation: some View {
+        Section {
+            navigationButtons
+                .controlSize(.large)
+                .accessibilityElement(children: .contain)
+        }
+    }
+
+    @ViewBuilder
+    private var navigationButtons: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 12) {
+                backButton
+                primaryNavigationButton
+            }
+        } else {
+            HStack(spacing: 12) {
+                backButton
+                primaryNavigationButton
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var backButton: some View {
+        if let previous = step.previous {
+            Button("Back") {
+                move(to: previous)
+            }
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
+            .accessibilityHint("Returns to the previous consultation step.")
+        }
+    }
+
+    private var primaryNavigationButton: some View {
+        Button(step.next == nil ? "Save" : "Continue") {
+            if let next = step.next {
+                move(to: next)
+            } else {
+                complete()
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .frame(maxWidth: .infinity)
+        .accessibilityHint(step.next == nil ? "Saves the consultation and returns to Profile." : "Moves to the next consultation step.")
+    }
+
+    private func move(to nextStep: StyleConsultationStep) {
+        step = nextStep
+        focusedStep = nextStep
+    }
+
+    private func binding(_ keyPath: WritableKeyPath<ProfileEditDraft, String>) -> Binding<String> {
+        Binding {
+            draft[keyPath: keyPath]
+        } set: { newValue in
+            draft[keyPath: keyPath] = newValue
+            markDirty()
+        }
+    }
+
+    private func profileDraftTextField(_ title: String, keyPath: WritableKeyPath<ProfileEditDraft, String>, prompt: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: binding(keyPath), axis: .vertical)
+                .textInputAutocapitalization(.words)
+                .lineLimit(1...3)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func profileValueRow(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Not set" : value)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func multiSelectGrid(options: [String], keyPath: WritableKeyPath<ProfileEditDraft, String>, accessibilityGroup: String) -> some View {
+        let selected = selectedValues(for: keyPath)
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 128), spacing: 8)], alignment: .leading, spacing: 8) {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    toggle(option, keyPath: keyPath)
+                } label: {
+                    Label(option, systemImage: selected.contains(option) ? "checkmark.circle.fill" : "circle")
+                        .font(.caption)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(minHeight: 44, alignment: .leading)
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .background(selected.contains(option) ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .accessibilityLabel("\(option), \(accessibilityGroup)")
+                .accessibilityValue(selected.contains(option) ? "Selected" : "Not selected")
+                .accessibilityAddTraits(selected.contains(option) ? .isSelected : [])
+                .accessibilityHint("Double tap to select or remove this preference.")
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func selectedValues(for keyPath: WritableKeyPath<ProfileEditDraft, String>) -> Set<String> {
+        Set(draft[keyPath: keyPath]
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })
+    }
+
+    private func toggle(_ option: String, keyPath: WritableKeyPath<ProfileEditDraft, String>) {
+        var values = selectedValues(for: keyPath)
+        if values.contains(option) {
+            values.remove(option)
+        } else {
+            values.insert(option)
+        }
+        draft[keyPath: keyPath] = values.sorted().joined(separator: ", ")
+        markDirty()
+    }
+}
+
+private struct StyleDNAScreen: View {
+    let draft: ProfileEditDraft
+    let consultationCompletedAt: String
+    let edit: () -> Void
+    let reset: () -> Void
+    @State private var showResetConfirmation = false
+
+    var body: some View {
+        List {
+            Section {
+                Text("Style DNA summarizes only the preferences you have provided. Empty sections stay marked as unanswered, and these preferences personalize advice only; they do not change outfit scores.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                StyleProfilePromiseView()
+            }
+
+            styleDNASection(
+                title: "Style Identity",
+                icon: "sparkles",
+                rows: [
+                    ("Selected styles", draft.stylePreferences),
+                    ("Primary goals", draft.styleGoals)
+                ]
+            )
+
+            styleDNASection(
+                title: "Preferred Fit",
+                icon: "tshirt.fill",
+                rows: [
+                    ("Fit", draft.fitPreference),
+                    ("Pant rise", draft.preferredPantRise),
+                    ("Shirt size", draft.shirtSize),
+                    ("Waist", draft.waistSize),
+                    ("Inseam", draft.inseamLength),
+                    ("Shoe size", draft.shoeSize),
+                    ("Sleeve length", draft.sleeveLength),
+                    ("Neck size", draft.neckSize)
+                ]
+            )
+
+            styleDNASection(
+                title: "Color Palette",
+                icon: "paintpalette.fill",
+                rows: [
+                    ("Favorite colors", draft.favoriteColors),
+                    ("Avoided colors", draft.outfitDislikes),
+                    ("Preferred neutrals", draft.preferredNeutrals),
+                    ("Preferred accents", draft.preferredAccentColors),
+                    ("Self-selected undertone", undertoneDisplayName)
+                ]
+            )
+
+            styleDNASection(
+                title: "Comfort Preferences",
+                icon: "hand.thumbsup.fill",
+                rows: [
+                    ("Comfort notes", draft.comfortPreferences)
+                ]
+            )
+
+            styleDNASection(
+                title: "Favorite Brands",
+                icon: "tag.fill",
+                rows: [
+                    ("Brands", draft.favoriteBrands),
+                    ("Retailers", draft.favoriteStores)
+                ]
+            )
+
+            styleDNASection(
+                title: "Budget",
+                icon: "creditcard.fill",
+                rows: [
+                    ("Budget range", draft.budget),
+                    ("Shopping preference", draft.shoppingFocus),
+                    ("Shopping categories", draft.preferredShoppingCategories)
+                ]
+            )
+
+            styleDNASection(
+                title: "Lifestyle Preferences",
+                icon: "calendar.badge.clock",
+                rows: [
+                    ("Work setting", draft.workSetting),
+                    ("Common occasions", draft.occasions),
+                    ("Travel frequency", draft.travelFrequency),
+                    ("Hobbies or activities", draft.hobbiesActivities)
+                ]
+            )
+
+            styleDNASection(
+                title: "Stylist Voice",
+                icon: "quote.bubble.fill",
+                rows: [
+                    ("Voice", draft.stylistVoice)
+                ]
+            )
+
+            styleDNASection(
+                title: "Consultation Status",
+                icon: "checkmark.seal.fill",
+                rows: [
+                    ("Status", consultationStatus)
+                ]
+            )
+
+            Section {
+                Button(role: .destructive) {
+                    showResetConfirmation = true
+                } label: {
+                    Label("Reset Style DNA", systemImage: "arrow.counterclockwise")
+                }
+                .accessibilityLabel("Reset Style DNA")
+                .accessibilityHint("Clears optional Style DNA answers after confirmation.")
+            } footer: {
+                Text("Reset clears only your optional consultation answers. Saved scans and outfit scores stay unchanged.")
+            }
+        }
+        .navigationTitle("Style DNA")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog(
+            "Reset Style DNA?",
+            isPresented: $showResetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Style DNA", role: .destructive) {
+                reset()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears optional Style DNA answers only. Saved scans, account data, closet items, shopping data, and outfit scores stay unchanged.")
+        }
+    }
+
+    private var undertoneDisplayName: String {
+        DeclaredUndertone.fromProfileInput(draft.declaredUndertone)?.displayName ?? ""
+    }
+
+    private var consultationStatus: String {
+        consultationCompletedAt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "Completed"
+    }
+
+    private func styleDNASection(title: String, icon: String, rows: [(String, String)]) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Image(systemName: icon)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    Spacer()
+                    Button("Edit", action: edit)
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Edit \(title)")
+                        .accessibilityHint("Opens the Style Consultation flow so you can update this section.")
+                }
+
+                ForEach(rows, id: \.0) { row in
+                    StyleDNARow(label: row.0, value: row.1)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+private struct StyleProfilePromiseView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "checkmark.shield.fill")
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+                Text("Your Style, Your Rules")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            Text("Your profile is optional. It personalizes advice, recommendations, and style coaching. It never changes how your outfits are objectively scored.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct StyleDNARow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+            if trimmedValue.isEmpty {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "circle.dashed")
+                        .accessibilityHidden(true)
+                    Text("Not answered yet")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(label), not answered yet")
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .accessibilityHidden(true)
+                    Text(trimmedValue)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(label), user confirmed, \(trimmedValue)")
+            }
+        }
+    }
+
+    private var trimmedValue: String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct ProfileAccountConfirmationModifier: ViewModifier {
+    @Binding var showSignOutConfirmation: Bool
+    @Binding var showDeleteAccountConfirmation: Bool
+    @Binding var isPreparingAccountDeletion: Bool
+    let signOut: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Sign out of StyleMatch Pro?",
+                isPresented: $showSignOutConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Sign Out", role: .destructive, action: signOut)
+                Button("Cancel", role: .cancel) {
+                }
+            } message: {
+                Text("Your Apple account data will stay saved on this phone. Guest data remains separate.")
+            }
+            .confirmationDialog(
+                "Delete your StyleMatch Pro account?",
+                isPresented: $showDeleteAccountConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Continue to Apple Confirmation", role: .destructive) {
+                    isPreparingAccountDeletion = true
+                }
+                Button("Cancel", role: .cancel) {
+                }
+            } message: {
+                Text("This permanently revokes StyleMatch Pro’s Sign in with Apple token and deletes your account, profile, closet, scans, saved AI context, and shopping data. This cannot be undone.")
+            }
+    }
+}
+
+private struct ProfileAccountSection: View {
+    let selectedAccountMode: CustomerAccountMode
+    let accountStatusTitle: String
+    let accountIcon: String
+    @Binding var accountSyncEnabled: Bool
+    let guestDataLinkedToApple: Bool
+    let guestDataTransferSummary: String
+    let isAccountRequestInFlight: Bool
+    @Binding var isPreparingAccountDeletion: Bool
+    @Binding var showSignOutConfirmation: Bool
+    @Binding var showDeleteAccountConfirmation: Bool
+    let prepareAppleRequest: (ASAuthorizationAppleIDRequest) -> Void
+    let handleAppleSignIn: (Result<ASAuthorization, Error>) -> Void
+    let handleDeletionAuthorization: (Result<ASAuthorization, Error>) -> Void
+    let cancelDeletionAuthorization: () -> Void
+
+    var body: some View {
+        Section("Account") {
+            Label(accountStatusTitle, systemImage: accountIcon)
+                .font(.headline)
+
+            Text(selectedAccountMode.description)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            if selectedAccountMode == .guest {
+                guestControls
+            } else {
+                appleControls
+            }
+
+            if isAccountRequestInFlight {
+                ProgressView("Updating your account…")
+            }
+        }
+    }
+
+    private var guestControls: some View {
+        Group {
+            SignInWithAppleButton(.continue) { request in
+                request.requestedScopes = [.fullName, .email]
+                prepareAppleRequest(request)
+            } onCompletion: { result in
+                handleAppleSignIn(result)
+            }
+            .signInWithAppleButtonStyle(.black)
+            .frame(height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .disabled(isAccountRequestInFlight)
+
+            Text("You are using StyleMatch Pro as a guest. Sign in with Apple to save your profile, closet, favorites, and scan history.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var appleControls: some View {
+        Toggle("Enable cloud sync when available", isOn: $accountSyncEnabled)
+
+        Text(accountSyncEnabled ? "Cloud sync will be used only for account features like wishlist, closet backup, and order history." : "Sync is off. StyleMatch Pro keeps profile and scan data on this phone.")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+
+        Label("Signed in with Apple. Your profile can be saved and synced when cloud sync is available.", systemImage: "checkmark.seal.fill")
+            .font(.subheadline)
+            .foregroundStyle(.green)
+
+        if !guestDataTransferSummary.isEmpty {
+            Label(guestDataTransferSummary, systemImage: guestDataLinkedToApple ? "checkmark.shield" : "iphone")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Button {
+            showSignOutConfirmation = true
+        } label: {
+            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+        }
+
+        Button(role: .destructive) {
+            showDeleteAccountConfirmation = true
+        } label: {
+            Label("Delete Account", systemImage: "person.crop.circle.badge.minus")
+        }
+
+        if isPreparingAccountDeletion {
+            deletionAuthorizationControls
+        }
+    }
+
+    private var deletionAuthorizationControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Confirm with Apple to permanently delete your StyleMatch Pro account.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            SignInWithAppleButton(.continue) { request in
+                request.requestedScopes = []
+                prepareAppleRequest(request)
+            } onCompletion: { result in
+                handleDeletionAuthorization(result)
+            }
+            .signInWithAppleButtonStyle(.black)
+            .frame(height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .disabled(isAccountRequestInFlight)
+
+            Button("Cancel Account Deletion", role: .cancel) {
+                isPreparingAccountDeletion = false
+                cancelDeletionAuthorization()
+            }
+        }
     }
 }
 
@@ -1455,6 +2649,7 @@ private struct ProfileEditDraft: Equatable {
     var favoriteBrands = ""
     var favoriteStores = ""
     var budget = ""
+    var styleGoals = ""
     var stylePreferences = ""
     var occasions = ""
     var outfitDislikes = ""
@@ -1462,6 +2657,17 @@ private struct ProfileEditDraft: Equatable {
     var pastPurchases = ""
     var favoriteOutfits = ""
     var closetInventory = ""
+    var declaredUndertone = ""
+    var preferredNeutrals = ""
+    var preferredAccentColors = ""
+    var comfortPreferences = ""
+    var preferredPantRise = ""
+    var shoppingFocus = ""
+    var preferredShoppingCategories = ""
+    var workSetting = ""
+    var travelFrequency = ""
+    var hobbiesActivities = ""
+    var stylistVoice = ""
     var sizeCategory = ""
     var shirtSize = ""
     var pantsSize = ""
@@ -1479,6 +2685,7 @@ private struct ProfileEditDraft: Equatable {
         favoriteBrands = normalized(favoriteBrands, fallback: "")
         favoriteStores = normalized(favoriteStores, fallback: "")
         budget = normalized(budget, fallback: "")
+        styleGoals = normalized(styleGoals, fallback: "")
         stylePreferences = normalized(stylePreferences, fallback: "")
         occasions = normalized(occasions, fallback: "")
         outfitDislikes = normalized(outfitDislikes, fallback: "")
@@ -1486,6 +2693,17 @@ private struct ProfileEditDraft: Equatable {
         pastPurchases = normalized(pastPurchases, fallback: "")
         favoriteOutfits = normalized(favoriteOutfits, fallback: "")
         closetInventory = normalized(closetInventory, fallback: "")
+        declaredUndertone = DeclaredUndertone.fromProfileInput(declaredUndertone)?.rawValue ?? ""
+        preferredNeutrals = normalized(preferredNeutrals, fallback: "")
+        preferredAccentColors = normalized(preferredAccentColors, fallback: "")
+        comfortPreferences = normalized(comfortPreferences, fallback: "")
+        preferredPantRise = normalized(preferredPantRise, fallback: "")
+        shoppingFocus = normalized(shoppingFocus, fallback: "")
+        preferredShoppingCategories = normalized(preferredShoppingCategories, fallback: "")
+        workSetting = normalized(workSetting, fallback: "")
+        travelFrequency = normalized(travelFrequency, fallback: "")
+        hobbiesActivities = normalized(hobbiesActivities, fallback: "")
+        stylistVoice = normalized(stylistVoice, fallback: "")
         sizeCategory = SizeProfileCategory.resolvedIfSet(from: sizeCategory)?.rawValue ?? ""
         shirtSize = normalized(shirtSize, fallback: "")
         pantsSize = normalized(pantsSize, fallback: "")
@@ -2103,7 +3321,7 @@ private struct SupportView: View {
                     PageColorBand(
                         tab: .profile,
                         title: "Contact Support",
-                        subtitle: "Get help with scans, TestFlight, account access, or beta feedback.",
+                        subtitle: "Get help with scans, account access, shopping, or feedback.",
                         icon: "questionmark.circle.fill"
                     )
                     .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
@@ -2124,13 +3342,8 @@ private struct SupportView: View {
                         }
                     }
 
-                    Label("Live Chat (future)", systemImage: "message.fill")
-                        .foregroundStyle(.secondary)
-
-                    Label("Speak with a Stylist (future)", systemImage: "phone.fill")
-                        .foregroundStyle(.secondary)
-
-                    Button {
+                    NavigationLink {
+                        SupportFAQView()
                     } label: {
                         Label("FAQ", systemImage: "questionmark.circle.fill")
                     }
@@ -2143,14 +3356,13 @@ private struct SupportView: View {
 
                     if let feedbackURL = URL(string: "mailto:hello@goodnessoflifeandfun.com?subject=StyleMatch%20Pro%20Beta%20Feedback") {
                         Link(destination: feedbackURL) {
-                            Label("Send Beta Feedback", systemImage: "bubble.left.and.bubble.right.fill")
+                            Label("Send Feedback", systemImage: "bubble.left.and.bubble.right.fill")
                         }
                     }
                 }
 
-                Section("Before Public Release") {
-                    Label("This build is for TestFlight/internal testing only.", systemImage: "testtube.2")
-                    Label("Public release should wait until Apple approves version 1.1.", systemImage: "clock.fill")
+                Section("App") {
+                    Label("StyleMatch Pro \(appVersion)", systemImage: "info.circle.fill")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -2164,5 +3376,32 @@ private struct SupportView: View {
                 }
             }
         }
+    }
+
+    private var appVersion: String {
+        guard let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
+            return ""
+        }
+        let trimmed = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : "Version \(trimmed)"
+    }
+}
+
+private struct SupportFAQView: View {
+    var body: some View {
+        List {
+            Section("Scans") {
+                Text("For the clearest result, photograph the full outfit in even lighting with the clothing unobstructed.")
+                Text("Saved scans keep their original score and analysis until you delete them.")
+            }
+            Section("Accounts") {
+                Text("Sign out keeps your Apple account data on the server. Delete Account revokes the Apple token and removes your saved StyleMatch data.")
+            }
+            Section("Shopping") {
+                Text("Retailer links open outside StyleMatch Pro. Prices and availability can change at the retailer.")
+            }
+        }
+        .navigationTitle("FAQ")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

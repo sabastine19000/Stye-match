@@ -264,7 +264,7 @@ struct BestBuyAdapter: RetailerSearchAdapter {
     let retailerName = "Best Buy"
     let apiKey: String
     var urlSession: URLSession = .shared
-    var baseURL: URL = URL(string: "https://api.bestbuy.com/v1/products")!
+    var baseURL: URL? = URL(string: "https://api.bestbuy.com/v1/products")
 
     func search(_ query: ProductSearchQuery) async throws -> [AffiliateProduct] {
         let request = try makeRequest(for: query)
@@ -280,6 +280,9 @@ struct BestBuyAdapter: RetailerSearchAdapter {
             throw RetailerAdapterConfigurationError.missingBestBuyAPIKey
         }
 
+        guard let baseURL else {
+            throw RetailerAdapterConfigurationError.invalidRequestURL
+        }
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "apiKey", value: apiKey),
@@ -295,7 +298,7 @@ struct BestBuyAdapter: RetailerSearchAdapter {
     func decodeProducts(from data: Data) throws -> [AffiliateProduct] {
         let response = try JSONDecoder.catalog.decode(BestBuyProductResponse.self, from: data)
         return response.products.compactMap { product in
-            guard let url = product.url, let imageURL = product.image ?? product.url else {
+            guard let url = product.url else {
                 return nil
             }
 
@@ -309,7 +312,7 @@ struct BestBuyAdapter: RetailerSearchAdapter {
                 priceRange: nil,
                 occasionTags: nil,
                 brand: product.manufacturer,
-                imageURL: imageURL,
+                imageURL: product.image,
                 retailer: Retailer(name: "Best Buy", trackingID: "PENDING-APPROVAL", trackingParamName: "irclickid", disclosureName: "Best Buy"),
                 affiliateURL: url,
                 price: product.regularPrice,
@@ -504,7 +507,7 @@ private enum RetailerProductMapping {
         salePrice: Decimal?,
         color: String? = nil
     ) -> AffiliateProduct? {
-        guard let url, let imageURL else { return nil }
+        guard let url else { return nil }
         let category = productCategory(from: categoryText)
         return AffiliateProduct(
             id: id,

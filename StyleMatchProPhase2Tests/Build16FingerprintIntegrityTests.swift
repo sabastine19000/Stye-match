@@ -124,6 +124,135 @@ final class Build16FingerprintIntegrityTests: XCTestCase {
         XCTAssertTrue(scorer.contains("calculateStyleScore(detectedAttributes: attributes)"))
     }
 
+    func testScanImagePreprocessingNormalizesBeforeVisionAndDigest() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "func scanSizedImage(maxSide: CGFloat = 900) -> UIImage {"),
+              let end = source.range(
+                of: "func shareCardPreparedImage",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected scanSizedImage preprocessing helper.")
+        }
+
+        let scanSizedImage = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(scanSizedImage.contains("return self"), "Scan preprocessing must not preserve device-specific image orientation or metadata.")
+        XCTAssertTrue(scanSizedImage.contains("format.scale = 1"), "Scan preprocessing should render to stable pixel dimensions.")
+        XCTAssertTrue(scanSizedImage.contains("draw(in: CGRect(origin: .zero, size: targetSize))"), "Scan preprocessing should render orientation into pixels before scoring.")
+
+        guard let visionStart = source.range(of: "func fastVisionCGImage(maxSide: CGFloat = 720) -> CGImage? {"),
+              let visionEnd = source.range(
+                of: "private func sampledRGB",
+                range: visionStart.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected fastVisionCGImage helper.")
+        }
+
+        let fastVisionCGImage = String(source[visionStart.lowerBound..<visionEnd.lowerBound])
+        XCTAssertTrue(fastVisionCGImage.contains("scanSizedImage(maxSide: maxSide).cgImage"))
+        XCTAssertFalse(fastVisionCGImage.contains("return cgImage"), "Vision should not receive an unnormalized raw CGImage for already-small device photos.")
+    }
+
+    func testCameraAndGalleryUseNormalizedScanImageBeforeAnalysis() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertTrue(source.contains("let scanImage = image.scanSizedImage()"))
+        XCTAssertTrue(source.contains("let scanImage = uiImage.scanSizedImage()"))
+        XCTAssertTrue(source.contains("selectedUIImage = scanImage"))
+        XCTAssertTrue(source.contains("selectedImage = Image(uiImage: scanImage)"))
+    }
+
+    func testFlatLayAndWornScoringCalibrationRequiresEvidenceBackedFit() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let signalStart = source.range(of: "private func fitAssessmentSignal(validation: ScanValidation"),
+              let signalEnd = source.range(
+                of: "private func detectedAccessories",
+                range: signalStart.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected fit signal helper.")
+        }
+
+        XCTAssertEqual(StyleScoreCalibration.fitScore(for: "fit not evaluated from flat lay"), 13)
+        XCTAssertEqual(StyleScoreCalibration.fitScore(for: "worn fit visible but unverified"), 13)
+        XCTAssertEqual(StyleScoreCalibration.fitScore(for: "partial fit evidence"), 19)
+        XCTAssertEqual(StyleScoreCalibration.fitScore(for: "tailored fit evidence"), 23)
+        XCTAssertEqual(StyleScoreCalibration.fitScore(for: "verified excellent fit"), 25)
+        XCTAssertLessThan(StyleScoreCalibration.fitScore(for: "fit not evaluated from flat lay"), 18)
+
+        let fitSignal = String(source[signalStart.lowerBound..<signalEnd.lowerBound])
+        XCTAssertTrue(fitSignal.contains("validation.isPersonScan"))
+        XCTAssertTrue(fitSignal.contains("\"worn fit visible but unverified\""))
+        XCTAssertTrue(fitSignal.contains("\"fit not evaluated from flat lay\""))
+        XCTAssertFalse(fitSignal.contains("\"regular balanced fit\""))
+        XCTAssertFalse(fitSignal.contains("text.contains(\"suit\") || text.contains(\"blazer\")"))
+    }
+
+    func testRawScoreNormalizationAndOccasionExclusion() {
+        XCTAssertEqual(StyleScoreCalibration.normalizedScore(rawTotal: 59), 74)
+        XCTAssertEqual(StyleScoreCalibration.normalizedScore(rawTotal: 67), 84)
+        XCTAssertEqual(StyleScoreCalibration.normalizedScore(rawTotal: 80), 100)
+
+        let breakdown = OutfitScoreBreakdown(
+            colorHarmony: 20,
+            patternBalance: 20,
+            fitQuality: 13,
+            occasionMatch: 20,
+            accessoryUse: 6
+        )
+
+        XCTAssertEqual(breakdown.scoredRawTotal, 59)
+        XCTAssertEqual(breakdown.normalizedScore, 74)
+        XCTAssertTrue(breakdown.stylistChatSummary.contains("occasion is informational and excluded from scoring"))
+    }
+
+    func testVisibleBreakdownUsesRealPointsAndExplainsNormalization() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertTrue(source.contains("scorePointRow(title: \"Color Harmony\", points: breakdown.colorHarmony, maximum: 25)"))
+        XCTAssertTrue(source.contains("scorePointRow(title: \"Fit Quality\", points: breakdown.fitQuality, maximum: 25)"))
+        XCTAssertTrue(source.contains("normalizes to \\(normalizedScore(for: breakdown))/100"))
+        XCTAssertTrue(source.contains("Occasion is informational and excluded from scoring."))
+        XCTAssertFalse(source.contains("private struct StyleScoreBreakdown"))
+        XCTAssertFalse(source.contains("styleProgressBar(title: \"Color Harmony\""))
+        XCTAssertFalse(source.contains("styleProgressBar(title: \"Fit\""))
+        XCTAssertFalse(source.contains("styleProgressBar(title: \"Accessories\""))
+        XCTAssertFalse(source.contains("styleProgressBar(title: \"Weather\""))
+    }
+
+    func testAccessoryScoringIsGraduatedInsteadOfBinary() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func scoreAccessories(_ accessories: [String]) -> Int {"),
+              let end = source.range(
+                of: "private func isPerfectScoreEvidenceBacked",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected accessory scoring helper.")
+        }
+
+        let helper = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(helper.contains("if count == 0 { return 6 }"))
+        XCTAssertTrue(helper.contains("if count == 1 { return 8 }"))
+        XCTAssertTrue(helper.contains("return 10"))
+        XCTAssertFalse(helper.contains("accessories.isEmpty ? 5 : 10"))
+    }
+
+    func testPerfectScoreRequiresEvidenceBackedComponentsAndNoScanConfidenceInput() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let scoreStart = source.range(of: "private func calculateStyleScore(detectedAttributes attributes: DetectedStyleAttributes)"),
+              let scoreEnd = source.range(
+                of: "private func fitAssessmentSignal(validation: ScanValidation",
+                range: scoreStart.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected deterministic score component block.")
+        }
+
+        let scoreBlock = String(source[scoreStart.lowerBound..<scoreEnd.lowerBound])
+        XCTAssertTrue(scoreBlock.contains("if total == 100 && !isPerfectScoreEvidenceBacked"))
+        XCTAssertTrue(scoreBlock.contains("hasPositiveFitEvidence"))
+        XCTAssertTrue(scoreBlock.contains("hasStrongAccessoryEvidence"))
+        XCTAssertFalse(scoreBlock.contains("acceptedPerson"), "Person detection must not directly increase score.")
+        XCTAssertFalse(scoreBlock.contains("qualityScore"), "Scan quality/confidence must stay separate from outfit quality.")
+        XCTAssertFalse(scoreBlock.contains("confidenceLevel"), "Confidence must not enter score math.")
+    }
+
     func testScanDebugUsesStableDigestPrefixAndVersion() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 

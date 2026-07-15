@@ -2,6 +2,7 @@ import Foundation
 
 enum StyleMatchDataKey: String, CaseIterable {
     case hasCompletedOnboarding
+    case hasChosenAccessMode
     case customerAccountMode
     case customerAccountEmail
     case customerAppleUserID
@@ -30,6 +31,18 @@ enum StyleMatchDataKey: String, CaseIterable {
     case weather
     case weatherCity
     case weatherCondition
+    case weatherSource
+    case weatherLocation
+    case liveWeatherUpdatedAt
+    case weatherFeelsLike
+    case weatherRainChance
+    case weatherHumidity
+    case weatherWindSpeed
+    case weatherUVIndex
+    case weatherHourlyForecast
+    case weatherDailyForecast
+    case weatherAlert
+    case weatherErrorMessage
     case pastPurchases
     case fashionJournalCompliments
     case favoriteOutfits
@@ -37,12 +50,17 @@ enum StyleMatchDataKey: String, CaseIterable {
     case clothingPreferences
     case closetInventory
     case closetItemsData
+    case favoriteClosetItemIDs
     case wishlistProductNamesData
     case preferredAIAssistant
     case connectedAIAssistants
     case openAIModel
     case openAIAPIKeyForBetaTesting
     case shareAppContextWithChatGPT
+    case hasSeenAIStylistWelcome
+    case aiStylistConversationData
+    case aiStylistArchivedConversationsData
+    case aiInsightConversationData
     case outfitScanHistoryData
     case shoppingRecentlyViewedProductIDs
     case shoppingDismissedProductIDs
@@ -59,6 +77,12 @@ enum StyleMatchDataKey: String, CaseIterable {
     case shoppingViewedSaleEventIDs
     case profileLastSavedAt
     case profileNeedsCloudSync
+    case guestDataLinkedToApple
+    case guestDataTransferSummary
+    case voiceAssistantEnabled
+    case voiceAssistantVoiceIdentifier
+    case voiceAssistantSpeechRate
+    case voiceStylistDefaultVoiceHintDismissed
 }
 
 enum StyleMatchPrivacyMode {
@@ -74,15 +98,15 @@ struct PrivacyDataManager {
 
     func deleteAllLocalCustomerData(defaults: UserDefaults = .standard) {
         let activeUserID = PersonalStylistStorage.activeUserID(defaults: defaults)
-        ChatConversationStore().deleteAll()
+        AccountScopedStorage.deleteUserData(for: activeUserID, defaults: defaults)
+        AccountScopedStorage.deleteSensitiveDeviceState(defaults: defaults)
         for key in StyleMatchDataKey.allCases {
             defaults.removeObject(forKey: key.rawValue)
         }
-        PersonalStylistStorage.deletePersonalization(for: activeUserID, defaults: defaults)
-        ShoppingLocalStore.deleteShoppingData(for: activeUserID, defaults: defaults)
         defaults.removeObject(forKey: PersonalStylistStorage.legacyProfileKey)
         defaults.removeObject(forKey: PersonalStylistStorage.legacyMemoriesKey)
         defaults.removeObject(forKey: PersonalStylistStorage.legacyFeedbackCountKey)
+        defaults.set("guest", forKey: AccountScopedStorage.activeUserMarkerKey)
         try? OpenAIKeychain.deleteAPIKey()
     }
 

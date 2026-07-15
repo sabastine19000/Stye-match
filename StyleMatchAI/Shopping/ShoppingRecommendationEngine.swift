@@ -496,3 +496,274 @@ enum ShoppingRecommendationEngine {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+struct ShoppingFeedbackRankedProduct: Identifiable, Equatable {
+    let product: AffiliateProduct
+    let score: Int
+
+    var id: String { product.id }
+}
+
+enum ShoppingFeedbackProductRanker {
+    static func rankedProducts(
+        from products: [AffiliateProduct],
+        memories: [OutfitMemory]
+    ) -> [ShoppingFeedbackRankedProduct] {
+        let signals = FeedbackSignals(memories: memories)
+        guard signals.hasFeedback else {
+            return products.map { ShoppingFeedbackRankedProduct(product: $0, score: 0) }
+        }
+
+        return products.enumerated()
+            .map { index, product in
+                (
+                    index: index,
+                    ranked: ShoppingFeedbackRankedProduct(
+                        product: product,
+                        score: score(product, signals: signals)
+                    )
+                )
+            }
+            .sorted { first, second in
+                if first.ranked.score == second.ranked.score {
+                    return first.index < second.index
+                }
+                return first.ranked.score > second.ranked.score
+            }
+            .map(\.ranked)
+    }
+
+    static func positiveRecommendations(
+        from products: [AffiliateProduct],
+        memories: [OutfitMemory],
+        minimumCount: Int = 3
+    ) -> [ShoppingFeedbackRankedProduct] {
+        let positives = rankedProducts(from: products, memories: memories)
+            .filter { $0.score > 0 }
+        guard positives.count >= minimumCount else {
+            return []
+        }
+        return positives
+    }
+
+    private static func score(_ product: AffiliateProduct, signals: FeedbackSignals) -> Int {
+        var score = 0
+        let colors = Set(product.colors.map(normalize).filter { !$0.isEmpty })
+        let categories = productCategorySignals(product)
+        let styles = productStyleSignals(product)
+        let brand = normalize(product.brand ?? "")
+
+        score += matchingWeight(colors, signals.positiveColors, weight: 8)
+        score += matchingWeight(categories, signals.positiveCategories, weight: 10)
+        score += matchingWeight(styles, signals.positiveStyles, weight: 7)
+        if !brand.isEmpty, signals.positiveBrands.contains(brand) {
+            score += 3
+        }
+
+        for negative in signals.negativeMemories {
+            let colorPenalty = negative.dislikeReason == .colorsOff ? 10 : 5
+            let stylePenalty = negative.dislikeReason == .notMyStyle ? 9 : 4
+            let categoryPenalty = 4
+            let brandPenalty = 2
+
+            if !colors.isDisjoint(with: negative.colors) {
+                score -= colorPenalty
+            }
+            if !categories.isDisjoint(with: negative.categories) {
+                score -= categoryPenalty
+            }
+            if !styles.isDisjoint(with: negative.styles) {
+                score -= stylePenalty
+            }
+            if !brand.isEmpty, negative.brands.contains(brand) {
+                score -= brandPenalty
+            }
+        }
+
+        return score
+    }
+
+    private static func matchingWeight(_ productValues: Set<String>, _ signalValues: Set<String>, weight: Int) -> Int {
+        guard !productValues.isEmpty, !signalValues.isEmpty else {
+            return 0
+        }
+        return productValues.isDisjoint(with: signalValues) ? 0 : weight
+    }
+
+    private static func productCategorySignals(_ product: AffiliateProduct) -> Set<String> {
+        Set([
+            normalize(product.category.rawValue),
+            normalize(product.category.displayName),
+            normalize(GarmentRecordHelpers.category(from: "\(product.subcategory) \(product.name)")),
+            normalize(product.subcategory)
+        ].filter { !$0.isEmpty })
+    }
+
+    private static func productStyleSignals(_ product: AffiliateProduct) -> Set<String> {
+        Set((product.tags + (product.occasionTags ?? []) + [product.subcategory])
+            .map(normalize)
+            .filter { !$0.isEmpty })
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private struct FeedbackSignals {
+        var positiveColors = Set<String>()
+        var positiveCategories = Set<String>()
+        var positiveStyles = Set<String>()
+        var positiveBrands = Set<String>()
+        var negativeMemories: [NegativeMemorySignals] = []
+        var hasFeedback = false
+
+        init(memories: [OutfitMemory]) {
+            for memory in memories {
+                if Self.isPositive(memory) {
+                    hasFeedback = true
+                    positiveColors.formUnion(Self.colors(memory))
+                    positiveCategories.formUnion(Self.categories(memory))
+                    positiveStyles.formUnion(Self.styles(memory))
+                    positiveBrands.formUnion(Self.brands(memory))
+                }
+
+                if Self.isNegative(memory) {
+                    hasFeedback = true
+                    negativeMemories.append(
+                        NegativeMemorySignals(
+                            colors: Self.colors(memory),
+                            categories: Self.categories(memory),
+                            styles: Self.styles(memory),
+                            brands: Self.brands(memory),
+                            dislikeReason: memory.dislikeReason
+                        )
+                    )
+                }
+            }
+        }
+
+        private static func isPositive(_ memory: OutfitMemory) -> Bool {
+            memory.wasLiked == true
+                || memory.wouldWearAgain == true
+                || memory.isFavorite
+                || memory.wasWorn == true
+                || memory.timesWorn > 0
+                || memory.feedback?.verdict == .loved
+                || memory.feedback?.verdict == .liked
+        }
+
+        private static func isNegative(_ memory: OutfitMemory) -> Bool {
+            memory.wasLiked == false
+                || memory.wouldWearAgain == false
+                || memory.feedback?.verdict == .notForMe
+        }
+
+        private static func colors(_ memory: OutfitMemory) -> Set<String> {
+            Set((memory.colors + memory.garmentRecords.flatMap(\.colors))
+                .map(ShoppingFeedbackProductRanker.normalize)
+                .filter { !$0.isEmpty })
+        }
+
+        private static func categories(_ memory: OutfitMemory) -> Set<String> {
+            Set(memory.garmentRecords
+                .map(\.garmentCategory)
+                .map(ShoppingFeedbackProductRanker.normalize)
+                .filter { !$0.isEmpty })
+        }
+
+        private static func styles(_ memory: OutfitMemory) -> Set<String> {
+            Set(([memory.detectedStyle] + memory.garmentRecords.flatMap(\.styleTags))
+                .map(ShoppingFeedbackProductRanker.normalize)
+                .filter { !$0.isEmpty })
+        }
+
+        private static func brands(_ memory: OutfitMemory) -> Set<String> {
+            Set(memory.garmentRecords
+                .compactMap(\.brand)
+                .map(ShoppingFeedbackProductRanker.normalize)
+                .filter { !$0.isEmpty })
+        }
+    }
+
+    private struct NegativeMemorySignals {
+        let colors: Set<String>
+        let categories: Set<String>
+        let styles: Set<String>
+        let brands: Set<String>
+        let dislikeReason: DislikeReason?
+    }
+}
+
+struct ScanCompleteLookAccessoryRecommender {
+    static func recommendations(
+        for analysis: OutfitAnalysisResult,
+        catalog: [AffiliateProduct],
+        limit: Int = 2
+    ) -> [AffiliateProduct] {
+        guard shouldRecommendAccessories(for: analysis) else {
+            return []
+        }
+
+        let scanColors = Set(analysis.colorPalette.map(normalize).filter { !$0.isEmpty })
+        let occasionSignals = Set(occasionTokens(from: analysis.occasionFit))
+
+        let ranked = catalog.enumerated().compactMap { index, product -> (index: Int, product: AffiliateProduct, rank: Int)? in
+            guard product.category == .accessories else {
+                return nil
+            }
+
+            let productColors = Set(product.colors.map(normalize).filter { !$0.isEmpty })
+            let productOccasions = Set((product.occasionTags ?? []).flatMap(occasionTokens))
+            let colorMatch = !scanColors.isEmpty && !productColors.isDisjoint(with: scanColors)
+            let occasionMatch = !occasionSignals.isEmpty && !productOccasions.isDisjoint(with: occasionSignals)
+
+            guard colorMatch || occasionMatch else {
+                return nil
+            }
+
+            var rank = 0
+            if colorMatch { rank += 10 }
+            if occasionMatch { rank += 4 }
+            return (index, product, rank)
+        }
+
+        return ranked
+            .sorted { first, second in
+                if first.rank == second.rank {
+                    return first.index < second.index
+                }
+                return first.rank > second.rank
+            }
+            .prefix(limit)
+            .map(\.product)
+    }
+
+    static func shouldRecommendAccessories(for analysis: OutfitAnalysisResult) -> Bool {
+        guard let breakdown = analysis.scoreBreakdown else {
+            return false
+        }
+
+        let color = Double(breakdown.colorHarmony) / 25.0
+        let pattern = Double(breakdown.patternBalance) / 20.0
+        let fit = Double(breakdown.fitQuality) / 25.0
+        let accessories = Double(breakdown.accessoryUse) / 10.0
+
+        return breakdown.accessoryUse <= 5
+            && accessories < color
+            && accessories < pattern
+            && accessories < fit
+    }
+
+    private static func occasionTokens(from value: String) -> [String] {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "-", with: " ")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.count > 2 }
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}

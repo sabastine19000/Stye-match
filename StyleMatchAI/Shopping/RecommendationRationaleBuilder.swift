@@ -18,7 +18,7 @@ enum RecommendationRationaleBuilder {
             favoriteProductIDs: favoriteProductIDs,
             preferences: preferences
         ) {
-            return RecommendationRationale(reasons: [], headline: "Popular with shoppers this week.")
+            return RecommendationRationale(reasons: [], headline: fallbackHeadline(for: product))
         }
 
         var reasons: [RecommendationRationale.Reason] = []
@@ -45,7 +45,7 @@ enum RecommendationRationaleBuilder {
 
         let uniqueReasons = Array(unique(reasons).prefix(3))
         if uniqueReasons.isEmpty {
-            return RecommendationRationale(reasons: [], headline: "Popular with shoppers this week.")
+            return RecommendationRationale(reasons: [], headline: fallbackHeadline(for: product))
         }
 
         return RecommendationRationale(
@@ -170,6 +170,16 @@ enum RecommendationRationaleBuilder {
         }
 
         return "Recommended because these \(item) fit right into your current style."
+    }
+
+    private static func fallbackHeadline(for product: AffiliateProduct) -> String {
+        if !product.retailer.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Available from \(product.retailer.name)."
+        }
+        if let brand = product.brand?.trimmingCharacters(in: .whitespacesAndNewlines), !brand.isEmpty {
+            return "Recommended from the current catalog by \(brand)."
+        }
+        return "Recommended from the current safe catalog."
     }
 
     private static func outfitPhrase(from value: String, recency: WornRecency) -> String {

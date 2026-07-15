@@ -2,6 +2,7 @@ import AVFoundation
 import ImageIO
 import PhotosUI
 import SwiftUI
+import UIKit
 import Vision
 
 struct ScanView: View {
@@ -75,13 +76,16 @@ struct ScanView: View {
     @State private var scanPendingRename: RecentOutfitScore?
     @State private var renameText = ""
     @State private var isShowingRenameScanSheet = false
+    @State private var isShowingRenameUnsavedConfirmation = false
     @State private var isShowingDeleteAllConfirmation = false
     @State private var isShowingScanAIAssist = false
+    @State private var outfitSharePreview: OutfitSharePreviewData?
     @State private var scanAIInput = ""
     @State private var scanAIChatMessages: [ScanAIChatMessage] = []
     @State private var isScanAIThinking = false
     @State private var selectedScanOccasion: Occasion = .general
     @State private var dismissedFormalityMismatchSignatures = Set<String>()
+    @State private var completeLookAccessoryProducts: [AffiliateProduct] = []
     @StateObject private var voiceAssistant = VoiceStylistService()
     
     private var activeTheme: StyleMatchAppTheme {
@@ -109,8 +113,7 @@ struct ScanView: View {
         colorPaletteConfidence: GarmentPaletteConfidence? = nil,
         colorPaletteDetectionConfidence: Int? = nil,
         colorPaletteNotes: String? = nil,
-        skinToneStyleNote: String? = nil,
-        scoreBreakdown: StyleScoreBreakdown? = nil
+        scoreBreakdown: OutfitScoreBreakdown? = nil
     ) -> OutfitAnalysisResult {
         let paletteDetection = colorPalette == nil ? selectedUIImage?.garmentColorDetection() : nil
         let resolvedColorPalette = colorPalette ?? paletteDetection?.garmentColors ?? ["Neutral"]
@@ -175,12 +178,12 @@ struct ScanView: View {
 
         return OutfitAnalysisResult(
             score: calibratedScore,
-            scoreBreakdown: breakdown.outfitSnapshot,
+            scoreBreakdown: breakdown,
             colorMatch: "Strong",
             occasionFit: occasionFit,
             styleBalance: resolvedStyleCategory,
             colorHarmony: "\(breakdown.colorHarmony)/25",
-            styleCoordination: "\(breakdown.patternBalance + breakdown.fitQuality + breakdown.occasionMatch + breakdown.accessoryUse)/75",
+            styleCoordination: "\(breakdown.patternBalance + breakdown.fitQuality + breakdown.accessoryUse)/55",
             formality: formality,
             seasonalMatch: weatherLocationText,
             summary: summary,
@@ -194,7 +197,7 @@ struct ScanView: View {
             colorPaletteNotes: colorPaletteNotes ?? paletteDetection?.notes,
             environment: environment,
             imageQuality: imageQuality,
-            skinToneStyleNote: skinToneStyleNote ?? "Style Match Pro uses visible outfit colors for fashion recommendations. It does not identify race, ethnicity, or sensitive personal traits.",
+            skinToneStyleNote: nil,
             detectedItemConfidences: itemConfidences,
             suggestions: [
                 fitNote,
@@ -554,11 +557,15 @@ struct ScanView: View {
             guard let score else {
                 resetResultAnimation()
                 scanAIChatMessages.removeAll()
+                completeLookAccessoryProducts = []
                 return
             }
 
             scanAIChatMessages.removeAll()
             startResultAnimation(to: score)
+            Task {
+                await refreshCompleteLookAccessories()
+            }
         }
         .onDisappear {
             voiceAssistant.stop()
@@ -630,36 +637,73 @@ struct ScanView: View {
         } message: {
             Text(selectedScanIDs.isEmpty ? "Delete all saved scans from this phone?" : "Delete \(selectedScanIDs.count) selected scan\(selectedScanIDs.count == 1 ? "" : "s")?")
         }
-        .sheet(isPresented: $isShowingRenameScanSheet) {
+        .sheet(isPresented: $isShowingRenameScanSheet, onDismiss: clearRenameDraftState) {
             NavigationStack {
                 Form {
                     Section("Rename Scan") {
                         TextField("Scan name", text: $renameText)
+                            .submitLabel(.done)
+                            .onSubmit {
+                                if canSaveRenameTitle {
+                                    renamePendingScan()
+                                }
+                            }
                     }
 
                     Section {
                         Button {
                             renamePendingScan()
                         } label: {
-                            Label("Save Name", systemImage: "checkmark.circle.fill")
+                            Text("Save Name")
+                                .frame(maxWidth: .infinity)
                         }
-                        .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(!canSaveRenameTitle)
+                        .accessibilityLabel("Save Name")
                     }
                 }
                 .navigationTitle("Rename")
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") {
-                            isShowingRenameScanSheet = false
+                        Button("Cancel") {
+                            requestCancelRename()
                         }
+                        .accessibilityLabel("Cancel rename")
                     }
                 }
+            }
+            .background(
+                RenameSheetDismissGuard(hasUnsavedChanges: hasUnsavedRenameChanges) {
+                    isShowingRenameUnsavedConfirmation = true
+                }
+            )
+            .confirmationDialog(
+                "Save rename changes?",
+                isPresented: $isShowingRenameUnsavedConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Save") {
+                    renamePendingScan()
+                }
+                .disabled(!canSaveRenameTitle)
+
+                Button("Discard Changes", role: .destructive) {
+                    cancelRenameScan()
+                }
+
+                Button("Continue Editing", role: .cancel) { }
+            } message: {
+                Text("Save the new scan name before closing, or discard your edits and keep the current title.")
             }
         }
         .sheet(isPresented: $isShowingScanAIAssist) {
             if let result {
                 scanAIAssistSheet(for: result)
             }
+        }
+        .sheet(item: $outfitSharePreview) { preview in
+            OutfitSharePreviewScreen(data: preview, accentColor: AppTab.scan.palette.accent)
         }
     }
 
@@ -711,6 +755,10 @@ struct ScanView: View {
 
             if let result {
                 compactScoreBadge(result)
+
+                if !isShowingFullAnalysis {
+                    completeTheLookCard(for: result, darkMode: true)
+                }
 
                 if isShowingFullAnalysis {
                     resultCard(result)
@@ -875,10 +923,12 @@ struct ScanView: View {
                         Image(systemName: "trash.fill")
                             .font(.headline)
                             .foregroundStyle(.white)
-                            .frame(width: 42, height: 42)
+                            .frame(width: 44, height: 44)
                             .background(Color.red)
                             .clipShape(Circle())
                     }
+                    .accessibilityLabel("Delete selected photo")
+                    .accessibilityHint("Removes this photo from the current scan")
                     .padding(.trailing, 24)
                     .padding(.top, 10)
                 }
@@ -897,6 +947,7 @@ struct ScanView: View {
                     .font(.title3)
                     .fontWeight(.bold)
                     .foregroundStyle(.white)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(selectedUIImage == nil ? "Analyze colors, fit, patterns, accessories and more." : "Review the photo, then generate a personalized style score.")
                     .font(.subheadline)
@@ -1365,6 +1416,10 @@ struct ScanView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.78)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    "Overall StyleMatch score, \(result.score) out of 100, \(scoreRatingTitle(for: result.score))"
+                )
             }
 
             detectedStyleContextCard(for: result, darkMode: true)
@@ -1381,6 +1436,19 @@ struct ScanView: View {
             }
 
             scanResultOccasionPicker(for: result)
+
+            Button {
+                outfitSharePreview = makeOutfitSharePreview(for: result)
+            } label: {
+                Label("Share Outfit", systemImage: "square.and.arrow.up")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .buttonStyle(.bordered)
+            .tint(scanCream)
+            .accessibilityLabel("Share Outfit")
+            .accessibilityHint("Opens a preview where you can choose what to share.")
 
             if !result.chatGPTStylistSections.isEmpty {
                 chatGPTStylistSectionsCard(result.chatGPTStylistSections, darkMode: true)
@@ -1403,13 +1471,11 @@ struct ScanView: View {
             .foregroundStyle(scanBackground)
 
             if FeatureFlags.conversationalStylist,
-               let scoreBreakdown = result.scoreBreakdown?.stylistChatSummary {
+               result.scoreBreakdown != nil {
                 NavigationLink {
                     StylistChatView(
                         initialQuestion: "Why did this outfit score \(result.score)?",
-                        initialContext: PersonalizationContextBuilder.chatContext(
-                            scoreBreakdown: "overall \(result.score)/100; \(scoreBreakdown)"
-                        )
+                        initialContext: PersonalizationContextBuilder.scanStylistContext(for: result)
                     )
                 } label: {
                     Label("Ask the stylist about this score", systemImage: "sparkles")
@@ -1496,6 +1562,71 @@ struct ScanView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private func makeOutfitSharePreview(for result: OutfitAnalysisResult) -> OutfitSharePreviewData {
+        let savedScan = activeScanFingerprint.flatMap { fingerprint in
+            recentStoredScans.first(where: { $0.id == fingerprint })
+        }
+
+        if selectedUIImage == nil, let savedScan {
+            return makeOutfitSharePreview(for: savedScan)
+        }
+
+        return makeOutfitSharePreview(
+            analysis: result,
+            photo: selectedUIImage,
+            scanDate: savedScan?.firstScannedAt ?? Date()
+        )
+    }
+
+    private func makeOutfitSharePreview(for savedScan: RecentOutfitScore) -> OutfitSharePreviewData {
+        makeOutfitSharePreview(
+            analysis: savedScan.analysis,
+            photo: savedScan.thumbnailImage,
+            scanDate: savedScan.firstScannedAt
+        )
+    }
+
+    private func makeOutfitSharePreview(
+        analysis: OutfitAnalysisResult,
+        photo: UIImage?,
+        scanDate: Date
+    ) -> OutfitSharePreviewData {
+        let categoryScores: [OutfitShareCategoryScore]
+
+        if let breakdown = analysis.scoreBreakdown {
+            categoryScores = [
+                OutfitShareCategoryScore(title: "Color Harmony", value: "\(breakdown.colorHarmony)/25"),
+                OutfitShareCategoryScore(title: "Pattern Balance", value: "\(breakdown.patternBalance)/20"),
+                OutfitShareCategoryScore(title: "Fit Quality", value: "\(breakdown.fitQuality)/25"),
+                OutfitShareCategoryScore(title: "Accessory Use", value: "\(breakdown.accessoryUse)/10"),
+                OutfitShareCategoryScore(
+                    title: "Score Calculation",
+                    value: "\(scoreRawTotal(for: breakdown))/80 -> \(analysis.score)/100"
+                )
+            ]
+        } else {
+            categoryScores = [
+                OutfitShareCategoryScore(title: "Color Harmony", value: analysis.colorHarmony),
+                OutfitShareCategoryScore(title: "Style Coordination", value: analysis.styleCoordination),
+                OutfitShareCategoryScore(title: "Formality", value: analysis.formality)
+            ]
+        }
+
+        let availableCategoryScores = categoryScores.filter { category in
+            !category.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        return OutfitSharePreviewData(
+            photo: photo?.shareCardPreparedImage(),
+            overallScore: analysis.score,
+            scoreTitle: scoreRatingTitle(for: analysis.score),
+            categoryScores: availableCategoryScores,
+            outfitDescription: analysis.outfitDescription,
+            suggestions: OutfitShareInsightBuilder.insights(from: analysis),
+            scanDate: scanDate
+        )
+    }
+
     private func updateOccasion(_ occasion: Occasion?, for result: OutfitAnalysisResult) {
         let store = OutfitMemoryStore()
         let memory = ensureOutfitMemory(for: result, store: store)
@@ -1510,24 +1641,33 @@ struct ScanView: View {
     }
 
     private func voiceAssistantButton(for result: OutfitAnalysisResult, darkMode: Bool) -> some View {
-        Button {
-            if voiceAssistant.isSpeaking {
-                voiceAssistant.stop()
-            } else {
-                voiceAssistant.speak(VoiceScriptBuilder.scanResult(from: result))
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if voiceAssistant.isSpeaking {
+                    voiceAssistant.stop()
+                } else {
+                    voiceAssistant.speak(VoiceScriptBuilder.scanResult(from: result))
+                }
+            } label: {
+                Label(
+                    voiceAssistant.isSpeaking ? "Stop Voice Summary" : "Listen to Score Summary",
+                    systemImage: voiceAssistant.isSpeaking ? "speaker.slash.fill" : "speaker.wave.2.fill"
+                )
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity, minHeight: 42)
             }
-        } label: {
-            Label(
-                voiceAssistant.isSpeaking ? "Stop Voice Summary" : "Listen to Score Summary",
-                systemImage: voiceAssistant.isSpeaking ? "speaker.slash.fill" : "speaker.wave.2.fill"
-            )
-            .font(.subheadline)
-            .fontWeight(.bold)
-            .frame(maxWidth: .infinity, minHeight: 42)
+            .buttonStyle(.bordered)
+            .tint(darkMode ? scanCream : AppTab.scan.palette.accent)
+            .accessibilityHint("Reads a short personal stylist summary of this scan result aloud.")
+
+            if let playbackError = voiceAssistant.playbackErrorMessage {
+                Label(playbackError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(darkMode ? scanCream : .orange)
+                    .accessibilityLabel("Voice playback error. \(playbackError)")
+            }
         }
-        .buttonStyle(.bordered)
-        .tint(darkMode ? scanCream : AppTab.scan.palette.accent)
-        .accessibilityHint("Reads a short personal stylist summary of this scan result aloud.")
     }
 
     private func speakIfEnabled(_ script: VoiceScript) {
@@ -1615,10 +1755,42 @@ struct ScanView: View {
             Text("Style Breakdown")
                 .font(.headline)
 
-            styleProgressBar(title: "Color Harmony", percent: clampedScore(result.score + 3))
-            styleProgressBar(title: "Fit", percent: clampedScore(result.score - 4))
-            styleProgressBar(title: "Accessories", percent: clampedScore(result.score - 10))
-            styleProgressBar(title: "Weather", percent: clampedScore(result.score))
+            if let breakdown = result.scoreBreakdown {
+                scorePointRow(title: "Color Harmony", points: breakdown.colorHarmony, maximum: 25)
+                scorePointRow(title: "Pattern Balance", points: breakdown.patternBalance, maximum: 20)
+                scorePointRow(title: "Fit Quality", points: breakdown.fitQuality, maximum: 25)
+                scorePointRow(title: "Accessory Use", points: breakdown.accessoryUse, maximum: 10)
+
+                Divider()
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Raw scoring total")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("\(scoreRawTotal(for: breakdown))/80")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                }
+
+                Text("\(scoreRawTotal(for: breakdown))/80 normalizes to \(normalizedScore(for: breakdown))/100.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if result.score != normalizedScore(for: breakdown) {
+                    Text("Final evidence-gated score: \(result.score)/100")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                }
+
+                Label("Occasion is informational and excluded from scoring.", systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Detailed category points are unavailable for this saved result.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(AppTab.scan.palette.accent.opacity(0.10))
@@ -1629,7 +1801,7 @@ struct ScanView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    private func styleProgressBar(title: String, percent: Int) -> some View {
+    private func scorePointRow(title: String, points: Int, maximum: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(title)
@@ -1638,7 +1810,7 @@ struct ScanView: View {
 
                 Spacer()
 
-                Text("\(percent)%")
+                Text("\(points)/\(maximum)")
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundStyle(AppTab.scan.palette.accent)
@@ -1651,11 +1823,24 @@ struct ScanView: View {
 
                     Capsule()
                         .fill(AppTab.scan.palette.accent)
-                        .frame(width: proxy.size.width * CGFloat(percent) / 100)
+                        .frame(width: proxy.size.width * CGFloat(points) / CGFloat(maximum))
                 }
             }
             .frame(height: 7)
         }
+    }
+
+    private func scoreRawTotal(for breakdown: OutfitScoreBreakdown) -> Int {
+        StyleScoreCalibration.rawTotal(
+            colorHarmony: breakdown.colorHarmony,
+            patternBalance: breakdown.patternBalance,
+            fitQuality: breakdown.fitQuality,
+            accessoryUse: breakdown.accessoryUse
+        )
+    }
+
+    private func normalizedScore(for breakdown: OutfitScoreBreakdown) -> Int {
+        StyleScoreCalibration.normalizedScore(rawTotal: scoreRawTotal(for: breakdown))
     }
 
     private func clampedScore(_ score: Int) -> Int {
@@ -2241,8 +2426,11 @@ struct ScanView: View {
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 34))
+                                .frame(width: 44, height: 44)
                         }
                         .disabled(isScanAIThinking || scanAIInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Send scan AI message")
+                        .accessibilityHint("Sends your question about this outfit")
                     }
                     .padding(.horizontal)
                 }
@@ -2552,8 +2740,6 @@ struct ScanView: View {
 
     private func localScoreExplanation(for analysis: OutfitAnalysisResult) -> String {
         let breakdown = styleScoreBreakdown(from: analysis)
-        let style = detectedStyleTitle(for: analysis)
-        let items = analysis.safeDetectedClothingItems.isEmpty ? "the visible clothing" : analysis.safeDetectedClothingItems.prefix(4).joined(separator: ", ")
         let colorSentence: String
         if analysis.colorPaletteConfidence == .confident, !analysis.colorPalette.isEmpty {
             colorSentence = "The palette found was \(analysis.colorPalette.joined(separator: ", ")), which keeps the outfit coordinated."
@@ -2562,7 +2748,7 @@ struct ScanView: View {
         }
 
         return """
-        StyleMatch Pro gave this outfit \(analysis.score)/100, which is \(scoreRatingTitle(for: analysis.score)). The scan reads as \(style) based on \(items). The strongest points are color harmony (\(breakdown.colorHarmony)/25), pattern balance (\(breakdown.patternBalance)/20), and fit (\(breakdown.fitQuality)/25). \(colorSentence) Occasion match scored \(breakdown.occasionMatch)/20, and accessories scored \(breakdown.accessoryUse)/10 because the scan did not find many finishing pieces.
+        StyleMatch Pro gave this outfit \(analysis.score)/100, which is \(scoreRatingTitle(for: analysis.score)). The raw scoring total is \(scoreRawTotal(for: breakdown))/80: color harmony \(breakdown.colorHarmony)/25, pattern balance \(breakdown.patternBalance)/20, fit \(breakdown.fitQuality)/25, and accessories \(breakdown.accessoryUse)/10. \(colorSentence) Occasion is informational and excluded from scoring.
         """
     }
 
@@ -2631,11 +2817,6 @@ struct ScanView: View {
         analysis: OutfitAnalysisResult,
         conversation: [AIChatMessage]
     ) async throws -> String {
-        guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !savedKey.isEmpty else {
-            throw OpenAIStylistError.missingAPIKey
-        }
-
         let structuredFacts = structuredOutfitFacts(for: analysis)
         let profile = StyleMatchStylistProfile(
             name: profileName,
@@ -2684,16 +2865,11 @@ struct ScanView: View {
         Keep the answer friendly, direct, professional, fashion-focused, and practical.
         """
 
-        let client = OpenAIStylistClient(apiKey: savedKey, model: openAIModel)
+        let client = OpenAIStylistClient(apiKey: "", model: openAIModel)
         return try await client.askStylist(profile: profile, messages: conversation, question: question)
     }
 
     private func generateDesignIdea(for analysis: OutfitAnalysisResult, userRequest: String) async throws -> String {
-        guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !savedKey.isEmpty else {
-            throw OpenAIStylistError.missingAPIKey
-        }
-
         let detectedAttributes = lockedDetectedAttributes(from: analysis)
         let userPrefs = DesignIdeaUserPreferences(
             favoriteColors: favoriteColors,
@@ -2729,7 +2905,7 @@ struct ScanView: View {
             appContext: "Custom garment design idea request from scan AI Assist. Occasion context: \(activeScanOccasionText(environment: analysis.environment)). This feature suggests attire concepts only and must not change the outfit score."
         )
 
-        let client = OpenAIStylistClient(apiKey: savedKey, model: openAIModel)
+        let client = OpenAIStylistClient(apiKey: "", model: openAIModel)
         let response = try await client.askStylist(
             profile: profile,
             messages: [],
@@ -3174,6 +3350,8 @@ struct ScanView: View {
 
             detectedStyleContextCard(for: result, darkMode: false)
 
+            completeTheLookCard(for: result, darkMode: false)
+
             if let mismatch = formalityMismatch(for: result) {
                 formalityMismatchBanner(mismatch, result: result, darkMode: false)
             }
@@ -3203,6 +3381,7 @@ struct ScanView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Detected Details")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
 
                 Text(result.outfitDescription)
                     .foregroundStyle(.secondary)
@@ -3219,9 +3398,6 @@ struct ScanView: View {
                     : "Palette: Colors were hard to read in this photo")
                     .foregroundStyle(.secondary)
 
-                Text(result.skinToneStyleNote)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -3373,6 +3549,124 @@ struct ScanView: View {
         return "sparkles"
     }
 
+    private func completeTheLookCard(for result: OutfitAnalysisResult, darkMode: Bool) -> some View {
+        Group {
+            if ScanCompleteLookAccessoryRecommender.shouldRecommendAccessories(for: result),
+               !completeLookAccessoryProducts.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles")
+                            .font(.headline)
+                            .foregroundStyle(darkMode ? scanBackground : .white)
+                            .frame(width: 34, height: 34)
+                            .background(scanCream)
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Complete the Look")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(darkMode ? .white : .primary)
+                            Text("Accessory ideas that match this scan's palette.")
+                                .font(.caption)
+                                .foregroundStyle(darkMode ? scanMuted : .secondary)
+                        }
+
+                        Spacer()
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(completeLookAccessoryProducts) { product in
+                                Button {
+                                    openCompleteLookProduct(product)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ShoppingProductImage(imageURL: product.remoteImageRequestURL)
+                                            .frame(width: 132, height: 104)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                                        Text(product.name)
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(darkMode ? .white : .primary)
+                                            .lineLimit(2)
+
+                                        HStack(spacing: 5) {
+                                            Text(product.brand ?? product.retailer.name)
+                                                .font(.caption2)
+                                                .foregroundStyle(darkMode ? scanMuted : .secondary)
+                                                .lineLimit(1)
+                                            Spacer(minLength: 4)
+                                            if let price = product.price {
+                                                Text(scanCurrency(price))
+                                                    .font(.caption2)
+                                                    .fontWeight(.bold)
+                                                    .foregroundStyle(scanCream)
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 148, alignment: .leading)
+                                    .padding(8)
+                                    .background(darkMode ? scanBackground.opacity(0.46) : Color(.secondarySystemBackground))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("View \(product.name)")
+                            }
+                        }
+                    }
+                }
+                .padding()
+                .background(darkMode ? scanBackground.opacity(0.44) : AppTab.scan.palette.accent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(darkMode ? scanPanelBorder : AppTab.scan.palette.accent.opacity(0.18), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshCompleteLookAccessories() async {
+        guard let result else {
+            completeLookAccessoryProducts = []
+            return
+        }
+
+        guard ScanCompleteLookAccessoryRecommender.shouldRecommendAccessories(for: result) else {
+            completeLookAccessoryProducts = []
+            return
+        }
+
+        do {
+            let catalog = try await SharedProductCatalogLoader.shared.products()
+            completeLookAccessoryProducts = ScanCompleteLookAccessoryRecommender.recommendations(
+                for: result,
+                catalog: catalog,
+                limit: 2
+            )
+        } catch {
+            completeLookAccessoryProducts = []
+        }
+    }
+
+    private func openCompleteLookProduct(_ product: AffiliateProduct) {
+        #if canImport(UIKit)
+        UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])
+        #endif
+    }
+
+    private func scanCurrency(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
+    }
+
     private func quickResultCard(_ result: OutfitAnalysisResult) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Try this next")
@@ -3518,12 +3812,13 @@ struct ScanView: View {
         }
 
         return VStack(alignment: .leading, spacing: 14) {
-            styleProgressOverTimeCard(scans)
+            styleProgressOverTimeCard(scans, scrollProxy: scrollProxy)
 
             HStack {
                 Label("Recent outfit scores", systemImage: "clock")
                     .font(.headline)
                     .foregroundStyle(.white)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -3546,6 +3841,7 @@ struct ScanView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(scanMuted)
             }
+            .id("recentOutfitScores")
 
             scanHistoryFilterBar
 
@@ -3600,11 +3896,12 @@ struct ScanView: View {
         .background(Color.clear)
     }
 
-    private func styleProgressOverTimeCard(_ scans: [RecentOutfitScore]) -> some View {
+    private func styleProgressOverTimeCard(_ scans: [RecentOutfitScore], scrollProxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Style Progress", systemImage: "chart.line.uptrend.xyaxis")
                 .font(.headline)
                 .foregroundStyle(.white)
+                .accessibilityAddTraits(.isHeader)
 
             LazyVGrid(
                 columns: [
@@ -3615,8 +3912,26 @@ struct ScanView: View {
             ) {
                 progressOverTimeMetric(title: "Average Score", value: averageScoreText(from: scans), icon: "sum")
                 progressOverTimeMetric(title: "Highest Score", value: highestScoreText(from: scans), icon: "star.fill")
-                progressOverTimeMetric(title: "Outfits Scanned", value: outfitsScannedText(from: scans), icon: "camera.fill")
-                progressOverTimeMetric(title: "Closet Items", value: scanClosetItemCountText, icon: "tshirt.fill")
+                progressOverTimeMetric(
+                    title: "Outfits Scanned",
+                    value: outfitsScannedText(from: scans),
+                    icon: "camera.fill",
+                    accessibilityLabel: "Open scan history, \(outfitsScannedText(from: scans)) outfits scanned",
+                    accessibilityHint: "Opens your recent outfit scores."
+                ) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        scrollProxy.scrollTo("recentOutfitScores", anchor: .top)
+                    }
+                }
+                progressOverTimeMetric(
+                    title: "Closet Items",
+                    value: scanClosetItemCountText,
+                    icon: "tshirt.fill",
+                    accessibilityLabel: "Open Virtual Closet, \(scanClosetItemCountText) items",
+                    accessibilityHint: "Opens your saved closet items."
+                ) {
+                    selectedTab = .closet
+                }
             }
         }
         .padding()
@@ -3628,11 +3943,20 @@ struct ScanView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    private func progressOverTimeMetric(title: String, value: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    @ViewBuilder
+    private func progressOverTimeMetric(
+        title: String,
+        value: String,
+        icon: String,
+        accessibilityLabel: String? = nil,
+        accessibilityHint: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        let content = VStack(alignment: .leading, spacing: 8) {
             Image(systemName: icon)
                 .font(.headline)
                 .foregroundStyle(scanCream)
+                .accessibilityHidden(true)
 
             Text(title)
                 .font(.caption)
@@ -3652,6 +3976,20 @@ struct ScanView: View {
         .padding(12)
         .background(scanBackground.opacity(0.48))
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(Rectangle())
+
+        if let action {
+            Button(action: action) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel ?? "\(title), \(value)")
+            .accessibilityHint(accessibilityHint ?? "")
+            .accessibilityAddTraits(.isButton)
+        } else {
+            content
+        }
     }
 
     private func averageScoreText(from scans: [RecentOutfitScore]) -> String {
@@ -3684,7 +4022,7 @@ struct ScanView: View {
         guard !closetItemsData.isEmpty,
               let items = try? JSONDecoder().decode([ClosetItem].self, from: closetItemsData),
               !items.isEmpty else {
-            return "148"
+            return "0"
         }
 
         return "\(items.count)"
@@ -3816,18 +4154,9 @@ struct ScanView: View {
                         rescanSavedScan(scan)
                     }
 
-                    ShareLink(item: scan.shareText) {
-                        Label("Share", systemImage: "square.and.arrow.up")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundStyle(scanCream)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.74)
-                            .frame(maxWidth: .infinity, minHeight: 34)
-                            .background(scanBackground.opacity(0.48))
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    scanHistoryActionButton(title: "Share", icon: "square.and.arrow.up") {
+                        beginSharingSavedScan(scan)
                     }
-                    .buttonStyle(.plain)
 
                     scanHistoryActionButton(title: scan.isFavorite(in: favoriteOutfits) ? "Favorited" : "Favorite", icon: scan.isFavorite(in: favoriteOutfits) ? "heart.fill" : "heart") {
                         toggleFavoriteScan(scan)
@@ -3863,7 +4192,7 @@ struct ScanView: View {
             Button("Rename") { beginRename(scan) }
             Button("Move to Closet") { moveScanToCloset(scan) }
             Button("Duplicate") { duplicateSavedScan(scan) }
-            Button("Export") { exportSavedScan(scan) }
+            Button("Export") { beginSharingSavedScan(scan) }
             Button("Delete", role: .destructive) { confirmDelete(scan) }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -3882,7 +4211,7 @@ struct ScanView: View {
         }
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             Button {
-                exportSavedScan(scan)
+                beginSharingSavedScan(scan)
             } label: {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
@@ -3945,11 +4274,12 @@ struct ScanView: View {
                 .foregroundStyle(scanCream)
                 .lineLimit(1)
                 .minimumScaleFactor(0.74)
-                .frame(maxWidth: .infinity, minHeight: 34)
+                .frame(maxWidth: .infinity, minHeight: 44)
                 .background(scanBackground.opacity(0.48))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 
     private func scoreRatingTitle(for score: Int) -> String {
@@ -4259,21 +4589,78 @@ struct ScanView: View {
         isShowingRenameScanSheet = true
     }
 
+    private var canSaveRenameTitle: Bool {
+        !renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasUnsavedRenameChanges: Bool {
+        guard let scanPendingRename else { return false }
+        let originalTitle = scanPendingRename.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftTitle = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return draftTitle != originalTitle
+    }
+
+    private func requestCancelRename() {
+        if hasUnsavedRenameChanges {
+            isShowingRenameUnsavedConfirmation = true
+        } else {
+            cancelRenameScan()
+        }
+    }
+
+    private func cancelRenameScan() {
+        clearRenameDraftState()
+        isShowingRenameScanSheet = false
+    }
+
+    private func clearRenameDraftState() {
+        scanPendingRename = nil
+        renameText = ""
+        isShowingRenameUnsavedConfirmation = false
+    }
+
     private func renamePendingScan() {
+        guard canSaveRenameTitle else { return }
         guard let scanPendingRename else { return }
+        let trimmedTitle = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
         var history = loadScanHistory()
-        guard var stored = history[scanPendingRename.id] else { return }
-        stored.customTitle = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var stored = history[scanPendingRename.id] else {
+            scanMessage = ScanMessage(
+                title: "Rename not saved",
+                description: "StyleMatch Pro could not find that saved scan. Please reopen scan history and try again.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+        stored.customTitle = trimmedTitle
         history[scanPendingRename.id] = stored
-        saveScanHistory(history)
+        guard saveScanHistory(history) else {
+            scanMessage = ScanMessage(
+                title: "Rename not saved",
+                description: "StyleMatch Pro could not save the new scan name. Please try again.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+        guard let verifiedHistory = try? JSONDecoder().decode([String: StoredOutfitScan].self, from: outfitScanHistoryData),
+              verifiedHistory[scanPendingRename.id]?.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedTitle else {
+            scanMessage = ScanMessage(
+                title: "Rename not saved",
+                description: "StyleMatch Pro could not verify the new scan name. Please try again.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
         scanMessage = ScanMessage(
             title: "Scan renamed",
-            description: "Saved scan is now named \(stored.customTitle ?? scanPendingRename.title).",
+            description: "Saved scan is now named \(trimmedTitle).",
             icon: "pencil",
             isSuccess: true
         )
-        self.scanPendingRename = nil
-        isShowingRenameScanSheet = false
+        cancelRenameScan()
     }
 
     private func toggleFavoriteScan(_ scan: RecentOutfitScore) {
@@ -4310,8 +4697,8 @@ struct ScanView: View {
         scanMessage = ScanMessage(title: "Moved to closet", description: "\(scan.title) was added to your closet notes for future outfit recommendations.", icon: "tshirt", isSuccess: true)
     }
 
-    private func exportSavedScan(_ scan: RecentOutfitScore) {
-        scanMessage = ScanMessage(title: "Export ready", description: scan.shareText, icon: "square.and.arrow.up", isSuccess: true)
+    private func beginSharingSavedScan(_ scan: RecentOutfitScore) {
+        outfitSharePreview = makeOutfitSharePreview(for: scan)
     }
 
     private func recommendationIcon(for category: String) -> String {
@@ -4894,7 +5281,6 @@ struct ScanView: View {
             colorPaletteConfidence: colorDetection.confidenceLevel,
             colorPaletteDetectionConfidence: colorDetection.confidence,
             colorPaletteNotes: colorDetection.notes,
-            skinToneStyleNote: image.skinToneStyleNote(),
             scoreBreakdown: styleScore.breakdown
         )
     }
@@ -5129,7 +5515,6 @@ struct ScanView: View {
             colorPaletteConfidence: storedInputs?.colorPaletteConfidence ?? colorDetection.confidenceLevel,
             colorPaletteDetectionConfidence: colorDetection.confidence,
             colorPaletteNotes: colorDetection.notes,
-            skinToneStyleNote: image.skinToneStyleNote(),
             scoreBreakdown: styleScore.breakdown
         )
         let storedScan = StoredOutfitScan(
@@ -5315,12 +5700,11 @@ struct ScanView: View {
         scanSessionID: UUID,
         identity: CompletedScanIdentity
     ) {
-        guard let savedKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !savedKey.isEmpty else {
+        guard let session = StyleMatchAccountSessionStore.load(), session.expiresAt > Date() else {
             return
         }
 
-        let client = OpenAIStylistClient(apiKey: savedKey, model: openAIModel)
+        let client = OpenAIStylistClient(apiKey: "", model: openAIModel)
         let structuredFacts = structuredOutfitFacts(for: analysis, identity: identity)
         let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
         let enginePromptContext = PersonalizationContextBuilder.buildPersonalStylistEnginePromptContext(phrasingContext)
@@ -5581,9 +5965,9 @@ struct ScanView: View {
         return StyleScoreResult(total: clampedScore(analysis.score), breakdown: breakdown, tier: scoreRatingTitle(for: analysis.score))
     }
 
-    private func styleScoreBreakdown(from analysis: OutfitAnalysisResult) -> StyleScoreBreakdown {
+    private func styleScoreBreakdown(from analysis: OutfitAnalysisResult) -> OutfitScoreBreakdown {
         if let saved = analysis.scoreBreakdown {
-            return StyleScoreBreakdown(
+            return OutfitScoreBreakdown(
                 colorHarmony: clampedComponent(saved.colorHarmony, max: 25),
                 patternBalance: clampedComponent(saved.patternBalance, max: 20),
                 fitQuality: clampedComponent(saved.fitQuality, max: 25),
@@ -5599,7 +5983,7 @@ struct ScanView: View {
         let occasion = min(20, max(0, styleCoordination - pattern - fit - 5))
         let accessories = min(10, max(0, styleCoordination - pattern - fit - occasion))
 
-        return StyleScoreBreakdown(
+        return OutfitScoreBreakdown(
             colorHarmony: color,
             patternBalance: pattern,
             fitQuality: fit,
@@ -6288,7 +6672,7 @@ struct ScanView: View {
         #endif
         let result = calculateStyleScore(detectedAttributes: attributes)
         #if DEBUG
-        print("[StyleMatch Score Debug] result total=\(result.total); tier=\(result.tier); breakdown=color:\(result.breakdown.colorHarmony), pattern:\(result.breakdown.patternBalance), fit:\(result.breakdown.fitQuality), occasion:\(result.breakdown.occasionMatch), accessories:\(result.breakdown.accessoryUse)")
+        print("[StyleMatch Score Debug] result raw=\(scoreRawTotal(for: result.breakdown))/80; normalized=\(normalizedScore(for: result.breakdown))/100; final=\(result.total)/100; tier=\(result.tier); breakdown=color:\(result.breakdown.colorHarmony), pattern:\(result.breakdown.patternBalance), fit:\(result.breakdown.fitQuality), occasion:informational, accessories:\(result.breakdown.accessoryUse)")
         #endif
         return result
     }
@@ -6313,18 +6697,16 @@ struct ScanView: View {
 
     private func calculateStyleScore(detectedAttributes attributes: DetectedStyleAttributes) -> StyleScoreResult {
         let breakdown = scoreComponents(attributes: attributes)
-        let rawTotal =
-            breakdown.colorHarmony +
-            breakdown.patternBalance +
-            breakdown.fitQuality +
-            breakdown.accessoryUse
-        let total = clampedScore(Int(round(Double(rawTotal) / 80.0 * 100.0)))
+        var total = normalizedScore(for: breakdown)
+        if total == 100 && !isPerfectScoreEvidenceBacked(attributes: attributes, breakdown: breakdown) {
+            total = 99
+        }
 
         return StyleScoreResult(total: total, breakdown: breakdown, tier: scoreRatingTitle(for: total))
     }
 
-    private func scoreComponents(attributes: DetectedStyleAttributes) -> StyleScoreBreakdown {
-        StyleScoreBreakdown(
+    private func scoreComponents(attributes: DetectedStyleAttributes) -> OutfitScoreBreakdown {
+        OutfitScoreBreakdown(
             colorHarmony: scoreColorHarmony(attributes.colors),
             patternBalance: scorePatterns(attributes.patterns),
             fitQuality: scoreFit(attributes.fitAssessment),
@@ -6361,25 +6743,52 @@ struct ScanView: View {
     }
 
     private func scoreFit(_ fitAssessment: String) -> Int {
-        let lowered = fitAssessment.lowercased()
-        let goodFitTerms = ["tailored", "fitted", "well-fitted", "proper", "balanced", "clean fit", "regular"]
-        let poorFitTerms = ["too tight", "too loose", "oversized", "bunching", "dragging", "unclear", "poor"]
-        if goodFitTerms.contains(where: { lowered.contains($0) }) { return 25 }
-        if poorFitTerms.contains(where: { lowered.contains($0) }) { return 14 }
-        return 18
+        StyleScoreCalibration.fitScore(for: fitAssessment)
     }
 
     private func scoreAccessories(_ accessories: [String]) -> Int {
-        accessories.isEmpty ? 5 : 10
+        let count = accessories.removingDuplicates().count
+        if count == 0 { return 6 }
+        if count == 1 { return 8 }
+        return 10
+    }
+
+    private func isPerfectScoreEvidenceBacked(
+        attributes: DetectedStyleAttributes,
+        breakdown: OutfitScoreBreakdown
+    ) -> Bool {
+        let fitEvidence = attributes.fitAssessment.lowercased()
+        let positiveFitTerms = [
+            "verified excellent fit",
+            "excellent fit",
+            "exceptional fit",
+            "perfect fit",
+            "tailored",
+            "fitted",
+            "well-fitted",
+            "proper fit",
+            "clean fit",
+            "structured fit"
+        ]
+        let hasPositiveFitEvidence = positiveFitTerms.contains { fitEvidence.contains($0) }
+        let hasStrongColorEvidence = !attributes.colors.isEmpty && breakdown.colorHarmony == 25
+        let hasFullPatternEvidence = breakdown.patternBalance == 20
+        let hasStrongAccessoryEvidence = attributes.accessories.removingDuplicates().count >= 2 && breakdown.accessoryUse == 10
+
+        return hasPositiveFitEvidence
+            && hasStrongColorEvidence
+            && hasFullPatternEvidence
+            && hasStrongAccessoryEvidence
     }
 
     private func fitAssessmentSignal(validation: ScanValidation, labels: [DetectedLabel], detectedItems: [String]) -> String {
         let text = (labels.map(\.identifier) + detectedItems).joined(separator: " ").lowercased()
         if text.contains("oversized") || text.contains("baggy") { return "oversized" }
-        if text.contains("tailored") || text.contains("suit") || text.contains("blazer") { return "tailored" }
+        if text.contains("tailored") || text.contains("well-fitted") || text.contains("fitted") || text.contains("proper fit") || text.contains("clean fit") { return "tailored fit evidence" }
         if text.contains("robe") || text.contains("sleepwear") || text.contains("loungewear") { return "relaxed" }
-        if validation.qualityScore < 80 { return "unclear" }
-        return "regular balanced fit"
+        if validation.qualityScore < 80 { return "unclear fit" }
+        if validation.isPersonScan { return "worn fit visible but unverified" }
+        return "fit not evaluated from flat lay"
     }
 
     private func detectedAccessories(from labels: [DetectedLabel], detectedItems: [String]) -> [String] {
@@ -6393,7 +6802,8 @@ struct ScanView: View {
         scanHistoryCache.history(from: outfitScanHistoryData)
     }
 
-    private func saveScanHistory(_ history: [String: StoredOutfitScan]) {
+    @discardableResult
+    private func saveScanHistory(_ history: [String: StoredOutfitScan]) -> Bool {
         let limitedHistory = Dictionary(
             uniqueKeysWithValues: history
                 .sorted { $0.value.firstScannedAt > $1.value.firstScannedAt }
@@ -6402,11 +6812,12 @@ struct ScanView: View {
         )
 
         guard let data = try? JSONEncoder().encode(limitedHistory) else {
-            return
+            return false
         }
 
         scanHistoryCache.replace(with: limitedHistory, encodedData: data)
         outfitScanHistoryData = data
+        return true
     }
 
     private var recentStoredScans: [RecentOutfitScore] {
@@ -8069,26 +8480,8 @@ private struct StylistScoreExplanation: Decodable {
 
 private struct StyleScoreResult: Encodable {
     let total: Int
-    let breakdown: StyleScoreBreakdown
+    let breakdown: OutfitScoreBreakdown
     let tier: String
-}
-
-private struct StyleScoreBreakdown: Encodable {
-    let colorHarmony: Int
-    let patternBalance: Int
-    let fitQuality: Int
-    let occasionMatch: Int
-    let accessoryUse: Int
-
-    var outfitSnapshot: OutfitScoreBreakdown {
-        OutfitScoreBreakdown(
-            colorHarmony: colorHarmony,
-            patternBalance: patternBalance,
-            fitQuality: fitQuality,
-            occasionMatch: occasionMatch,
-            accessoryUse: accessoryUse
-        )
-    }
 }
 
 private struct DetectedStyleAttributes: Encodable {
@@ -8363,7 +8756,7 @@ private struct OutfitFactPayload: Encodable {
     let lighting: String
     let scanType: String
     let styleScore: Int
-    let scoreBreakdown: StyleScoreBreakdown
+    let scoreBreakdown: OutfitScoreBreakdown
     let scoreTier: String
     let scoreOwner: String
     let outfitFingerprint: String
@@ -8537,18 +8930,6 @@ private struct RecentOutfitScore: Identifiable {
         default:
             return "Improve"
         }
-    }
-
-    var shareText: String {
-        """
-        Style Match Pro Scan
-        \(title)
-        Score: \(score) \(scoreRatingTitle)
-        Style: \(styleContextText)
-        Occasion: \(occasionText ?? "Not specified")
-        Date: \(dateText)
-        Try this next: \(analysis.recommendations.first?.title ?? analysis.suggestions.first ?? "Improve one detail and scan again.")
-        """
     }
 
     var occasionText: String? {
@@ -8775,6 +9156,42 @@ private final class ScanHistoryDecodeCache {
     }
 }
 
+private struct RenameSheetDismissGuard: UIViewControllerRepresentable {
+    let hasUnsavedChanges: Bool
+    let onAttemptDismiss: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        UIViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        context.coordinator.parent = self
+        uiViewController.parent?.presentationController?.delegate = context.coordinator
+    }
+
+    final class Coordinator: NSObject, UIAdaptivePresentationControllerDelegate {
+        var parent: RenameSheetDismissGuard
+
+        init(parent: RenameSheetDismissGuard) {
+            self.parent = parent
+        }
+
+        func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+            !parent.hasUnsavedChanges
+        }
+
+        func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+            if parent.hasUnsavedChanges {
+                parent.onAttemptDismiss()
+            }
+        }
+    }
+}
+
 private enum ImageQualityIssue: String {
     case tooDark
     case tooBright
@@ -8844,7 +9261,7 @@ private extension OutfitAnalysisResult {
             colorPaletteNotes: colorPaletteNotes,
             environment: environment,
             imageQuality: imageQuality,
-            skinToneStyleNote: skinToneStyleNote,
+            skinToneStyleNote: nil,
             detectedItemConfidences: detectedItemConfidences,
             chatGPTStylistSections: chatGPTStylistSections,
             suggestions: suggestions,
@@ -8873,7 +9290,7 @@ private extension OutfitAnalysisResult {
             colorPaletteNotes: colorPaletteNotes,
             environment: environment,
             imageQuality: imageQuality,
-            skinToneStyleNote: skinToneStyleNote,
+            skinToneStyleNote: nil,
             detectedItemConfidences: detectedItemConfidences,
             chatGPTStylistSections: sections,
             suggestions: suggestions,
@@ -9089,13 +9506,35 @@ private extension UIImage {
 
     func scanSizedImage(maxSide: CGFloat = 900) -> UIImage {
         let largestSide = max(size.width, size.height)
-        guard largestSide > maxSide else {
+        let resizeScale = largestSide > maxSide && largestSide > 0 ? maxSide / largestSide : 1
+        let targetSize = CGSize(
+            width: max(1, (size.width * resizeScale).rounded()),
+            height: max(1, (size.height * resizeScale).rounded())
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+
+    func shareCardPreparedImage(maxPixelDimension: CGFloat = 1_600) -> UIImage {
+        let pixelWidth = size.width * scale
+        let pixelHeight = size.height * scale
+        let largestPixelDimension = max(pixelWidth, pixelHeight)
+        guard largestPixelDimension > maxPixelDimension, largestPixelDimension > 0 else {
             return self
         }
 
-        let scale = maxSide / largestSide
-        let targetSize = CGSize(width: size.width * scale, height: size.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        let resizeScale = maxPixelDimension / largestPixelDimension
+        let targetSize = CGSize(
+            width: max(1, pixelWidth * resizeScale),
+            height: max(1, pixelHeight * resizeScale)
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
         return renderer.image { _ in
             draw(in: CGRect(origin: .zero, size: targetSize))
         }
@@ -9781,47 +10220,6 @@ private extension UIImage {
         return score
     }
 
-    func skinToneStyleNote() -> String {
-        let samples = sampledRGB(width: 12, height: 12)
-        let skinLikePixels = samples.filter { pixel in
-            let red = Int(pixel.red)
-            let green = Int(pixel.green)
-            let blue = Int(pixel.blue)
-            let brightness = (red + green + blue) / 3
-
-            return brightness > 55
-                && brightness < 235
-                && red >= green
-                && green >= blue - 8
-                && red - blue > 18
-                && red - green < 95
-        }
-
-        guard !skinLikePixels.isEmpty else {
-            return "No clear visible skin color was needed. Style Match Pro keeps skin-aware styling limited to fashion color harmony only."
-        }
-
-        let redAverage = skinLikePixels.map { Double($0.red) }.reduce(0, +) / Double(skinLikePixels.count)
-        let greenAverage = skinLikePixels.map { Double($0.green) }.reduce(0, +) / Double(skinLikePixels.count)
-        let blueAverage = skinLikePixels.map { Double($0.blue) }.reduce(0, +) / Double(skinLikePixels.count)
-        let warmth = redAverage - blueAverage
-        let undertone: String
-        let recommendation: String
-
-        if warmth > 60 && greenAverage > blueAverage + 20 {
-            undertone = "warm"
-            recommendation = "earth tones, cream, olive, camel, gold, and warm navy"
-        } else if blueAverage + 12 > greenAverage {
-            undertone = "cool"
-            recommendation = "white, charcoal, black, silver, navy, blue, and jewel tones"
-        } else {
-            undertone = "neutral"
-            recommendation = "black, white, denim, soft gray, navy, and balanced accent colors"
-        }
-
-        return "Visible skin color is used only for fashion color harmony. The app detected a \(undertone) styling direction and recommends \(recommendation). It does not identify race, ethnicity, or sensitive traits."
-    }
-
     func colorSignature() -> String {
         let samples = sampledRGB(width: 4, height: 4)
 
@@ -9857,17 +10255,7 @@ private extension UIImage {
     }
 
     func fastVisionCGImage(maxSide: CGFloat = 720) -> CGImage? {
-        let largestSide = max(size.width, size.height)
-        guard largestSide > maxSide else {
-            return cgImage
-        }
-
-        let scale = maxSide / largestSide
-        let targetSize = CGSize(width: size.width * scale, height: size.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: targetSize)
-        return renderer.image { _ in
-            draw(in: CGRect(origin: .zero, size: targetSize))
-        }.cgImage
+        scanSizedImage(maxSide: maxSide).cgImage
     }
 
     private func sampledRGB(in normalizedCrop: CGRect, width: Int, height: Int) -> [RGBPixel] {
@@ -9940,6 +10328,850 @@ private extension UIImage {
             bytes.append(pixel.blue)
         }
         return ScanImageIdentity.sha256Hex(bytes: bytes)
+    }
+}
+
+private struct OutfitShareCategoryScore: Identifiable {
+    let title: String
+    let value: String
+
+    var id: String { title }
+}
+
+private struct OutfitSharePreviewData: Identifiable {
+    let id = UUID()
+    let photo: UIImage?
+    let overallScore: Int
+    let scoreTitle: String
+    let categoryScores: [OutfitShareCategoryScore]
+    let outfitDescription: String
+    let suggestions: [String]
+    let scanDate: Date
+}
+
+private enum OutfitShareCardFormat: String, CaseIterable, Identifiable {
+    case square
+    case portrait
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .square:
+            return "Square Post"
+        case .portrait:
+            return "Portrait Story"
+        }
+    }
+
+    var logicalSize: CGSize {
+        switch self {
+        case .square:
+            return CGSize(width: 360, height: 360)
+        case .portrait:
+            return CGSize(width: 360, height: 640)
+        }
+    }
+
+    var renderScale: CGFloat { 3 }
+    var exportWidth: Int { Int(logicalSize.width * renderScale) }
+    var exportHeight: Int { Int(logicalSize.height * renderScale) }
+    var exportPixelCount: Int { exportWidth * exportHeight }
+    var aspectRatio: CGFloat { logicalSize.width / logicalSize.height }
+    var isPortrait: Bool { self == .portrait }
+}
+
+private enum OutfitShareCardAppearance: String, CaseIterable, Identifiable {
+    case light
+    case dark
+
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+
+    var background: LinearGradient {
+        switch self {
+        case .light:
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.99, green: 0.98, blue: 0.95),
+                    Color(red: 0.95, green: 0.91, blue: 0.82)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        case .dark:
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.06, green: 0.08, blue: 0.13),
+                    Color(red: 0.12, green: 0.16, blue: 0.23)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    var primaryText: Color {
+        self == .light ? Color(red: 0.10, green: 0.12, blue: 0.16) : .white
+    }
+
+    var secondaryText: Color {
+        self == .light ? Color.black.opacity(0.62) : Color.white.opacity(0.72)
+    }
+
+    var accent: Color {
+        self == .light
+            ? Color(red: 0.54, green: 0.35, blue: 0.07)
+            : Color(red: 0.96, green: 0.77, blue: 0.37)
+    }
+
+    var panel: Color {
+        self == .light ? Color.white.opacity(0.72) : Color.white.opacity(0.09)
+    }
+
+    var border: Color {
+        self == .light ? Color.black.opacity(0.10) : Color.white.opacity(0.14)
+    }
+}
+
+private struct OutfitShareCardConfiguration {
+    let includePhoto: Bool
+    let includeOverallScore: Bool
+    let includeCategoryScores: Bool
+    let includeDescription: Bool
+    let includeSuggestions: Bool
+    let includeBranding: Bool
+}
+
+private struct OutfitShareCardView: View {
+    @ScaledMetric(relativeTo: .body) private var dynamicTypeScale: CGFloat = 1
+
+    let data: OutfitSharePreviewData
+    let configuration: OutfitShareCardConfiguration
+    let format: OutfitShareCardFormat
+    let appearance: OutfitShareCardAppearance
+
+    var body: some View {
+        GeometryReader { proxy in
+            let unit = proxy.size.width / 360
+
+            VStack(alignment: .leading, spacing: (format.isPortrait ? 10 : 5) * unit) {
+                cardHeader(unit: unit)
+
+                if configuration.includePhoto, let photo = data.photo {
+                    Image(uiImage: photo)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: (format.isPortrait ? 255 : 90) * unit)
+                        .clipShape(RoundedRectangle(cornerRadius: 13 * unit))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 13 * unit)
+                                .stroke(appearance.border, lineWidth: max(1, unit))
+                        )
+                        .clipped()
+                }
+
+                if configuration.includeCategoryScores, !data.categoryScores.isEmpty {
+                    categorySection(unit: unit)
+                }
+
+                if configuration.includeDescription, !data.outfitDescription.isEmpty {
+                    VStack(alignment: .leading, spacing: 2 * unit) {
+                        Text("OUTFIT NOTES")
+                            .font(.system(size: cardFontSize(portrait: 10, square: 7, unit: unit), weight: .bold))
+                            .tracking(0.8 * unit)
+                            .foregroundStyle(appearance.accent)
+
+                        Text(data.outfitDescription)
+                            .font(.system(size: cardFontSize(portrait: 13, square: 8.5, unit: unit), weight: .medium))
+                            .foregroundStyle(appearance.secondaryText)
+                            .lineLimit(format.isPortrait ? 3 : 1)
+                            .minimumScaleFactor(0.78)
+                    }
+                }
+
+                if configuration.includeSuggestions, !data.suggestions.isEmpty {
+                    suggestionSection(unit: unit)
+                }
+
+                Spacer(minLength: 0)
+                cardFooter(unit: unit)
+            }
+            .padding(.horizontal, (format.isPortrait ? 20 : 13) * unit)
+            .padding(.vertical, (format.isPortrait ? 18 : 11) * unit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(appearance.background)
+        }
+    }
+
+    @ViewBuilder
+    private func cardHeader(unit: CGFloat) -> some View {
+        if configuration.includeOverallScore || configuration.includeBranding {
+            HStack(alignment: .top, spacing: 10 * unit) {
+                if configuration.includeOverallScore {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("My StyleMatch Score")
+                            .font(.system(size: cardFontSize(portrait: 17, square: 11, unit: unit), weight: .bold))
+                            .foregroundStyle(appearance.primaryText)
+
+                        HStack(alignment: .firstTextBaseline, spacing: 2 * unit) {
+                            Text("\(data.overallScore)")
+                                .font(.system(size: cardFontSize(portrait: 52, square: 34, unit: unit), weight: .black, design: .rounded))
+                                .foregroundStyle(appearance.accent)
+
+                            Text("/100")
+                                .font(.system(size: cardFontSize(portrait: 17, square: 11, unit: unit), weight: .bold))
+                                .foregroundStyle(appearance.secondaryText)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if configuration.includeBranding {
+                    HStack(spacing: 4 * unit) {
+                        Image(systemName: "sparkles")
+                        Text("STYLEMATCH PRO")
+                    }
+                    .font(.system(size: cardFontSize(portrait: 9, square: 6.5, unit: unit), weight: .bold))
+                    .foregroundStyle(appearance.accent)
+                    .padding(.horizontal, 8 * unit)
+                    .padding(.vertical, 6 * unit)
+                    .background(appearance.panel)
+                    .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    private func categorySection(unit: CGFloat) -> some View {
+        let categories = Array(data.categoryScores.prefix(format.isPortrait ? 5 : 4))
+        let columns = [
+            GridItem(.flexible(), spacing: 5 * unit),
+            GridItem(.flexible(), spacing: 5 * unit)
+        ]
+
+        return LazyVGrid(columns: columns, spacing: 4 * unit) {
+            ForEach(categories) { category in
+                HStack(spacing: 4 * unit) {
+                    Text(category.title)
+                        .font(.system(size: cardFontSize(portrait: 9.5, square: 6.5, unit: unit), weight: .semibold))
+                        .foregroundStyle(appearance.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+
+                    Spacer(minLength: 2 * unit)
+
+                    Text(category.value)
+                        .font(.system(size: cardFontSize(portrait: 12, square: 8, unit: unit), weight: .bold, design: .rounded))
+                        .foregroundStyle(appearance.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .padding(.horizontal, 8 * unit)
+                .padding(.vertical, (format.isPortrait ? 7 : 4) * unit)
+                .background(appearance.panel)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7 * unit)
+                        .stroke(appearance.border, lineWidth: max(0.5, unit * 0.6))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 7 * unit))
+            }
+        }
+    }
+
+    private func suggestionSection(unit: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: (format.isPortrait ? 5 : 2) * unit) {
+            Text("How I Can Improve")
+                .font(.system(size: cardFontSize(portrait: 14, square: 9, unit: unit), weight: .bold))
+                .foregroundStyle(appearance.primaryText)
+
+            ForEach(Array(data.suggestions.prefix(3).enumerated()), id: \.offset) { index, suggestion in
+                HStack(alignment: .top, spacing: 6 * unit) {
+                    Text("\(index + 1)")
+                        .font(.system(size: cardFontSize(portrait: 9, square: 6.5, unit: unit), weight: .bold))
+                        .foregroundStyle(appearance.background)
+                        .frame(width: (format.isPortrait ? 18 : 12) * unit, height: (format.isPortrait ? 18 : 12) * unit)
+                        .background(appearance.accent)
+                        .clipShape(Circle())
+
+                    Text(suggestion)
+                        .font(.system(size: cardFontSize(portrait: 11, square: 7.5, unit: unit), weight: .medium))
+                        .foregroundStyle(appearance.secondaryText)
+                        .lineLimit(format.isPortrait ? 2 : 1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+        }
+    }
+
+    private func cardFooter(unit: CGFloat) -> some View {
+        HStack(spacing: 8 * unit) {
+            if configuration.includeBranding {
+                Text("Scored with StyleMatch Pro")
+                    .fontWeight(.bold)
+                    .foregroundStyle(appearance.primaryText)
+            }
+
+            Spacer(minLength: 0)
+
+            Text(Self.cardDateFormatter.string(from: data.scanDate))
+                .foregroundStyle(appearance.secondaryText)
+        }
+        .font(.system(size: cardFontSize(portrait: 10, square: 6.5, unit: unit), weight: .medium))
+        .lineLimit(1)
+    }
+
+    private func cardFontSize(portrait: CGFloat, square: CGFloat, unit: CGFloat) -> CGFloat {
+        let maximumScale: CGFloat = format.isPortrait ? 1.18 : 1.10
+        return (format.isPortrait ? portrait : square) * unit * min(dynamicTypeScale, maximumScale)
+    }
+
+    private static let cardDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+}
+
+private struct OutfitSharePreviewScreen: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var includePhoto = false
+    @State private var includeOverallScore = true
+    @State private var includeCategoryScores = true
+    @State private var includeDescription = true
+    @State private var includeSuggestions = true
+    @State private var includeBranding = true
+    @State private var cardFormat: OutfitShareCardFormat = .square
+    @State private var cardAppearance: OutfitShareCardAppearance = .light
+    @State private var includeCaption = true
+    @State private var captionText: String
+    @State private var includeAppStoreLink = true
+    @State private var renderedShareCard: UIImage?
+    @State private var linkShareItems: [Any] = []
+    @State private var isShowingSystemShareSheet = false
+    @State private var isShowingLinkShareSheet = false
+    @State private var isCreatingShareLink = false
+    @State private var isShowingShareError = false
+    @State private var shareErrorMessage = "We couldn’t prepare this outfit card. Please try again."
+
+    let data: OutfitSharePreviewData
+    let accentColor: Color
+
+    init(data: OutfitSharePreviewData, accentColor: Color) {
+        self.data = data
+        self.accentColor = accentColor
+        _captionText = State(
+            initialValue: "My outfit scored \(data.overallScore)/100 on StyleMatch Pro. Here is how I can improve it."
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    cardControls
+                    sharePreviewCard
+                    privacyControls
+                    captionControls
+
+                    Label(
+                        "Account details, profile data, sizes, location, AI prompts, API responses, and debug information are never included.",
+                        systemImage: "lock.shield.fill"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                    Label(
+                        "Your card is created on this device. StyleMatch Pro does not upload it, track which app you choose, or keep an extra copy unless you choose Save Image.",
+                        systemImage: "iphone"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 700, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(20)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Share Preview")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 10) {
+                    Button {
+                        renderedShareCard = nil
+                        if let image = renderShareCard() {
+                            renderedShareCard = image
+                            isShowingSystemShareSheet = true
+                        } else {
+                            showShareError("We couldn’t prepare this outfit card. Please try again.")
+                        }
+                    } label: {
+                        Label("Share Image", systemImage: "photo")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Share outfit card")
+                    .accessibilityHint("Opens the system Share Sheet with the rendered card image and selected caption.")
+
+                    Button {
+                        Task {
+                            await createAndSharePrivateLink()
+                        }
+                    } label: {
+                        Label(isCreatingShareLink ? "Creating Link" : "Share as Link", systemImage: "link")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(accentColor)
+                    .disabled(isCreatingShareLink)
+                    .accessibilityLabel("Share outfit card as StyleMatch link")
+                    .accessibilityHint("Creates a secure StyleMatch link and opens the system Share Sheet.")
+                }
+                .frame(maxWidth: 700)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
+            }
+        }
+        .sheet(isPresented: $isShowingSystemShareSheet, onDismiss: {
+            renderedShareCard = nil
+        }) {
+            OutfitShareActivityView(
+                activityItems: activityItems,
+                onCompletion: handleShareCompletion
+            )
+        }
+        .sheet(isPresented: $isShowingLinkShareSheet, onDismiss: {
+            linkShareItems = []
+            renderedShareCard = nil
+        }) {
+            OutfitShareActivityView(
+                activityItems: linkShareItems,
+                onCompletion: handleShareCompletion
+            )
+        }
+        .alert("Unable to Share", isPresented: $isShowingShareError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(shareErrorMessage)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            renderedShareCard = nil
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var cardControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Card Format", systemImage: "rectangle.on.rectangle")
+                .font(.headline)
+
+            Picker("Card format", selection: $cardFormat) {
+                ForEach(OutfitShareCardFormat.allCases) { format in
+                    Text(format.displayName).tag(format)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Share card format")
+            .accessibilityHint("Choose a square post or portrait story image.")
+
+            Picker("Card appearance", selection: $cardAppearance) {
+                ForEach(OutfitShareCardAppearance.allCases) { appearance in
+                    Text(appearance.displayName).tag(appearance)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Share card appearance")
+            .accessibilityHint("Choose the light or dark card design.")
+
+            Text("\(cardFormat.exportWidth) × \(cardFormat.exportHeight) image")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var sharePreviewCard: some View {
+        OutfitShareCardView(
+            data: data,
+            configuration: cardConfiguration,
+            format: cardFormat,
+            appearance: cardAppearance
+        )
+        .aspectRatio(cardFormat.aspectRatio, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(cardAccessibilityLabel)
+        .accessibilityHint("Updates when you change the card format, appearance, or privacy controls.")
+    }
+
+    private var privacyControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Choose What to Share", systemImage: "checklist")
+                    .font(.headline)
+
+                Text("The preview above updates immediately. Only enabled sections go to the system share sheet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Outfit photo", isOn: $includePhoto)
+                .disabled(data.photo == nil)
+                .accessibilityLabel("Include outfit photo")
+                .accessibilityHint(data.photo == nil ? "Photo unavailable. A score-only card will be shared." : "Controls whether the outfit photo appears on the card.")
+            if data.photo == nil {
+                Label("Photo unavailable. Your score-only card is ready.", systemImage: "photo.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Overall score", isOn: $includeOverallScore)
+                .accessibilityLabel("Include overall score")
+            Toggle("Category scores", isOn: $includeCategoryScores)
+                .disabled(data.categoryScores.isEmpty)
+                .accessibilityLabel("Include category scores")
+            if data.categoryScores.isEmpty {
+                Label("Category scores are unavailable and will be omitted.", systemImage: "chart.bar.xaxis")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Outfit description", isOn: $includeDescription)
+                .accessibilityLabel("Include outfit description")
+            Toggle("Improvement suggestions", isOn: $includeSuggestions)
+                .accessibilityLabel("Include improvement suggestions")
+            Toggle("StyleMatch Pro branding", isOn: $includeBranding)
+                .accessibilityLabel("Include StyleMatch Pro branding")
+        }
+        .tint(accentColor)
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var cardAccessibilityLabel: String {
+        var details = [
+            "Share card preview",
+            cardFormat.displayName,
+            "\(cardAppearance.displayName) appearance"
+        ]
+
+        if includePhoto, data.photo != nil {
+            details.append("Outfit photo included")
+        } else {
+            details.append("Outfit photo not included")
+        }
+
+        if includeOverallScore {
+            details.append("Overall StyleMatch score \(data.overallScore) out of 100, \(data.scoreTitle)")
+        }
+
+        if includeCategoryScores, !data.categoryScores.isEmpty {
+            let categorySummary = data.categoryScores
+                .map { "\($0.title) \($0.value.replacingOccurrences(of: "/", with: " out of "))" }
+                .joined(separator: ", ")
+            details.append("Category scores: \(categorySummary)")
+        }
+
+        if includeDescription, !data.outfitDescription.isEmpty {
+            details.append("Outfit description: \(data.outfitDescription)")
+        }
+
+        if includeSuggestions, !data.suggestions.isEmpty {
+            details.append("How I can improve: \(data.suggestions.prefix(3).joined(separator: ", "))")
+        }
+
+        if includeBranding {
+            details.append("StyleMatch Pro branding included")
+        }
+
+        return details.joined(separator: ". ")
+    }
+
+    private var cardConfiguration: OutfitShareCardConfiguration {
+        OutfitShareCardConfiguration(
+            includePhoto: includePhoto,
+            includeOverallScore: includeOverallScore,
+            includeCategoryScores: includeCategoryScores,
+            includeDescription: includeDescription,
+            includeSuggestions: includeSuggestions,
+            includeBranding: includeBranding
+        )
+    }
+
+    private var captionControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Caption & Link", systemImage: "text.quote")
+                .font(.headline)
+
+            Toggle("Include caption", isOn: $includeCaption)
+                .accessibilityLabel("Include editable caption")
+
+            if includeCaption {
+                TextEditor(text: $captionText)
+                    .font(.body)
+                    .frame(minHeight: 92)
+                    .padding(8)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                    )
+                    .accessibilityLabel("Editable share caption")
+            }
+
+            if let officialAppStoreURL {
+                Toggle("Include App Store link", isOn: $includeAppStoreLink)
+                    .accessibilityLabel("Include official App Store link")
+
+                Text(officialAppStoreURL.absoluteString)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else {
+                Label("No official App Store link is configured yet.", systemImage: "link.badge.plus")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .tint(accentColor)
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var activityItems: [Any] {
+        var items: [Any] = []
+        if let renderedShareCard {
+            items.append(renderedShareCard)
+        }
+
+        let trimmedCaption = captionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if includeCaption, !trimmedCaption.isEmpty {
+            items.append(trimmedCaption)
+        }
+
+        if includeAppStoreLink, let officialAppStoreURL {
+            items.append(officialAppStoreURL)
+        }
+
+        return items
+    }
+
+    @MainActor
+    private func renderShareCard() -> UIImage? {
+        guard cardFormat.exportPixelCount <= 2_100_000 else {
+            return nil
+        }
+
+        let size = cardFormat.logicalSize
+        let card = OutfitShareCardView(
+            data: data,
+            configuration: cardConfiguration,
+            format: cardFormat,
+            appearance: cardAppearance
+        )
+        .environment(\.dynamicTypeSize, dynamicTypeSize)
+        .frame(width: size.width, height: size.height)
+
+        return autoreleasepool {
+            let renderer = ImageRenderer(content: card)
+            renderer.proposedSize = ProposedViewSize(width: size.width, height: size.height)
+            renderer.scale = cardFormat.renderScale
+            renderer.isOpaque = true
+            return renderer.uiImage
+        }
+    }
+
+    @MainActor
+    private func handleShareCompletion(_ completion: OutfitShareCompletion) {
+        isShowingSystemShareSheet = false
+        isShowingLinkShareSheet = false
+        renderedShareCard = nil
+        linkShareItems = []
+
+        if completion == .failed {
+            showShareError("We couldn’t complete sharing. Please try again.")
+        }
+    }
+
+    @MainActor
+    private func createAndSharePrivateLink() async {
+        guard !isCreatingShareLink else { return }
+        guard let configuration = ShareableScoreCardConfiguration.production else {
+            showShareError(ShareableScoreCardError.configurationUnavailable.localizedDescription)
+            return
+        }
+
+        renderedShareCard = renderShareCard()
+        guard let cardImage = renderedShareCard else {
+            showShareError("We couldn’t prepare this outfit card. Please try again.")
+            return
+        }
+
+        isCreatingShareLink = true
+        defer { isCreatingShareLink = false }
+
+        do {
+            let payload = makeShareableScoreCardPayload()
+            let response = try await ShareableScoreCardClient(configuration: configuration).create(payload)
+            ShareableScoreCardLocalStore().saveCreatedCard(
+                token: response.token,
+                url: response.url,
+                managementToken: response.creatorManagementToken,
+                expiresAt: response.expiresAt
+            )
+            linkShareItems = [cardImage, "View my StyleMatch Pro score card.", response.url]
+            isShowingLinkShareSheet = true
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription
+                ?? ShareableScoreCardError.network.localizedDescription
+            showShareError(message)
+        }
+    }
+
+    private func makeShareableScoreCardPayload() -> ShareableScoreCardCreatePayload {
+        let sections = ShareableScoreCardEnabledSections(
+            photo: includePhoto && data.photo != nil,
+            overallScore: includeOverallScore,
+            categoryScores: includeCategoryScores && !data.categoryScores.isEmpty,
+            notes: includeDescription && !data.outfitDescription.isEmpty,
+            recommendations: includeSuggestions && !data.suggestions.isEmpty,
+            scanDate: true
+        )
+
+        let photo: ShareableScoreCardPhoto?
+        if sections.photo,
+           let photoData = data.photo?.shareableScoreCardJPEGData() {
+            photo = ShareableScoreCardPhoto(mimeType: "image/jpeg", base64: photoData.base64EncodedString())
+        } else {
+            photo = nil
+        }
+
+        return ShareableScoreCardCreatePayload(
+            enabledSections: sections,
+            overallScore: data.overallScore,
+            scoreTitle: data.scoreTitle,
+            categoryScores: data.categoryScores.map {
+                ShareableScoreCardCategoryScore(title: $0.title, value: $0.value)
+            },
+            outfitDescription: data.outfitDescription,
+            recommendations: data.suggestions,
+            scanDate: data.scanDate,
+            photo: photo
+        )
+    }
+
+    @MainActor
+    private func showShareError(_ message: String?) {
+        shareErrorMessage = message ?? "We couldn’t prepare this outfit card. Please try again."
+        isShowingShareError = true
+    }
+
+    private var officialAppStoreURL: URL? {
+        OutfitShareOfficialLink.appStoreURL
+    }
+}
+
+private enum OutfitShareOfficialLink {
+    static var appStoreURL: URL? {
+        guard let configuredValue = Bundle.main.object(forInfoDictionaryKey: "STYLEMATCH_APP_STORE_URL") as? String else {
+            return nil
+        }
+
+        let trimmedValue = configuredValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty,
+              let components = URLComponents(string: trimmedValue),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "apps.apple.com",
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              let url = components.url else {
+            return nil
+        }
+
+        return url
+    }
+}
+
+private enum OutfitShareCompletion: Equatable {
+    case completed
+    case cancelled
+    case failed
+}
+
+private struct OutfitShareActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let onCompletion: (OutfitShareCompletion) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCompletion: onCompletion)
+    }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(
+                x: controller.view.bounds.midX,
+                y: controller.view.bounds.midY,
+                width: 1,
+                height: 1
+            )
+            popover.permittedArrowDirections = []
+        }
+
+        let coordinator = context.coordinator
+        controller.completionWithItemsHandler = { _, completed, _, error in
+            let completion: OutfitShareCompletion
+            if error != nil {
+                completion = .failed
+            } else {
+                completion = completed ? .completed : .cancelled
+            }
+
+            DispatchQueue.main.async {
+                coordinator.onCompletion(completion)
+            }
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
+
+    final class Coordinator {
+        let onCompletion: (OutfitShareCompletion) -> Void
+
+        init(onCompletion: @escaping (OutfitShareCompletion) -> Void) {
+            self.onCompletion = onCompletion
+        }
     }
 }
 

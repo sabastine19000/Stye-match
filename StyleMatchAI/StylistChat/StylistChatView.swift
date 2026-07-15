@@ -2,18 +2,29 @@ import SwiftUI
 
 struct StylistChatView: View {
     @StateObject private var service: StylistChatService
+    @StateObject private var speechInput: StylistSpeechInputService
     @State private var draft = ""
     @State private var showingHistory = false
+    @State private var activeConversationContext: ChatContext?
 
     private let initialQuestion: String?
     private let initialContext: ChatContext?
+    private let voiceInputEnabled: Bool
 
     init(
         service: StylistChatService? = nil,
+        speechInput: StylistSpeechInputService? = nil,
+        voiceInputEnabled: Bool = true,
         initialQuestion: String? = nil,
         initialContext: ChatContext? = nil
     ) {
-        _service = StateObject(wrappedValue: service ?? StylistChatService())
+        _service = StateObject(
+            wrappedValue: service ?? StylistChatService(
+                contextProvider: { PersonalizationContextBuilder.conversationalStylistContext() }
+            )
+        )
+        _speechInput = StateObject(wrappedValue: speechInput ?? StylistSpeechInputService())
+        self.voiceInputEnabled = voiceInputEnabled
         self.initialQuestion = initialQuestion
         self.initialContext = initialContext
     }
@@ -33,20 +44,27 @@ struct StylistChatView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("New chat") {
-                        service.newChat()
+                        startNewChat()
                     }
                 }
             }
             .sheet(isPresented: $showingHistory) {
                 ChatHistorySheet(conversations: service.conversations) { conversation in
-                    service.openConversation(conversation)
+                    openConversation(conversation)
                     showingHistory = false
                 }
             }
             .onAppear {
                 if let initialQuestion, let initialContext, service.activeConversation.messages.isEmpty {
+                    activeConversationContext = initialContext
                     service.sendPreseededQuestion(initialQuestion, context: initialContext)
                 }
+            }
+            .onDisappear {
+                draft = speechInput.cancelListening()
+            }
+            .styleMatchOnChange(of: speechInput.transcript) { transcript in
+                draft = transcript
             }
         }
         .appScreenBackground(.ai)
@@ -56,6 +74,10 @@ struct StylistChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
+                    if activeConversationContext != nil {
+                        selectedScanContextNote
+                    }
+
                     if service.activeConversation.messages.isEmpty {
                         emptyState
                     } else {
@@ -92,12 +114,12 @@ struct StylistChatView: View {
             Text("Ask your stylist")
                 .font(.title2)
                 .fontWeight(.bold)
-            Text("Get short, practical outfit advice based on your saved profile and recent scans.")
+            Text("Get short, practical outfit advice for colors, garments, shoes, accessories, and occasions.")
                 .foregroundStyle(.secondary)
 
             ForEach(starterPrompts, id: \.self) { prompt in
                 Button {
-                    service.send(prompt)
+                    service.send(prompt, forcedContext: currentConversationContext)
                 } label: {
                     HStack {
                         Text(prompt)
@@ -110,6 +132,8 @@ struct StylistChatView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(prompt)
+                .accessibilityHint("Sends this suggested styling question.")
             }
         }
         .padding(18)
@@ -118,7 +142,6 @@ struct StylistChatView: View {
 
     private var inputBar: some View {
         VStack(spacing: 8) {
-            // future: add voice input when SFSpeechRecognizer support is scoped.
             HStack(spacing: 10) {
                 TextField("Ask your stylist...", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -127,6 +150,19 @@ struct StylistChatView: View {
                     .background(Color(.secondarySystemBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .disabled(service.isStreaming)
+                    .submitLabel(.send)
+                    .accessibilityLabel("Stylist question")
+                    .accessibilityHint("Type a styling question. The send button becomes available when text is entered.")
+
+                if voiceInputEnabled {
+                    voiceInputButton
+                } else {
+                    Image(systemName: "mic.slash")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Voice input disabled for launch diagnosis")
+                }
 
                 if service.isStreaming {
                     Button {
@@ -137,10 +173,11 @@ struct StylistChatView: View {
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityLabel("Stop generating")
+                    .accessibilityHint("Stops the current stylist response.")
                 } else {
                     Button {
-                        service.send(draft)
-                        draft = ""
+                        sendDraft()
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.title3)
@@ -148,21 +185,149 @@ struct StylistChatView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send styling question")
+                    .accessibilityHint("Sends your typed question to the personal stylist.")
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
+            if voiceInputEnabled {
+                voiceStatusRow
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial)
+            }
+        }
+    }
+
+    private var voiceInputButton: some View {
+        Group {
+            if speechInput.state.isActive {
+                Menu {
+                    Button("Stop Listening") {
+                        speechInput.stopListening()
+                    }
+                    Button("Cancel Voice Input", role: .destructive) {
+                        draft = speechInput.cancelListening()
+                    }
+                } label: {
+                    Image(systemName: speechInput.state == .listening ? "mic.fill" : "mic")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel(speechInput.state == .listening ? "Stop listening" : "Cancel voice input")
+                .accessibilityValue(speechInput.state.userMessage ?? "Voice input active")
+                .accessibilityHint("Opens controls to stop or cancel voice input.")
+            } else {
+                Button {
+                    Task {
+                        await speechInput.startListening(existingText: draft)
+                    }
+                } label: {
+                    Image(systemName: "mic")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.bordered)
+                .disabled(service.isStreaming)
+                .accessibilityLabel("Ask stylist by voice")
+                .accessibilityValue(service.isStreaming ? "Unavailable while response is generating" : "Ready")
+                .accessibilityHint("Starts voice input. You can review and edit the transcript before sending.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var voiceStatusRow: some View {
+        if let message = speechInput.state.userMessage {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: speechInput.state.isActive ? "waveform" : "info.circle")
+                    .accessibilityHidden(true)
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if speechInput.state.isActive {
+                    Button("Cancel") {
+                        draft = speechInput.cancelListening()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Cancel voice input")
+                } else if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button("Clear") {
+                        draft = ""
+                        speechInput.clearTranscript()
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Clear transcript")
+                }
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 
     private var starterPrompts: [String] {
         [
-            "What should I wear today?",
-            "Do these colors go together?",
-            "Why did my last outfit score what it did?",
-            "What’s missing from my closet?"
+            "What goes with olive pants?",
+            "Build an outfit around this item.",
+            "Build three outfits around this item.",
+            "What shoes work with this outfit?",
+            "Make this look more professional.",
+            "Make this outfit business casual.",
+            "Give me a casual and an elevated version.",
+            "Give me three color combinations.",
+            "Suggest another shirt-and-pants combination.",
+            "Build a dinner outfit.",
+            "Give me a warm-weather option.",
+            "What should I wear for dinner?",
+            "Help me match this shirt."
         ]
+    }
+
+    private func sendDraft() {
+        if speechInput.state.isActive {
+            speechInput.stopListening()
+        }
+        let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDraft.isEmpty else { return }
+        service.send(trimmedDraft, forcedContext: currentConversationContext)
+        draft = ""
+        speechInput.clearTranscript()
+    }
+
+    private var currentConversationContext: ChatContext {
+        activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext()
+    }
+
+    private var selectedScanContextNote: some View {
+        Label("Using selected scan context", systemImage: "sparkles")
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(Capsule())
+            .accessibilityLabel("Using selected scan context")
+            .accessibilityHint("This conversation can use facts from the scan you opened.")
+    }
+
+    private func startNewChat() {
+        activeConversationContext = nil
+        _ = speechInput.cancelListening()
+        draft = ""
+        speechInput.clearTranscript()
+        service.newChat()
+    }
+
+    private func openConversation(_ conversation: ChatConversation) {
+        activeConversationContext = nil
+        _ = speechInput.cancelListening()
+        draft = ""
+        speechInput.clearTranscript()
+        service.openConversation(conversation)
     }
 
     private func scrollToBottom(_ proxy: ScrollViewProxy) {

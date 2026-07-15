@@ -4,9 +4,9 @@
 # Affiliate IDs, retailer API keys, tracking templates, and network secrets
 # belong only in the backend/Cloudflare Worker secret store.
 
-STYLEMATCH_REMOTE_CATALOG_URL=https://stylematch-affiliate-proxy.sabastine-7000.workers.dev/v1/products
-STYLEMATCH_SUPPORTED_STORES_URL=https://stylematch-affiliate-proxy.sabastine-7000.workers.dev/v1/stores
-STYLEMATCH_PROXY_BASE_URL=https://stylematch-affiliate-proxy.sabastine-7000.workers.dev
+STYLEMATCH_REMOTE_CATALOG_URL=https://api.stylematchpro.com/v1/products
+STYLEMATCH_SUPPORTED_STORES_URL=https://api.stylematchpro.com/v1/stores
+STYLEMATCH_PROXY_BASE_URL=https://api.stylematchpro.com
 
 # Backend-only secret examples. Do not copy these into the iOS app, app bundle,
 # client-side xcconfig files, or public runtime JSON.

@@ -8,6 +8,18 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Style Match Pro uses your camera to scan outfit and clothing photos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>StyleMatch Pro uses the microphone only when you tap voice input to dictate a stylist question.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>StyleMatch Pro uses speech recognition only after you tap voice input, so you can review and send a transcribed stylist question.</string>
+	<key>STYLEMATCH_API_BASE_URL</key>
+	<string>$(STYLEMATCH_API_BASE_URL)</string>
+	<key>STYLEMATCH_SHARE_DOMAIN</key>
+	<string>$(STYLEMATCH_SHARE_DOMAIN)</string>
+	<key>STYLEMATCH_CARD_APP_SHARED_SECRET</key>
+	<string>$(STYLEMATCH_CARD_APP_SHARED_SECRET)</string>
+	<key>STYLIST_CHAT_APP_SHARED_SECRET</key>
+	<string>$(STYLIST_CHAT_APP_SHARED_SECRET)</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

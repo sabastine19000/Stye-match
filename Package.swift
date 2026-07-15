@@ -29,12 +29,14 @@ let package = Package(
                 "OnboardingView.swift",
                 "OpenAIKeychain.swift",
                 "OpenAIStylistClient.swift",
+                "PrivacyInfo.xcprivacy",
                 "PrivacyDataManager.swift",
                 "ProfileView.swift",
                 "PromptDetailView.swift",
                 "RoadmapData.swift",
                 "RoadmapView.swift",
                 "ScanView.swift",
+                "ShareableScoreCardViews.swift",
                 "ShopView.swift",
                 "Shopping/ShoppingPartnerEnvironment.example",
                 "Shopping/StoreSearchView.swift",
@@ -44,6 +46,9 @@ let package = Package(
                 "StyleMatchAIApp.swift"
             ],
             sources: [
+                "AccountService.swift",
+                "AppBackendConfiguration.swift",
+                "ShareableScoreCard.swift",
                 "Models.swift",
                 "GarmentColorPaletteEngine.swift",
                 "WeatherContextEngine.swift",
@@ -82,6 +87,7 @@ let package = Package(
                 "StylistChat/ChatConversationStore.swift",
                 "StylistChat/StylistChatTransport.swift",
                 "StylistChat/StylistChatService.swift",
+                "StylistChat/StylistSpeechInputService.swift",
                 "VoiceAssistant/VoiceScript.swift",
                 "VoiceAssistant/VoiceScriptBuilder.swift",
                 "VoiceAssistant/VoiceAssistantService.swift"

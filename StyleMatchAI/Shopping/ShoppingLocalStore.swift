@@ -1,12 +1,15 @@
+import Combine
 import Foundation
 
-struct ShoppingLocalStore {
+final class ShoppingLocalStore: ObservableObject {
     static let recentlyViewedBaseKey = "shoppingRecentlyViewedProductIDs"
     static let dismissedBaseKey = "shoppingDismissedProductIDs"
     static let savedFavoritesBaseKey = "shoppingSavedFavoriteProductIDs"
     static let wishlistBaseKey = "shoppingWishlistProductIDs"
     static let cartBaseKey = "shoppingCartProductIDs"
     static let shoppingCardsBaseKey = "shoppingCardProductIDs"
+    static let saleAlertProductIDsBaseKey = "shoppingSaleAlertProductIDs"
+    static let latestKnownPricesBaseKey = "shoppingLatestKnownPrices"
     static let saleNotificationsEnabledBaseKey = "shoppingSaleNotificationsEnabled"
     static let saleStateSnapshotsBaseKey = "shoppingSaleStateSnapshots"
     static let lastKnownSaleStateBaseKey = "shoppingLastKnownSaleState"
@@ -20,125 +23,210 @@ struct ShoppingLocalStore {
     let defaults: UserDefaults
     let userID: String
 
+    @Published private var recentlyViewedStorage: [String]
+    @Published private var dismissedStorage: Set<String>
+    @Published private var savedFavoritesStorage: [String]
+    @Published private var wishlistStorage: [String]
+    @Published private var cartStorage: [String]
+    @Published private var shoppingCardStorage: [String]
+    @Published private var saleAlertProductIDStorage: Set<String>
+    @Published private var latestKnownPricesStorage: [String: Decimal]
+    @Published private var saleNotificationsEnabledStorage: Bool
+    @Published private var affiliateDisclosureExpandedStorage: Bool
+    @Published private var saleStateSnapshotsStorage: [String: ShoppingSaleStateSnapshot]
+    @Published private var lastKnownSaleStateStorage: [String: SaleSnapshot]
+    @Published private var notifiedSalePairsStorage: [String]
+    @Published private var saleNotificationHistoryStorage: [Date]
+    @Published private var recentSaleEventsStorage: [SaleEvent]
+    @Published private var viewedSaleEventIDStorage: Set<String>
+
     init(defaults: UserDefaults = .standard, userID: String? = nil) {
         self.defaults = defaults
-        self.userID = PersonalStylistStorage.normalizedUserID(userID ?? PersonalStylistStorage.activeUserID(defaults: defaults))
+        let normalizedUserID = PersonalStylistStorage.normalizedUserID(userID ?? PersonalStylistStorage.activeUserID(defaults: defaults))
+        self.userID = normalizedUserID
+
+        func scoped(_ base: String) -> String {
+            PersonalStylistStorage.scopedKey(base, userID: normalizedUserID)
+        }
+
+        self.recentlyViewedStorage = Array((defaults.stringArray(forKey: scoped(Self.recentlyViewedBaseKey)) ?? []).prefix(50))
+        self.dismissedStorage = Set(defaults.stringArray(forKey: scoped(Self.dismissedBaseKey)) ?? [])
+        self.savedFavoritesStorage = Array((defaults.stringArray(forKey: scoped(Self.savedFavoritesBaseKey)) ?? []).prefix(200))
+        self.wishlistStorage = Array((defaults.stringArray(forKey: scoped(Self.wishlistBaseKey)) ?? []).prefix(200))
+        self.cartStorage = Array((defaults.stringArray(forKey: scoped(Self.cartBaseKey)) ?? []).prefix(100))
+        self.shoppingCardStorage = Array((defaults.stringArray(forKey: scoped(Self.shoppingCardsBaseKey)) ?? []).prefix(200))
+        self.saleAlertProductIDStorage = Set(defaults.stringArray(forKey: scoped(Self.saleAlertProductIDsBaseKey)) ?? [])
+        self.latestKnownPricesStorage = Self.decoded([String: Decimal].self, defaults: defaults, key: scoped(Self.latestKnownPricesBaseKey)) ?? [:]
+        if defaults.object(forKey: scoped(Self.saleNotificationsEnabledBaseKey)) == nil {
+            self.saleNotificationsEnabledStorage = FeatureFlags.saleNotificationsEnabled
+        } else {
+            self.saleNotificationsEnabledStorage = defaults.bool(forKey: scoped(Self.saleNotificationsEnabledBaseKey))
+        }
+        let seenDisclosure = defaults.object(forKey: scoped(Self.affiliateDisclosureSeenExpandedBaseKey)) != nil
+        self.affiliateDisclosureExpandedStorage = seenDisclosure ? defaults.bool(forKey: scoped(Self.affiliateDisclosureExpandedBaseKey)) : false
+        self.saleStateSnapshotsStorage = Self.decoded([String: ShoppingSaleStateSnapshot].self, defaults: defaults, key: scoped(Self.saleStateSnapshotsBaseKey)) ?? [:]
+        self.lastKnownSaleStateStorage = Self.decoded([String: SaleSnapshot].self, defaults: defaults, key: scoped(Self.lastKnownSaleStateBaseKey)) ?? [:]
+        self.notifiedSalePairsStorage = Array((defaults.stringArray(forKey: scoped(Self.notifiedSalePairsBaseKey)) ?? []).suffix(500))
+        self.saleNotificationHistoryStorage = Self.decoded([Date].self, defaults: defaults, key: scoped(Self.saleNotificationHistoryBaseKey)) ?? []
+        self.recentSaleEventsStorage = Array((Self.decoded([SaleEvent].self, defaults: defaults, key: scoped(Self.recentSaleEventsBaseKey)) ?? []).prefix(50))
+        self.viewedSaleEventIDStorage = Set(defaults.stringArray(forKey: scoped(Self.viewedSaleEventIDsBaseKey)) ?? [])
     }
 
     var recentlyViewedProductIDs: [String] {
-        get { defaults.stringArray(forKey: key(Self.recentlyViewedBaseKey)) ?? [] }
-        nonmutating set { defaults.set(Array(newValue.prefix(50)), forKey: key(Self.recentlyViewedBaseKey)) }
+        get { recentlyViewedStorage }
+        set {
+            recentlyViewedStorage = Array(newValue.prefix(50))
+            defaults.set(recentlyViewedStorage, forKey: key(Self.recentlyViewedBaseKey))
+        }
     }
 
     var dismissedProductIDs: Set<String> {
-        get { Set(defaults.stringArray(forKey: key(Self.dismissedBaseKey)) ?? []) }
-        nonmutating set { defaults.set(Array(newValue), forKey: key(Self.dismissedBaseKey)) }
+        get { dismissedStorage }
+        set {
+            dismissedStorage = newValue
+            defaults.set(Array(newValue), forKey: key(Self.dismissedBaseKey))
+        }
     }
 
     var savedFavorites: [String] {
-        get { defaults.stringArray(forKey: key(Self.savedFavoritesBaseKey)) ?? [] }
-        nonmutating set { defaults.set(Array(newValue.prefix(200)), forKey: key(Self.savedFavoritesBaseKey)) }
+        get { savedFavoritesStorage }
+        set {
+            savedFavoritesStorage = Array(newValue.prefix(200))
+            defaults.set(savedFavoritesStorage, forKey: key(Self.savedFavoritesBaseKey))
+        }
     }
 
     var wishlistProductIDs: [String] {
-        get { defaults.stringArray(forKey: key(Self.wishlistBaseKey)) ?? [] }
-        nonmutating set { defaults.set(Array(newValue.prefix(200)), forKey: key(Self.wishlistBaseKey)) }
+        get { wishlistStorage }
+        set {
+            wishlistStorage = Array(newValue.prefix(200))
+            defaults.set(wishlistStorage, forKey: key(Self.wishlistBaseKey))
+        }
     }
 
     var cartProductIDs: [String] {
-        get { defaults.stringArray(forKey: key(Self.cartBaseKey)) ?? [] }
-        nonmutating set { defaults.set(Array(newValue.prefix(100)), forKey: key(Self.cartBaseKey)) }
+        get { cartStorage }
+        set {
+            cartStorage = Array(newValue.prefix(100))
+            defaults.set(cartStorage, forKey: key(Self.cartBaseKey))
+        }
     }
 
     var shoppingCardProductIDs: [String] {
-        get { defaults.stringArray(forKey: key(Self.shoppingCardsBaseKey)) ?? [] }
-        nonmutating set { defaults.set(Array(newValue.prefix(200)), forKey: key(Self.shoppingCardsBaseKey)) }
+        get { shoppingCardStorage }
+        set {
+            shoppingCardStorage = Array(newValue.prefix(200))
+            defaults.set(shoppingCardStorage, forKey: key(Self.shoppingCardsBaseKey))
+        }
+    }
+
+    var saleAlertProductIDs: Set<String> {
+        get { saleAlertProductIDStorage }
+        set {
+            saleAlertProductIDStorage = newValue
+            defaults.set(Array(newValue), forKey: key(Self.saleAlertProductIDsBaseKey))
+        }
+    }
+
+    var latestKnownPrices: [String: Decimal] {
+        get { latestKnownPricesStorage }
+        set {
+            latestKnownPricesStorage = newValue
+            encode(newValue, baseKey: Self.latestKnownPricesBaseKey)
+        }
     }
 
     var saleNotificationsEnabled: Bool {
-        get {
-            let scoped = key(Self.saleNotificationsEnabledBaseKey)
-            guard defaults.object(forKey: scoped) != nil else { return FeatureFlags.saleNotificationsEnabled }
-            return defaults.bool(forKey: scoped)
+        get { saleNotificationsEnabledStorage }
+        set {
+            saleNotificationsEnabledStorage = newValue
+            defaults.set(newValue, forKey: key(Self.saleNotificationsEnabledBaseKey))
         }
-        nonmutating set { defaults.set(newValue, forKey: key(Self.saleNotificationsEnabledBaseKey)) }
     }
 
     var affiliateDisclosureExpanded: Bool {
-        get {
-            let seenKey = key(Self.affiliateDisclosureSeenExpandedBaseKey)
-            let expandedKey = key(Self.affiliateDisclosureExpandedBaseKey)
-            guard defaults.object(forKey: seenKey) != nil else { return false }
-            return defaults.bool(forKey: expandedKey)
-        }
-        nonmutating set {
+        get { affiliateDisclosureExpandedStorage }
+        set {
+            affiliateDisclosureExpandedStorage = newValue
             defaults.set(true, forKey: key(Self.affiliateDisclosureSeenExpandedBaseKey))
             defaults.set(newValue, forKey: key(Self.affiliateDisclosureExpandedBaseKey))
         }
     }
 
     var saleStateSnapshots: [String: ShoppingSaleStateSnapshot] {
-        get {
-            guard let data = defaults.data(forKey: key(Self.saleStateSnapshotsBaseKey)) else { return [:] }
-            return (try? JSONDecoder().decode([String: ShoppingSaleStateSnapshot].self, from: data)) ?? [:]
-        }
-        nonmutating set {
-            let data = try? JSONEncoder().encode(newValue)
-            defaults.set(data, forKey: key(Self.saleStateSnapshotsBaseKey))
+        get { saleStateSnapshotsStorage }
+        set {
+            saleStateSnapshotsStorage = newValue
+            encode(newValue, baseKey: Self.saleStateSnapshotsBaseKey)
         }
     }
 
     var lastKnownSaleState: [String: SaleSnapshot] {
-        get { decoded([String: SaleSnapshot].self, baseKey: Self.lastKnownSaleStateBaseKey) ?? [:] }
-        nonmutating set { encode(newValue, baseKey: Self.lastKnownSaleStateBaseKey) }
+        get { lastKnownSaleStateStorage }
+        set {
+            lastKnownSaleStateStorage = newValue
+            encode(newValue, baseKey: Self.lastKnownSaleStateBaseKey)
+        }
     }
 
     var notifiedSalePairs: [String] {
-        get { defaults.stringArray(forKey: key(Self.notifiedSalePairsBaseKey)) ?? [] }
-        nonmutating set { defaults.set(Array(newValue.suffix(500)), forKey: key(Self.notifiedSalePairsBaseKey)) }
+        get { notifiedSalePairsStorage }
+        set {
+            notifiedSalePairsStorage = Array(newValue.suffix(500))
+            defaults.set(notifiedSalePairsStorage, forKey: key(Self.notifiedSalePairsBaseKey))
+        }
     }
 
     var saleNotificationHistory: [Date] {
-        get { decoded([Date].self, baseKey: Self.saleNotificationHistoryBaseKey) ?? [] }
-        nonmutating set { encode(newValue, baseKey: Self.saleNotificationHistoryBaseKey) }
+        get { saleNotificationHistoryStorage }
+        set {
+            saleNotificationHistoryStorage = newValue
+            encode(newValue, baseKey: Self.saleNotificationHistoryBaseKey)
+        }
     }
 
     var recentSaleEvents: [SaleEvent] {
-        get { decoded([SaleEvent].self, baseKey: Self.recentSaleEventsBaseKey) ?? [] }
-        nonmutating set { encode(Array(newValue.prefix(50)), baseKey: Self.recentSaleEventsBaseKey) }
+        get { recentSaleEventsStorage }
+        set {
+            recentSaleEventsStorage = Array(newValue.prefix(50))
+            encode(recentSaleEventsStorage, baseKey: Self.recentSaleEventsBaseKey)
+        }
     }
 
     var viewedSaleEventIDs: Set<String> {
-        get { Set(defaults.stringArray(forKey: key(Self.viewedSaleEventIDsBaseKey)) ?? []) }
-        nonmutating set { defaults.set(Array(newValue), forKey: key(Self.viewedSaleEventIDsBaseKey)) }
+        get { viewedSaleEventIDStorage }
+        set {
+            viewedSaleEventIDStorage = newValue
+            defaults.set(Array(newValue), forKey: key(Self.viewedSaleEventIDsBaseKey))
+        }
     }
 
     func markViewed(_ productID: String) {
-        let cleaned = productID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = clean(productID)
         guard !cleaned.isEmpty else { return }
         recentlyViewedProductIDs = [cleaned] + recentlyViewedProductIDs.filter { $0 != cleaned }
     }
 
     func dismiss(_ productID: String) {
-        let cleaned = productID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = clean(productID)
         guard !cleaned.isEmpty else { return }
-        var ids = dismissedProductIDs
-        ids.insert(cleaned)
-        dismissedProductIDs = ids
+        dismissedProductIDs.insert(cleaned)
     }
 
     func toggleFavorite(_ productID: String) {
-        let cleaned = productID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
-        if savedFavorites.contains(cleaned) {
-            savedFavorites = savedFavorites.filter { $0 != cleaned }
-        } else {
-            savedFavorites = [cleaned] + savedFavorites.filter { $0 != cleaned }
-        }
+        toggle(productID, get: { savedFavorites }, set: { savedFavorites = $0 })
+    }
+
+    func toggleFavorite(productID: String) {
+        toggleFavorite(productID)
     }
 
     func toggleWishlist(_ productID: String) {
         toggle(productID, get: { wishlistProductIDs }, set: { wishlistProductIDs = $0 })
+    }
+
+    func toggleWishlist(productID: String) {
+        toggleWishlist(productID)
     }
 
     func toggleCart(_ productID: String) {
@@ -149,48 +237,110 @@ struct ShoppingLocalStore {
         toggle(productID, get: { shoppingCardProductIDs }, set: { shoppingCardProductIDs = $0 })
     }
 
+    func setSaleAlert(enabled: Bool, for productID: String) {
+        let cleaned = clean(productID)
+        guard !cleaned.isEmpty else { return }
+        if enabled {
+            saleAlertProductIDs.insert(cleaned)
+        } else {
+            saleAlertProductIDs.remove(cleaned)
+        }
+    }
+
+    func updateLatestKnownPrice(_ price: Decimal?, for productID: String) {
+        let cleaned = clean(productID)
+        guard !cleaned.isEmpty else { return }
+        guard let price, price > 0 else {
+            latestKnownPrices.removeValue(forKey: cleaned)
+            return
+        }
+        latestKnownPrices[cleaned] = price
+    }
+
+    func removeProductState(productID: String) {
+        let cleaned = clean(productID)
+        guard !cleaned.isEmpty else { return }
+        savedFavorites.removeAll { $0 == cleaned }
+        wishlistProductIDs.removeAll { $0 == cleaned }
+        cartProductIDs.removeAll { $0 == cleaned }
+        shoppingCardProductIDs.removeAll { $0 == cleaned }
+        saleAlertProductIDs.remove(cleaned)
+        latestKnownPrices.removeValue(forKey: cleaned)
+        dismissedProductIDs.remove(cleaned)
+        recentlyViewedProductIDs.removeAll { $0 == cleaned }
+        saleStateSnapshots.removeValue(forKey: cleaned)
+        lastKnownSaleState.removeValue(forKey: cleaned)
+        viewedSaleEventIDs.remove(cleaned)
+    }
+
     func saveSaleStateSnapshots(_ snapshots: [String: ShoppingSaleStateSnapshot]) {
         saleStateSnapshots = snapshots
     }
 
     func deleteAll() {
-        defaults.removeObject(forKey: key(Self.recentlyViewedBaseKey))
-        defaults.removeObject(forKey: key(Self.dismissedBaseKey))
-        defaults.removeObject(forKey: key(Self.savedFavoritesBaseKey))
-        defaults.removeObject(forKey: key(Self.wishlistBaseKey))
-        defaults.removeObject(forKey: key(Self.cartBaseKey))
-        defaults.removeObject(forKey: key(Self.shoppingCardsBaseKey))
-        defaults.removeObject(forKey: key(Self.saleNotificationsEnabledBaseKey))
-        defaults.removeObject(forKey: key(Self.saleStateSnapshotsBaseKey))
-        defaults.removeObject(forKey: key(Self.lastKnownSaleStateBaseKey))
-        defaults.removeObject(forKey: key(Self.notifiedSalePairsBaseKey))
-        defaults.removeObject(forKey: key(Self.saleNotificationHistoryBaseKey))
-        defaults.removeObject(forKey: key(Self.recentSaleEventsBaseKey))
-        defaults.removeObject(forKey: key(Self.viewedSaleEventIDsBaseKey))
-        defaults.removeObject(forKey: key(Self.affiliateDisclosureExpandedBaseKey))
-        defaults.removeObject(forKey: key(Self.affiliateDisclosureSeenExpandedBaseKey))
+        for baseKey in Self.allPersistedBaseKeys {
+            defaults.removeObject(forKey: key(baseKey))
+        }
+        recentlyViewedStorage = []
+        dismissedStorage = []
+        savedFavoritesStorage = []
+        wishlistStorage = []
+        cartStorage = []
+        shoppingCardStorage = []
+        saleAlertProductIDStorage = []
+        latestKnownPricesStorage = [:]
+        saleNotificationsEnabledStorage = FeatureFlags.saleNotificationsEnabled
+        affiliateDisclosureExpandedStorage = false
+        saleStateSnapshotsStorage = [:]
+        lastKnownSaleStateStorage = [:]
+        notifiedSalePairsStorage = []
+        saleNotificationHistoryStorage = []
+        recentSaleEventsStorage = []
+        viewedSaleEventIDStorage = []
     }
 
     static func deleteShoppingData(for userID: String, defaults: UserDefaults = .standard) {
         ShoppingLocalStore(defaults: defaults, userID: userID).deleteAll()
     }
 
+    private static var allPersistedBaseKeys: [String] {
+        [
+            recentlyViewedBaseKey,
+            dismissedBaseKey,
+            savedFavoritesBaseKey,
+            wishlistBaseKey,
+            cartBaseKey,
+            shoppingCardsBaseKey,
+            saleAlertProductIDsBaseKey,
+            latestKnownPricesBaseKey,
+            saleNotificationsEnabledBaseKey,
+            saleStateSnapshotsBaseKey,
+            lastKnownSaleStateBaseKey,
+            notifiedSalePairsBaseKey,
+            saleNotificationHistoryBaseKey,
+            recentSaleEventsBaseKey,
+            viewedSaleEventIDsBaseKey,
+            affiliateDisclosureExpandedBaseKey,
+            affiliateDisclosureSeenExpandedBaseKey
+        ]
+    }
+
     private func key(_ base: String) -> String {
         PersonalStylistStorage.scopedKey(base, userID: userID)
     }
 
-    private func decoded<T: Decodable>(_ type: T.Type, baseKey: String) -> T? {
-        guard let data = defaults.data(forKey: key(baseKey)) else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
-    }
-
     private func encode<T: Encodable>(_ value: T, baseKey: String) {
-        let data = try? JSONEncoder().encode(value)
+        guard let data = try? JSONEncoder().encode(value) else { return }
         defaults.set(data, forKey: key(baseKey))
     }
 
+    private static func decoded<T: Decodable>(_ type: T.Type, defaults: UserDefaults, key: String) -> T? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
     private func toggle(_ productID: String, get: () -> [String], set: ([String]) -> Void) {
-        let cleaned = productID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = clean(productID)
         guard !cleaned.isEmpty else { return }
         let existing = get()
         if existing.contains(cleaned) {
@@ -198,5 +348,126 @@ struct ShoppingLocalStore {
         } else {
             set([cleaned] + existing.filter { $0 != cleaned })
         }
+    }
+
+    private func clean(_ productID: String) -> String {
+        productID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+struct ShoppingSwipeDeckState: Equatable {
+    let productIDs: [String]
+    private(set) var currentIndex: Int
+
+    init(productIDs: [String], currentIndex: Int = 0) {
+        self.productIDs = productIDs
+        self.currentIndex = min(max(0, currentIndex), productIDs.count)
+    }
+
+    var isEmpty: Bool {
+        productIDs.isEmpty
+    }
+
+    var currentProductID: String? {
+        guard currentIndex < productIDs.count else {
+            return nil
+        }
+        return productIDs[currentIndex]
+    }
+
+    mutating func swipeRight(using store: ShoppingLocalStore) {
+        guard let productID = currentProductID else {
+            return
+        }
+        if !store.savedFavorites.contains(productID) {
+            store.toggleFavorite(productID)
+        }
+        advance()
+    }
+
+    mutating func swipeLeft() {
+        advance()
+    }
+
+    private mutating func advance() {
+        currentIndex = min(currentIndex + 1, productIDs.count)
+    }
+}
+
+struct ShoppingPriceDropEvent: Equatable, Identifiable {
+    let id: String
+    let productID: String
+    let previousPrice: Decimal
+    let currentPrice: Decimal
+    let detectedAt: Date
+}
+
+protocol ShoppingNotificationScheduling {
+    func schedule(_ event: ShoppingPriceDropEvent) async
+}
+
+struct NoopShoppingNotificationScheduler: ShoppingNotificationScheduling {
+    func schedule(_ event: ShoppingPriceDropEvent) async {}
+}
+
+struct ShoppingPriceDropEvaluator {
+    let now: () -> Date
+
+    init(now: @escaping () -> Date = Date.init) {
+        self.now = now
+    }
+
+    func evaluate(catalog: [AffiliateProduct], store: ShoppingLocalStore) -> [ShoppingPriceDropEvent] {
+        guard store.saleNotificationsEnabled else { return [] }
+        let watchedIDs = store.saleAlertProductIDs
+        guard !watchedIDs.isEmpty else { return [] }
+
+        let currentDate = now()
+        var events: [ShoppingPriceDropEvent] = []
+        var latestPrices = store.latestKnownPrices
+        var notifiedPairs = Set(store.notifiedSalePairs)
+
+        for product in catalog where watchedIDs.contains(product.id) {
+            guard let currentPrice = comparablePrice(for: product), currentPrice > 0 else { continue }
+            defer {
+                latestPrices[product.id] = currentPrice
+            }
+
+            guard let previousPrice = latestPrices[product.id],
+                  currentPrice < previousPrice else {
+                continue
+            }
+
+            let pair = notifiedPair(productID: product.id, price: currentPrice)
+            guard !notifiedPairs.contains(pair) else { continue }
+            notifiedPairs.insert(pair)
+            events.append(
+                ShoppingPriceDropEvent(
+                    id: pair,
+                    productID: product.id,
+                    previousPrice: previousPrice,
+                    currentPrice: currentPrice,
+                    detectedAt: currentDate
+                )
+            )
+        }
+
+        store.latestKnownPrices = latestPrices
+        store.notifiedSalePairs = Array(notifiedPairs).sorted()
+        return events
+    }
+
+    private func comparablePrice(for product: AffiliateProduct) -> Decimal? {
+        if let salePrice = product.salePrice, salePrice > 0 {
+            return salePrice
+        }
+        if let price = product.price, price > 0 {
+            return price
+        }
+        return nil
+    }
+
+    private func notifiedPair(productID: String, price: Decimal) -> String {
+        "\(productID)|\(price)"
     }
 }

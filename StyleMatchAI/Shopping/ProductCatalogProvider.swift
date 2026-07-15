@@ -64,17 +64,33 @@ actor SharedProductCatalogLoader {
     }
 
     func products() async throws -> [AffiliateProduct] {
+        #if DEBUG
+        let startedAt = Date()
+        func logDuration(_ message: String) {
+            print("[StyleMatch Shop Perf] catalog loader \(message) elapsed=\(String(format: "%.3fs", Date().timeIntervalSince(startedAt)))")
+        }
+        #endif
         let currentDate = now()
         if let cachedProducts, let cachedAt {
             if currentDate.timeIntervalSince(cachedAt) < timeToLive {
+                #if DEBUG
+                logDuration("memory-cache hit products=\(cachedProducts.count)")
+                #endif
                 return cachedProducts
             }
             startBackgroundRefreshIfNeeded()
+            #if DEBUG
+            logDuration("stale memory-cache returned products=\(cachedProducts.count)")
+            #endif
             return cachedProducts
         }
 
         if let inFlight {
-            return try await inFlight.value
+            let products = try await inFlight.value
+            #if DEBUG
+            logDuration("joined in-flight products=\(products.count)")
+            #endif
+            return products
         }
 
         let task = Task { try await provider.products() }
@@ -84,9 +100,15 @@ actor SharedProductCatalogLoader {
             cachedProducts = products
             cachedAt = currentDate
             inFlight = nil
+            #if DEBUG
+            logDuration("provider fetch products=\(products.count)")
+            #endif
             return products
         } catch {
             inFlight = nil
+            #if DEBUG
+            logDuration("provider fetch failed")
+            #endif
             throw error
         }
     }
@@ -225,10 +247,7 @@ struct BundledCatalogProvider: ProductCatalogProvider {
             catalogData: Data(contentsOf: catalogURL),
             retailerConfigData: configURL.flatMap { try? Data(contentsOf: $0) }
         )
-        let customerSafeProducts = decodedProducts.filter { product in
-            let outboundURL = AffiliateLinkBuilder.outboundURL(for: product)
-            return !AffiliateLinkBuilder.isPlaceholderURL(outboundURL)
-        }
+        let customerSafeProducts = CatalogProductSafetyValidator.validated(decodedProducts)
 
         guard !customerSafeProducts.isEmpty else {
             throw ProductCatalogProviderError.missingCatalog
@@ -270,6 +289,7 @@ struct BundledCatalogProvider: ProductCatalogProvider {
                         saleEndsAt: decoded.saleEndsAt,
                         currencyCode: decoded.currencyCode,
                         availableCountries: decoded.availableCountries,
+                        availability: decoded.availability,
                         availableColors: decoded.availableColors,
                         customerRating: decoded.customerRating,
                         reviewCount: decoded.reviewCount,
@@ -292,51 +312,68 @@ struct BundledCatalogProvider: ProductCatalogProvider {
 typealias CatalogProductSearchProvider = CatalogSearchProvider
 
 struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding {
+    /// Catalog requests should complete well within this 10-second budget under
+    /// normal conditions while still tolerating cellular connection setup.
+    static let defaultRequestTimeout: TimeInterval = 10
+
     let baseURL: URL
     let cacheDirectory: URL
     let fallbackProvider: ProductCatalogProvider
     var urlSession: URLSession = .shared
-    var refreshInterval: TimeInterval = 3600
+    var requestTimeout: TimeInterval = Self.defaultRequestTimeout
 
     func products() async throws -> [AffiliateProduct] {
-        if let cached = try? cachedProducts(), !cached.isEmpty {
-            if shouldRefreshCache() {
-                Task {
-                    guard let data = try? await fetchRemoteData() else { return }
-                    try? cache(data)
-                }
-            }
-            return cached
-        }
-
+        try Task.checkCancellation()
         do {
             let data = try await fetchRemoteData()
-            let decoded: [AffiliateProduct]
-            do {
-                decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)
-            } catch {
-                #if DEBUG
-                print("[StyleMatch Remote Catalog] Decode failed: \(type(of: error)) \(error.localizedDescription)")
-                #endif
-                throw error
-            }
+            try Task.checkCancellation()
+            let decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)
             guard !decoded.isEmpty else {
-                #if DEBUG
-                print("[StyleMatch Remote Catalog] Decode produced zero visible products.")
-                #endif
+                debugLog("remote decode produced zero safe products")
                 throw ProductCatalogProviderError.missingCatalog
             }
-            try cache(data)
+            do {
+                try cache(data)
+            } catch {
+                debugLog(error, prefix: "cache write failed; keeping decoded remote catalog")
+            }
+            debugLog("selected source=remote products=\(decoded.count)")
             return decoded
         } catch {
-            #if DEBUG
-            print("[StyleMatch Remote Catalog] Products load failed: \(type(of: error)) \(error.localizedDescription)")
-            #endif
-            if let cached = try? cachedProducts(), !cached.isEmpty {
+            if Self.isCancellation(error) { throw error }
+            debugLog(error, prefix: "remote source failed")
+        }
+
+        try Task.checkCancellation()
+        do {
+            let cached = try cachedProducts()
+            if !cached.isEmpty {
+                debugLog("selected source=cache products=\(cached.count)")
                 return cached
             }
-            throw ProductCatalogProviderError.missingCatalog
+            debugLog("cache decoded zero safe products")
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            debugLog(error, prefix: "cache source failed")
         }
+
+        try Task.checkCancellation()
+        do {
+            let bundled = CatalogProductSafetyValidator.validated(try await fallbackProvider.products())
+            try Task.checkCancellation()
+            guard !bundled.isEmpty else {
+                debugLog("bundled source produced zero safe products")
+                throw ProductCatalogProviderError.missingCatalog
+            }
+            debugLog("selected source=bundled products=\(bundled.count)")
+            return bundled
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            debugLog(error, prefix: "bundled source failed")
+        }
+
+        debugLog("all catalog sources failed")
+        throw ProductCatalogProviderError.missingCatalog
     }
 
     func disclosure() async -> String? {
@@ -344,28 +381,21 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
            let disclosure = try? Self.decodeRemoteDisclosure(data) {
             return disclosure
         }
-        guard let data = try? await fetchRemoteData() else {
-            return nil
-        }
-        try? cache(data)
-        return try? Self.decodeRemoteDisclosure(data)
+        // products() has already attempted the live source. Avoid extending an
+        // offline fallback with a second network timeout just for disclosure.
+        return nil
     }
 
     static func decodeRemoteProducts(_ data: Data, baseURL: URL, regionCode: String = Self.currentRegionCode) throws -> [AffiliateProduct] {
         let response = try JSONDecoder.catalog.decode(RemoteProductsResponse.self, from: data)
-        let normalizedRegion = regionCode.uppercased()
-        return response.products.compactMap { remote in
-            if let availableCountries = remote.availableCountries,
-               !Self.countryList(availableCountries, contains: normalizedRegion) {
-                return nil
-            }
+        let decoded: [AffiliateProduct] = response.products.compactMap { remote -> AffiliateProduct? in
             guard let buyURL = URL(string: remote.buyURL, relativeTo: baseURL)?.absoluteURL else {
                 #if DEBUG
                 print("[StyleMatch Remote Catalog] Skipping product with invalid buy_url: \(remote.id)")
                 #endif
                 return nil
             }
-            let imageURL = remote.imageURL.flatMap(URL.init(string:))
+            let imageURL = ProductImageURLValidator.validated(remote.imageURL)
             return AffiliateProduct(
                 id: remote.id,
                 name: remote.name,
@@ -376,7 +406,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
                 priceRange: nil,
                 occasionTags: remote.tags,
                 brand: remote.brand,
-                imageURL: imageURL ?? Self.placeholderImageURL,
+                imageURL: imageURL,
                 retailer: Retailer(
                     name: remote.storeName,
                     trackingID: AffiliateLinkBuilder.pendingApprovalTrackingID,
@@ -389,6 +419,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
                 saleEndsAt: remote.saleEndsAt,
                 currencyCode: remote.currency,
                 availableCountries: remote.availableCountries,
+                availability: remote.availability,
                 availableColors: nil,
                 customerRating: nil,
                 reviewCount: nil,
@@ -397,6 +428,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
                 genderPresentation: nil
             )
         }
+        return CatalogProductSafetyValidator.validated(decoded, regionCode: regionCode)
     }
 
     static func decodeRemoteDisclosure(_ data: Data) throws -> String? {
@@ -414,38 +446,34 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
+        request.timeoutInterval = requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         #if DEBUG
         print("[StyleMatch Remote Catalog] Fetching catalog from \(url.absoluteString)")
         #endif
-        let (data, response) = try await urlSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            #if DEBUG
-            print("[StyleMatch Remote Catalog] Missing HTTP response for \(url.absoluteString)")
-            #endif
-            throw ProductCatalogProviderError.missingCatalog
+        let startedAt = Date()
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            let duration = Date().timeIntervalSince(startedAt)
+            guard let http = response as? HTTPURLResponse else {
+                debugLog("request duration=\(Self.durationText(duration)) status=unavailable")
+                throw ProductCatalogProviderError.missingCatalog
+            }
+            debugLog("request duration=\(Self.durationText(duration)) status=\(http.statusCode)")
+            guard (200..<300).contains(http.statusCode) else {
+                throw CatalogHTTPError(statusCode: http.statusCode)
+            }
+            return data
+        } catch {
+            let duration = Date().timeIntervalSince(startedAt)
+            debugLog(error, prefix: "request duration=\(Self.durationText(duration)) status=unavailable")
+            throw error
         }
-        guard (200..<300).contains(http.statusCode) else {
-            #if DEBUG
-            let body = String(data: data.prefix(240), encoding: .utf8) ?? "<non-utf8 body>"
-            print("[StyleMatch Remote Catalog] HTTP \(http.statusCode) for \(url.absoluteString): \(body)")
-            #endif
-            throw ProductCatalogProviderError.missingCatalog
-        }
-        return data
     }
 
     private func cachedProducts() throws -> [AffiliateProduct] {
         let data = try Data(contentsOf: cacheFileURL())
         return try Self.decodeRemoteProducts(data, baseURL: baseURL)
-    }
-
-    private func shouldRefreshCache(now: Date = Date()) -> Bool {
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: cacheFileURL().path),
-              let modified = attrs[.modificationDate] as? Date else {
-            return true
-        }
-        return now.timeIntervalSince(modified) >= refreshInterval
     }
 
     private func cache(_ data: Data) throws {
@@ -466,10 +494,6 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         return colors.contains(value.lowercased())
     }
 
-    private static func countryList(_ countries: [String], contains regionCode: String) -> Bool {
-        countries.contains("*") || countries.map { $0.uppercased() }.contains(regionCode.uppercased())
-    }
-
     private static var currentRegionCode: String {
         #if os(iOS) || os(macOS) || os(tvOS) || os(watchOS)
         if #available(iOS 16.0, macOS 13.0, tvOS 16.0, watchOS 9.0, *) {
@@ -482,7 +506,68 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         #endif
     }
 
-    private static let placeholderImageURL = URL(string: "https://stylematch.local/product-placeholder.png")!
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
+    private static func durationText(_ duration: TimeInterval) -> String {
+        String(format: "%.3fs", duration)
+    }
+
+    private func debugLog(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        print("[StyleMatch Remote Catalog] \(message())")
+        #endif
+    }
+
+    private func debugLog(_ error: Error, prefix: String) {
+        #if DEBUG
+        let nsError = error as NSError
+        print("[StyleMatch Remote Catalog] \(prefix) error_domain=\(nsError.domain) error_code=\(nsError.code)")
+        #endif
+    }
+
+}
+
+private struct CatalogHTTPError: Error {
+    let statusCode: Int
+}
+
+enum CatalogProductSafetyValidator {
+    static func validated(_ products: [AffiliateProduct], regionCode: String = currentRegionCode) -> [AffiliateProduct] {
+        products.filter { product in
+            guard countryList(product.availableCountries, contains: regionCode),
+                  availabilityAllowsPurchase(product.availability) else {
+                return false
+            }
+            let outboundURL = AffiliateLinkBuilder.outboundURL(for: product)
+            guard let components = URLComponents(url: outboundURL, resolvingAgainstBaseURL: false),
+                  let scheme = components.scheme?.lowercased(),
+                  scheme == "https" || scheme == "http",
+                  let host = components.host,
+                  !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            return !AffiliateLinkBuilder.isPlaceholderURL(outboundURL)
+        }
+    }
+
+    private static func countryList(_ countries: [String]?, contains regionCode: String) -> Bool {
+        guard let countries, !countries.isEmpty else { return true }
+        return countries.contains("*") || countries.map { $0.uppercased() }.contains(regionCode.uppercased())
+    }
+
+    private static func availabilityAllowsPurchase(_ availability: String?) -> Bool {
+        guard let availability = availability?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !availability.isEmpty else {
+            return true
+        }
+        return ["in_stock", "available", "limited_stock", "preorder", "pre_order"].contains(availability)
+    }
+
+    private static var currentRegionCode: String {
+        Locale.current.region?.identifier.uppercased() ?? "US"
+    }
 }
 
 private struct RemoteProductsResponse: Decodable {
@@ -531,6 +616,8 @@ private struct RemoteProduct: Decodable {
         switch category {
         case "shoes": return .shoes
         case "accessories": return .accessories
+        case "electronics": return .electronics
+        case "styleTools", "style_tools", "style-tools": return .styleTools
         default: return .clothing
         }
     }

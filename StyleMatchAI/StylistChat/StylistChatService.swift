@@ -109,7 +109,7 @@ final class StylistChatService: ObservableObject {
     }
 
     private static func defaultTransport() -> StylistChatTransport {
-        guard let configuration = StylistChatConfiguration.fromSecretsProvider() else {
+        guard let configuration = StylistChatConfiguration.production else {
             return FailingChatTransport(error: StylistChatError.missingConfiguration)
         }
         return LiveChatTransport(configuration: configuration)

@@ -20,8 +20,29 @@ private let styleMatchNavigationTargets: [StyleMatchNavigationTarget] = [
     StyleMatchNavigationTarget(id: "saved", title: "Saved Items", subtitle: "Review saved shopping and closet pieces", icon: "bookmark.fill", tab: .shop, keywords: ["saved", "wishlist", "shopping cards", "favorites", "saved items"])
 ]
 
+private enum HomeEngagementDestination: Hashable, Identifiable {
+    case todayRecommendation
+    case styleBriefDetail(title: String, detail: String)
+    case aiStylistLearning
+    case styleProgress
+
+    var id: String {
+        switch self {
+        case .todayRecommendation:
+            return "todayRecommendation"
+        case .styleBriefDetail(let title, let detail):
+            return "styleBriefDetail-\(title)-\(detail)"
+        case .aiStylistLearning:
+            return "aiStylistLearning"
+        case .styleProgress:
+            return "styleProgress"
+        }
+    }
+}
+
 struct HomeView: View {
     @Binding var selectedTab: AppTab
+    var navigationResetID = 0
     var feedbackPrompt: ScheduledFeedbackPrompt?
     var onHomeAppear: () -> Void = {}
     var onFeedbackWornAnswer: (ScheduledFeedbackPrompt, Bool) -> Void = { _, _ in }
@@ -29,6 +50,7 @@ struct HomeView: View {
     var onFeedbackDislikeReason: (ScheduledFeedbackPrompt, DislikeReason) -> Void = { _, _ in }
     var onFeedbackDismiss: () -> Void = {}
     var onFeedbackComplete: () -> Void = {}
+    var onSelectTab: ((AppTab) -> Void)?
     @AppStorage("profileName") private var profileName = ""
     @AppStorage("weather") private var weather = ""
     @AppStorage("weatherCondition") private var weatherCondition = ""
@@ -44,9 +66,10 @@ struct HomeView: View {
     @AppStorage("wishlistProductNamesData") private var wishlistProductNamesData = Data()
     @State private var navigationQuery = ""
     @State private var outfitHistoryQuery = ""
+    @State private var homeEngagementPath: [HomeEngagementDestination] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $homeEngagementPath) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     premiumHeader
@@ -96,8 +119,144 @@ struct HomeView: View {
                     .accessibilityLabel("Open Profile")
                 }
             }
+            .navigationDestination(for: HomeEngagementDestination.self) { destination in
+                homeEngagementDestination(destination)
+            }
             .onAppear(perform: onHomeAppear)
+            .styleMatchOnChange(of: navigationResetID) { _ in
+                homeEngagementPath.removeAll()
+            }
         }
+    }
+
+    @ViewBuilder
+    private func homeEngagementDestination(_ destination: HomeEngagementDestination) -> some View {
+        switch destination {
+        case .todayRecommendation:
+            homeEngagementScroll(title: "Today's Style Brief") {
+                homeSummaryCard(
+                    icon: "sun.max.fill",
+                    title: recommendedOutfitTitle,
+                    rows: [
+                        "Weather: \(homeWeatherSnapshot.briefText)",
+                        "Occasion: \(calendarBriefText)",
+                        "Outfit checklist: \(closetItemsToWearText)",
+                        "Missing pieces: \(missingPieceText)"
+                    ]
+                )
+                Button {
+                    selectedTab = .closet
+                } label: {
+                    homeDestinationRow(icon: "tshirt.fill", title: "Open Closet", detail: "Review saved items used in this recommendation.")
+                }
+                .buttonStyle(.plain)
+                Button {
+                    selectedTab = .shop
+                } label: {
+                    homeDestinationRow(icon: "bag.fill", title: "Shop Missing Pieces", detail: shoppingBriefText)
+                }
+                .buttonStyle(.plain)
+            }
+        case .styleBriefDetail(let title, let detail):
+            homeEngagementScroll(title: title) {
+                homeSummaryCard(
+                    icon: "info.circle.fill",
+                    title: title,
+                    rows: [detail, "This uses local profile, closet, weather, saved scans, or shopping data already available on this device."]
+                )
+            }
+        case .aiStylistLearning:
+            homeEngagementScroll(title: "AI Stylist Learning") {
+                homeSummaryCard(
+                    icon: "sparkles",
+                    title: "Learning Progress: \(learningProgressPercent)%",
+                    rows: [
+                        "Favorite fit: \(favoriteFitText)",
+                        "Budget: \(budgetLevelText)",
+                        "Brands: \(favoriteBrandListText.replacingOccurrences(of: "\n", with: ", "))",
+                        "\(StyleMatchHomeDisplay.countText(homeScans.count, singular: "saved scan"))"
+                    ]
+                )
+                Button {
+                    selectedTab = .ai
+                } label: {
+                    homeDestinationRow(icon: "bubble.left.and.bubble.right.fill", title: "Chat with Stylist", detail: "Ask for outfit advice using your current local context.")
+                }
+                .buttonStyle(.plain)
+            }
+        case .styleProgress:
+            homeEngagementScroll(title: "Style Progress") {
+                homeSummaryCard(
+                    icon: "chart.line.uptrend.xyaxis",
+                    title: "Progress Snapshot",
+                    rows: [
+                        "Current score: \(latestScoreText)",
+                        "Most worn signal: \(mostWornText)",
+                        "\(StyleMatchHomeDisplay.countText(homeScans.count, singular: "saved scan"))",
+                        "Score history opens in the existing Scan tab."
+                    ]
+                )
+                Button {
+                    selectedTab = .scan
+                } label: {
+                    homeDestinationRow(icon: "clock.arrow.circlepath", title: "Open Scan History", detail: "Review saved scans and compare recent outfits.")
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func homeEngagementScroll<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                content()
+            }
+            .padding()
+        }
+        .scrollContentBackground(.hidden)
+        .appScreenBackground(.home)
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func homeSummaryCard(icon: String, title: String, rows: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: icon)
+                .font(.headline)
+                .fontWeight(.bold)
+            ForEach(rows.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }, id: \.self) { row in
+                Label(row, systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .appCard(.home, radius: 14)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func homeDestinationRow(icon: String, title: String, detail: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(AppTab.home.palette.accent)
+                .frame(width: 34, height: 34)
+                .background(AppTab.home.palette.accent.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding()
+        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+        .appCard(.home, radius: 10)
+        .contentShape(Rectangle())
     }
 
     private var smartNavigationCard: some View {
@@ -190,11 +349,25 @@ struct HomeView: View {
 
     private func navigate(to target: StyleMatchNavigationTarget) {
         navigationQuery = ""
+        selectTab(target.tab)
+    }
+
+    private func selectTab(_ tab: AppTab) {
+        if let onSelectTab {
+            onSelectTab(tab)
+            return
+        }
+
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            selectedTab = target.tab
+            selectedTab = tab
         }
+    }
+
+    private func showHomeEngagement(_ destination: HomeEngagementDestination) {
+        guard homeEngagementPath.last != destination else { return }
+        homeEngagementPath.append(destination)
     }
 
     private var premiumHeader: some View {
@@ -229,16 +402,12 @@ struct HomeView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.78)
 
-                Text(scoreRatingTitle(for: latestScoreValue))
+                Text(latestScan == nil ? "Scan an outfit to get a score" : scoreRatingTitle(for: latestScoreValue))
                     .font(.subheadline)
                     .fontWeight(.bold)
 
                 scoreStars(for: latestScoreValue)
 
-                Text("↑ +4 since yesterday")
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.green)
             }
 
             Spacer()
@@ -257,7 +426,7 @@ struct HomeView: View {
                 }
                 .frame(width: 64, height: 64)
 
-                Text("AI Confidence: High")
+                Text(latestScan == nil ? "No saved result" : "Latest saved result")
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundStyle(.secondary)
@@ -278,34 +447,52 @@ struct HomeView: View {
                 }
                 .buttonStyle(.plain)
                 homeSignal(icon: "person.fill.checkmark", text: outfitMoodText, tint: AppTab.closet.palette.accent)
-                homeSignal(icon: "tshirt.fill", text: StyleMatchHomeDisplay.closetItemLabel(closetItemCount), tint: AppTab.scan.palette.accent)
+                homeSignal(
+                    icon: "tshirt.fill",
+                    text: StyleMatchHomeDisplay.closetItemLabel(closetItemCount),
+                    tint: AppTab.scan.palette.accent,
+                    accessibilityLabel: "Open Virtual Closet, \(closetItemCount) \(closetItemCount == 1 ? "item" : "items")",
+                    accessibilityHint: "Opens your saved closet items."
+                ) {
+                    selectedTab = .closet
+                }
             }
         }
     }
 
     private var styleBriefCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "sun.max.fill")
-                    .font(.title2)
-                    .foregroundStyle(.white)
-                    .frame(width: 48, height: 48)
-                    .background(AppTab.home.palette.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Today's Recommendation")
+            Button {
+                showHomeEngagement(.todayRecommendation)
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "sun.max.fill")
                         .font(.title2)
-                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                        .frame(width: 48, height: 48)
+                        .background(AppTab.home.palette.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .accessibilityHidden(true)
 
-                    Text("Your personal stylist checked the day before you get dressed.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Today's Recommendation")
+                            .font(.title2)
+                            .fontWeight(.bold)
+
+                        Text("Your personal stylist checked the day before you get dressed.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer()
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open Today's Style Brief")
+            .accessibilityHint("Opens Today's Style Brief")
 
             recommendedOutfitHero
 
@@ -341,7 +528,7 @@ struct HomeView: View {
 
                 Spacer()
 
-                Text("Projected: 95")
+                Text(closetItems.isEmpty ? "Closet needed" : "From your closet")
                     .font(.caption)
                     .fontWeight(.bold)
                     .foregroundStyle(.green)
@@ -381,53 +568,74 @@ struct HomeView: View {
     }
 
     private func styleBriefRow(icon: String, title: String, detail: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .fontWeight(.bold)
-                .foregroundStyle(AppTab.home.palette.accent)
-                .frame(width: 28, height: 28)
-                .background(AppTab.home.palette.accent.opacity(0.12))
-                .clipShape(Circle())
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.secondary)
-
-                Text(detail)
+        Button {
+            showHomeEngagement(.styleBriefDetail(title: title, detail: detail))
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
                     .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+                    .fontWeight(.bold)
+                    .foregroundStyle(AppTab.home.palette.accent)
+                    .frame(width: 28, height: 28)
+                    .background(AppTab.home.palette.accent.opacity(0.12))
+                    .clipShape(Circle())
 
-            Spacer(minLength: 0)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+
+                    Text(detail)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityHint("Opens detail")
     }
 
     private var personalStylistDashboard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.title2)
-                    .foregroundStyle(AppTab.ai.palette.accent)
-                    .frame(width: 44, height: 44)
-                    .background(AppTab.ai.palette.accent.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            Button {
+                showHomeEngagement(.aiStylistLearning)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles")
+                        .font(.title2)
+                        .foregroundStyle(AppTab.ai.palette.accent)
+                        .frame(width: 44, height: 44)
+                        .background(AppTab.ai.palette.accent.opacity(0.14))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("AI Personal Stylist")
-                        .font(.title3)
-                        .fontWeight(.bold)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("AI Personal Stylist")
+                            .font(.title3)
+                            .fontWeight(.bold)
 
-                    Text(aiDailySummary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        Text(aiDailySummary)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer(minLength: 0)
                 }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open AI stylist learning details")
+            .accessibilityHint("Opens AI stylist learning details")
 
             AIStyleInsightCard(
                 tab: .home,
@@ -480,6 +688,7 @@ struct HomeView: View {
                 Label("Outfit History", systemImage: "clock.arrow.circlepath")
                     .font(.title2)
                     .fontWeight(.bold)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -571,54 +780,71 @@ struct HomeView: View {
     }
 
     private var styleProgressCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("Style Progress", systemImage: "chart.line.uptrend.xyaxis")
-                    .font(.headline)
+        Button {
+            showHomeEngagement(.styleProgress)
+        } label: {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Label("Style Progress", systemImage: "chart.line.uptrend.xyaxis")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
 
-                Spacer()
+                    Spacer()
 
-                Text("Score +6 this month")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.green.opacity(0.12))
-                    .clipShape(Capsule())
+                    Text(StyleMatchHomeDisplay.countText(homeScans.count, singular: "saved scan"))
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.green.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    progressMetric(title: "Current Score", value: latestScoreText, icon: "star.fill", tint: AppTab.ai.palette.accent)
+                    progressMetric(title: "Most Worn", value: mostWornText, icon: "shoe.2.fill", tint: Color(hex: 0x5B57D6))
+                }
             }
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                progressMetric(title: "Current Score", value: latestScoreText, icon: "star.fill", tint: AppTab.ai.palette.accent)
-                progressMetric(title: "Most Worn", value: mostWornText, icon: "shoe.2.fill", tint: Color(hex: 0x5B57D6))
-            }
+            .padding()
+            .appCard(.home, radius: 16)
+            .contentShape(Rectangle())
         }
-        .padding()
-        .appCard(.home, radius: 16)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open style progress")
+        .accessibilityHint("Opens style progress")
     }
 
     private func progressMetric(title: String, value: String, icon: String, tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: icon)
-                .font(.headline)
-                .foregroundStyle(tint)
+        Button {
+            showHomeEngagement(.styleProgress)
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: icon)
+                    .font(.headline)
+                    .foregroundStyle(tint)
 
-            Text(title)
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
 
-            Text(value)
-                .font(.title3)
-                .fontWeight(.bold)
-                .lineLimit(2)
-                .minimumScaleFactor(0.78)
+                Text(value)
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
+            }
+            .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
+            .padding(12)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
-        .frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading)
-        .padding(12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .accessibilityLabel("\(title), \(value)")
     }
 
     private var aiDailySummary: String {
@@ -701,8 +927,16 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
-    private func homeSignal(icon: String, text: String, tint: Color) -> some View {
-        HStack(spacing: 10) {
+    @ViewBuilder
+    private func homeSignal(
+        icon: String,
+        text: String,
+        tint: Color,
+        accessibilityLabel: String? = nil,
+        accessibilityHint: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        let content = HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.subheadline)
                 .fontWeight(.bold)
@@ -710,6 +944,7 @@ struct HomeView: View {
                 .frame(width: 30, height: 30)
                 .background(tint.opacity(0.14))
                 .clipShape(Circle())
+                .accessibilityHidden(true)
 
             Text(text)
                 .font(.subheadline)
@@ -725,6 +960,20 @@ struct HomeView: View {
         .padding(.vertical, 8)
         .background(Color(.secondarySystemBackground).opacity(0.78))
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(Rectangle())
+
+        if let action {
+            Button(action: action) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel ?? text)
+            .accessibilityHint(accessibilityHint ?? "")
+            .accessibilityAddTraits(.isButton)
+        } else {
+            content
+        }
     }
 
     private var quickActionsSection: some View {
@@ -732,6 +981,7 @@ struct HomeView: View {
             Text("Quick Actions")
                 .font(.title2)
                 .fontWeight(.bold)
+                .accessibilityAddTraits(.isHeader)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 quickAction(icon: "camera.viewfinder", title: "Analyze", tab: .scan, tint: AppTab.scan.palette.accent)
@@ -746,7 +996,7 @@ struct HomeView: View {
 
     private func quickAction(icon: String, title: String, tab: AppTab, tint: Color) -> some View {
         Button {
-            selectedTab = tab
+            selectTab(tab)
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: icon)
@@ -755,6 +1005,7 @@ struct HomeView: View {
                     .frame(width: 42, height: 42)
                     .background(tint.opacity(0.14))
                     .clipShape(Circle())
+                    .accessibilityHidden(true)
 
                 Text(title)
                     .font(.headline)
@@ -769,12 +1020,17 @@ struct HomeView: View {
                     .font(.footnote)
                     .fontWeight(.semibold)
                     .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .frame(minHeight: 74)
         .padding(.horizontal, 14)
         .appCard(.home, radius: 16)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHint("Opens the \(title) tab")
     }
 
     private var greeting: String {
@@ -840,7 +1096,7 @@ struct HomeView: View {
 
     private var weatherConditionText: String {
         let trimmed = weatherCondition.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty || trimmed == "Mild" ? "Sunny" : trimmed
+        return trimmed.isEmpty || trimmed == "Mild" ? "Weather unavailable" : trimmed
     }
 
     private var homeWeatherSnapshot: HomeWeatherSnapshot {
@@ -851,7 +1107,7 @@ struct HomeView: View {
         let event = plannedOccasion.trimmingCharacters(in: .whitespacesAndNewlines)
         let code = dressCode.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedEvent = event.isEmpty ? "No calendar access yet" : event
-        let resolvedCode = code.isEmpty ? "smart casual" : code.lowercased()
+        let resolvedCode = code.isEmpty ? "No dress code saved" : code
         return "\(resolvedEvent), \(resolvedCode)"
     }
 
@@ -871,15 +1127,12 @@ struct HomeView: View {
     }
 
     private var recommendedOutfitBriefText: String {
-        let recommendation = closetItemsToWearText.hasPrefix("Add closet pieces")
-            ? "Smart casual starter look"
-            : closetItemsToWearText
-        return "\(recommendation) • Projected: 95"
+        closetItemsToWearText
     }
 
     private var recommendedOutfitTitle: String {
         closetItemsToWearText.hasPrefix("Add closet pieces")
-            ? "Smart casual starter look"
+            ? "Add closet pieces to build a look"
             : closetItemsToWearText
     }
 
@@ -892,13 +1145,9 @@ struct HomeView: View {
             return Array(closetPieces)
         }
 
-        let fallback = [
-            RecommendedOutfitPiece(title: "Navy Polo", icon: "tshirt.fill"),
-            RecommendedOutfitPiece(title: "Chinos", icon: "figure.stand"),
-            RecommendedOutfitPiece(title: "White Sneakers", icon: "shoe.2.fill")
-        ]
-
-        return Array((closetPieces + fallback).prefix(3))
+        return closetPieces.isEmpty
+            ? [RecommendedOutfitPiece(title: "Add a closet piece", icon: "plus.circle.fill")]
+            : Array(closetPieces.prefix(3))
     }
 
     private var laundryBriefText: String {
@@ -912,7 +1161,7 @@ struct HomeView: View {
             return "Check \(StyleMatchHomeDisplay.countText(count, singular: "light or gym item")) before wearing."
         }
 
-        return "White sneakers and gym pieces may need a quick refresh."
+        return "No laundry cues from your saved closet."
     }
 
     private var missingPieceText: String {
@@ -930,11 +1179,11 @@ struct HomeView: View {
             return text.contains("accessor") || text.contains("belt") || text.contains("watch")
         }
 
-        return hasAccessories ? "No urgent gap today." : "A belt or watch would finish the look."
+        return hasAccessories ? "No obvious gap in saved items." : "No accessories are saved yet."
     }
 
     private var shouldShowShoppingBrief: Bool {
-        missingPieceText != "No urgent gap today." || wishlistCount > 0
+        missingPieceText != "No obvious gap in saved items." || wishlistCount > 0
     }
 
     private var shoppingBriefText: String {
@@ -942,7 +1191,7 @@ struct HomeView: View {
             return "Review \(StyleMatchHomeDisplay.countText(wishlistCount, singular: "saved item")) before buying anything new."
         }
 
-        return missingPieceText == "No urgent gap today." ? "No shopping needed today." : "Shop only if the missing piece fits at least three outfits."
+        return missingPieceText == "No obvious gap in saved items." ? "No shopping need found in saved items." : "Review your saved items before shopping."
     }
 
     private var weatherTemperatureText: String {
@@ -964,11 +1213,7 @@ struct HomeView: View {
             return savedOccasion
         }
 
-        if savedDressCode.localizedCaseInsensitiveContains("casual") {
-            return "Casual Friday"
-        }
-
-        return savedDressCode.isEmpty ? "Casual Friday" : savedDressCode
+        return savedDressCode.isEmpty ? "No occasion saved" : savedDressCode
     }
 
     private var favoriteColorText: String {
@@ -986,12 +1231,12 @@ struct HomeView: View {
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
 
-        return savedColor ?? "Blue"
+        return savedColor ?? "Not set"
     }
 
     private var favoriteFitText: String {
         let trimmed = fitPreference.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? "Athletic" : trimmed
+        return trimmed.isEmpty ? "Not set" : trimmed
     }
 
     private var budgetLevelText: String {
@@ -1005,7 +1250,7 @@ struct HomeView: View {
         if text.contains("25") || text.localizedCaseInsensitiveContains("budget") {
             return "$"
         }
-        return "$$"
+        return "Not set"
     }
 
     private var favoriteBrandListText: String {
@@ -1134,11 +1379,13 @@ private struct HomeStoredScan: Codable {
     let score: Int
     let analysis: OutfitAnalysisResult?
     let firstScannedAt: Date
+    let customTitle: String?
 
     private enum CodingKeys: String, CodingKey {
         case score
         case analysis
         case firstScannedAt
+        case customTitle
     }
 
     var id: String {
@@ -1146,6 +1393,11 @@ private struct HomeStoredScan: Codable {
     }
 
     var displayTitle: String {
+        if let customTitle,
+           !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return customTitle
+        }
+
         if let analysis {
             let text = searchableText(for: analysis)
             let color = analysis.colorPalette

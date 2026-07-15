@@ -42,14 +42,13 @@ enum AIStyleAdvisor {
     }
 
     static func ask(screen: String, prompt: String, extraContext: String = "") async throws -> String {
-        guard let apiKey = OpenAIKeychain.loadAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !apiKey.isEmpty else {
+        guard let session = StyleMatchAccountSessionStore.load(), session.expiresAt > Date() else {
             throw AIStyleAdvisorError.missingAPIKey
         }
 
         let savedModel = UserDefaults.standard.string(forKey: "openAIModel") ?? "gpt-4o-mini"
         let model = savedModel == "gpt-5.5" ? "gpt-4o-mini" : savedModel
-        let client = OpenAIStylistClient(apiKey: apiKey, model: model)
+        let client = OpenAIStylistClient(apiKey: "", model: model)
         return try await client.askStylist(
             profile: profile(screen: screen, extraContext: extraContext),
             question: prompt
@@ -161,7 +160,6 @@ enum AIStyleAdvisor {
           Occasion/Formality: \(analysis.occasionFit); \(analysis.formality)
           Environment: \(analysis.environment)
           Lighting/Image quality: \(analysis.imageQuality)
-          Skin tone style note: \(analysis.skinToneStyleNote)
           Style notes: \(analysis.summary)
           Confidence: \(confidences)
         """
@@ -296,8 +294,11 @@ struct AIStyleInsightCard: View {
                         } label: {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 34))
+                                .frame(width: 44, height: 44)
                         }
                         .disabled(isSendingMessage || chatInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Send stylist message")
+                        .accessibilityHint("Sends your question to the stylist")
                     }
                     .padding(.horizontal)
                     .padding(.bottom, 12)
@@ -441,7 +442,7 @@ struct AIStyleInsightCard: View {
         If the customer says hello, greet them naturally and invite a style question.
         If the customer asks what you know about them, explain only what StyleMatch Pro can infer from saved style preferences, closet items, weather, and outfit scans. Be honest about anything unknown.
         If the customer asks you to read or explain their score, use the latest saved scan score from StyleMatch Pro context. Say the score, the match rating if available, why it received that score, and what would improve it. Do not create a new score.
-        Use saved scan context when relevant: score, detected clothing, colors, occasion, skin tone style note, lighting/image quality, and style notes.
+        Use saved scan context when relevant: score, detected clothing, colors, occasion, lighting/image quality, and style notes.
         Do not claim to know race, ethnicity, identity, private life, or personal details that are not in the app.
         Keep the reply conversational, premium, respectful, and under 140 words.
         Use plain text only. Do not use markdown symbols.

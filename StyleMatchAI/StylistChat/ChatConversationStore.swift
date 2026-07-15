@@ -11,8 +11,8 @@ final class ChatConversationStore: ObservableObject {
     private let lock = NSRecursiveLock()
     private let maxConversations = 10
 
-    init(fileURL: URL? = nil) {
-        let resolvedURL = fileURL ?? Self.defaultFileURL()
+    init(fileURL: URL? = nil, userID: String? = nil) {
+        let resolvedURL = fileURL ?? Self.defaultFileURL(userID: userID)
         self.fileURL = resolvedURL
         self.backupURL = resolvedURL.deletingLastPathComponent().appendingPathComponent("\(resolvedURL.lastPathComponent).bak")
         conversations = Self.load(fileURL: resolvedURL, backupURL: backupURL)
@@ -36,6 +36,13 @@ final class ChatConversationStore: ObservableObject {
         defer { lock.unlock() }
 
         conversations = []
+        try? FileManager.default.removeItem(at: fileURL)
+        try? FileManager.default.removeItem(at: backupURL)
+    }
+
+    static func deleteAll(for userID: String) {
+        let fileURL = defaultFileURL(userID: userID)
+        let backupURL = fileURL.deletingLastPathComponent().appendingPathComponent("\(fileURL.lastPathComponent).bak")
         try? FileManager.default.removeItem(at: fileURL)
         try? FileManager.default.removeItem(at: backupURL)
     }
@@ -92,8 +99,8 @@ final class ChatConversationStore: ObservableObject {
         return try? JSONDecoder().decode([ChatConversation].self, from: data)
     }
 
-    private static func defaultFileURL() -> URL {
-        let userID = PersonalStylistStorage.activeUserID()
+    private static func defaultFileURL(userID: String? = nil) -> URL {
+        let userID = userID ?? PersonalStylistStorage.activeUserID()
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return directory

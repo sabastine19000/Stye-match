@@ -48,7 +48,8 @@ struct OutfitAnalysisResult: Codable {
     let colorPaletteNotes: String
     let environment: String
     let imageQuality: String
-    let skinToneStyleNote: String
+    // Legacy decode-only compatibility for saved scans created before Build 1.7 privacy isolation.
+    let skinToneStyleNote: String?
     let detectedItemConfidences: [DetectedItemConfidence]
     let chatGPTStylistSections: [ChatGPTStylistSection]
     let suggestions: [String]
@@ -75,7 +76,7 @@ struct OutfitAnalysisResult: Codable {
         colorPaletteNotes: String? = nil,
         environment: String,
         imageQuality: String,
-        skinToneStyleNote: String,
+        skinToneStyleNote: String? = nil,
         detectedItemConfidences: [DetectedItemConfidence] = [],
         chatGPTStylistSections: [ChatGPTStylistSection] = [],
         suggestions: [String],
@@ -140,7 +141,7 @@ struct OutfitAnalysisResult: Codable {
                 : "Low confidence: colors were hard to read in this photo.")
         environment = try container.decode(String.self, forKey: .environment)
         imageQuality = try container.decode(String.self, forKey: .imageQuality)
-        skinToneStyleNote = try container.decode(String.self, forKey: .skinToneStyleNote)
+        skinToneStyleNote = try container.decodeIfPresent(String.self, forKey: .skinToneStyleNote)
         detectedItemConfidences = try container.decodeIfPresent([DetectedItemConfidence].self, forKey: .detectedItemConfidences) ?? []
         chatGPTStylistSections = try container.decodeIfPresent([ChatGPTStylistSection].self, forKey: .chatGPTStylistSections) ?? []
         suggestions = try container.decode([String].self, forKey: .suggestions)
@@ -258,14 +259,86 @@ struct OutfitScoreBreakdown: Codable {
     let accessoryUse: Int
 }
 
+enum StyleScoreCalibration {
+    static let maximumRawScore = 80
+
+    static func rawTotal(
+        colorHarmony: Int,
+        patternBalance: Int,
+        fitQuality: Int,
+        accessoryUse: Int
+    ) -> Int {
+        colorHarmony + patternBalance + fitQuality + accessoryUse
+    }
+
+    static func normalizedScore(rawTotal: Int) -> Int {
+        let clampedRawTotal = min(maximumRawScore, max(0, rawTotal))
+        return Int(round(Double(clampedRawTotal) / Double(maximumRawScore) * 100.0))
+    }
+
+    static func fitScore(for assessment: String) -> Int {
+        let text = assessment.lowercased()
+        let excellentEvidence = [
+            "verified excellent fit",
+            "excellent fit",
+            "exceptional fit",
+            "perfect fit"
+        ]
+        let strongEvidence = [
+            "tailored fit evidence",
+            "well-fitted",
+            "proper fit",
+            "clean fit",
+            "structured fit",
+            "tailored"
+        ]
+        let partialEvidence = [
+            "partial fit evidence",
+            "fit partially visible",
+            "mostly fitted",
+            "visible fit evidence"
+        ]
+        let poorEvidence = [
+            "too tight",
+            "too loose",
+            "oversized",
+            "bunching",
+            "dragging",
+            "unclear",
+            "poor"
+        ]
+
+        if excellentEvidence.contains(where: text.contains) { return 25 }
+        if strongEvidence.contains(where: text.contains) { return 23 }
+        if text.contains("not evaluated") || text.contains("unverified") { return 13 }
+        if partialEvidence.contains(where: text.contains) { return 19 }
+        if poorEvidence.contains(where: text.contains) { return 8 }
+        return 13
+    }
+}
+
 extension OutfitScoreBreakdown {
+    var scoredRawTotal: Int {
+        StyleScoreCalibration.rawTotal(
+            colorHarmony: colorHarmony,
+            patternBalance: patternBalance,
+            fitQuality: fitQuality,
+            accessoryUse: accessoryUse
+        )
+    }
+
+    var normalizedScore: Int {
+        StyleScoreCalibration.normalizedScore(rawTotal: scoredRawTotal)
+    }
+
     var stylistChatSummary: String {
         [
             "color harmony \(colorHarmony)/25",
             "pattern balance \(patternBalance)/20",
             "fit quality \(fitQuality)/25",
-            "occasion match \(occasionMatch)/20",
-            "accessories \(accessoryUse)/10"
+            "accessories \(accessoryUse)/10",
+            "raw score \(scoredRawTotal)/80 normalized to \(normalizedScore)/100",
+            "occasion is informational and excluded from scoring"
         ].joined(separator: "; ")
     }
 }
@@ -313,6 +386,91 @@ struct ClothingRecommendation: Identifiable, Codable {
         self.title = title
         self.reason = reason
         self.personalization = personalization
+    }
+}
+
+enum OutfitShareInsightBuilder {
+    static let coordinatedFallback = "This outfit is already well coordinated. Small accessory or fit adjustments may improve the score further."
+
+    static func insights(from analysis: OutfitAnalysisResult) -> [String] {
+        var insights: [String] = []
+        var seen = Set<String>()
+
+        func append(_ insight: String?) {
+            guard let insight else { return }
+            let normalized = insight.lowercased()
+            guard seen.insert(normalized).inserted else { return }
+            insights.append(insight)
+        }
+
+        for recommendation in analysis.recommendations where insights.count < 3 {
+            let evidence = [recommendation.category, recommendation.title, recommendation.reason]
+                .joined(separator: " ")
+            append(normalizedInsight(from: evidence))
+        }
+
+        for suggestion in analysis.suggestions where insights.count < 3 {
+            append(normalizedInsight(from: suggestion))
+        }
+
+        if insights.count < 2 {
+            for recommendation in analysis.recommendations where insights.count < 3 {
+                append(safeProducedTitle(recommendation.title))
+            }
+        }
+
+        return insights.isEmpty ? [coordinatedFallback] : Array(insights.prefix(3))
+    }
+
+    private static func normalizedInsight(from evidence: String) -> String? {
+        let text = evidence.lowercased()
+
+        if containsAny(text, terms: ["color", "palette", "contrast", "tone", "harmony"]) {
+            return "Improve color balance"
+        }
+
+        if containsAny(text, terms: ["shoe", "footwear", "sneaker", "loafer", "boot", "sandal", "slipper"]) {
+            return "Adjust footwear"
+        }
+
+        if containsAny(text, terms: ["accessor", "watch", "belt", "jewelry", "sunglasses", "finishing piece", "premium detail"]) {
+            return "Add a matching accessory"
+        }
+
+        if containsAny(text, terms: ["formal", "dressier", "polished", "professional", "office", "business"]) {
+            return "Replace one item with a more formal option"
+        }
+
+        if containsAny(text, terms: ["weather", "season", "temperature", "rain", "warm", "cold", "heat", "breathable", "umbrella", "wind"]) {
+            return "Improve seasonal suitability"
+        }
+
+        if containsAny(text, terms: ["fit", "tailor", "silhouette", "layer", "sleeve", "waist", "bunch", "hem", "pant", "shirt", "structure", "shape", "proportion"]) {
+            return "Improve fit or layering"
+        }
+
+        return nil
+    }
+
+    private static func safeProducedTitle(_ title: String) -> String? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercased = trimmed.lowercased()
+        let sensitiveTerms = [
+            "saved size", "size profile", "shirt size", "pants size", "shoe size",
+            "waist", "inseam", "profile", "weather:", "city:", "http://", "https://"
+        ]
+
+        guard (4...80).contains(trimmed.count),
+              !trimmed.contains("\n"),
+              !containsAny(lowercased, terms: sensitiveTerms) else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private static func containsAny(_ text: String, terms: [String]) -> Bool {
+        terms.contains { text.contains($0) }
     }
 }
 

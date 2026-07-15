@@ -9,7 +9,7 @@ struct FeatureFlags {
     static var saleNotificationsEnabled = false
     static var pushNotificationsEnabled = false
     static var remoteSyncEnabled = false
-    static var conversationalStylist = false
+    static var conversationalStylist = true
     static var alternateAIProvidersEnabled = false
 }
 

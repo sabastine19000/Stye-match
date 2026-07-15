@@ -97,7 +97,7 @@ enum StylistChatError: LocalizedError, Equatable {
         case .missingConfiguration:
             return "Chat is not configured yet."
         case .unauthorized:
-            return "Chat could not verify this device. Please try again later."
+            return "Sign in with Apple to use the live AI Stylist."
         case .payloadTooLarge:
             return "That message is too long. Please shorten it and try again."
         case .rateLimited:
