@@ -231,6 +231,7 @@ struct LoginWelcomeView: View {
                         nonce: nonce
                     )
                     try StyleMatchAccountSessionStore.save(session)
+                    StyleMatchAccountSessionDiagnostics.log(stage: "welcome_exchange_succeeded")
                     if payload.sourceUserID == "guest",
                        hasTransferableGuestData,
                        !AccountScopedStorage.hasUserData(for: payload.userID) {
@@ -242,6 +243,7 @@ struct LoginWelcomeView: View {
                     signInMessage = nil
                 } catch {
                     StyleMatchAccountSessionStore.delete()
+                    StyleMatchAccountSessionDiagnostics.log(stage: "welcome_exchange_failed")
                     signInMessage = (error as? StyleMatchAccountError)?.localizedDescription
                         ?? StyleMatchAccountError.serviceUnavailable.localizedDescription
                 }

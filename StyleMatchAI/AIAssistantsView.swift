@@ -1889,12 +1889,12 @@ struct AIAssistantsView: View {
 
     private var styleScoreInsightText: String {
         guard let scan = decodedRecentScans.first else {
-            return "Scan an outfit to unlock your first style score and improvement notes."
+            return "Scan an outfit to get your first style score and improvement notes."
         }
 
         let rating = scoreRatingTitle(for: scan.score)
         let itemText = scan.analysis?.safeDetectedClothingItems.prefix(2).joined(separator: " and ") ?? "your saved outfit"
-        let suggestion = scan.analysis?.suggestions.first ?? "Try one small upgrade, then rescan to compare."
+        let suggestion = scan.analysis?.suggestions.first ?? "Try one small improvement, then rescan to compare."
         return "Your latest outfit scored \(scan.score), which is \(rating.lowercased()). Style Match Pro noticed \(itemText). Next move: \(suggestion)"
     }
 

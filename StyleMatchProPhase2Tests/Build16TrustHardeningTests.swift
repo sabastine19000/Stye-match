@@ -170,7 +170,8 @@ final class Build16TrustHardeningTests: XCTestCase {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
         XCTAssertTrue(source.contains(".accessibilityLabel(\"Share Outfit\")"))
-        XCTAssertTrue(source.contains("Overall StyleMatch score, \\(result.score) out of 100"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(scanResultAccessibilitySummary(result))"))
+        XCTAssertTrue(source.contains("StyleMatchAccessibilityText.scanResultSummary("))
         XCTAssertTrue(source.contains(".accessibilityLabel(\"Share outfit card\")"))
         XCTAssertTrue(source.contains(".accessibilityLabel(\"Share card format\")"))
         XCTAssertTrue(source.contains(".accessibilityLabel(\"Share card appearance\")"))

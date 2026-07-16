@@ -316,7 +316,9 @@ struct StylistProfile: Codable, Identifiable {
         favoriteColors = try container.decodeIfPresent([String].self, forKey: .favoriteColors) ?? []
         dislikedColors = try container.decodeIfPresent([String].self, forKey: .dislikedColors) ?? []
         favoriteBrands = try container.decodeIfPresent([String].self, forKey: .favoriteBrands) ?? []
-        declaredUndertone = try container.decodeIfPresent(DeclaredUndertone.self, forKey: .declaredUndertone)
+        declaredUndertone = DeclaredUndertone.fromProfileInput(
+            try container.decodeIfPresent(String.self, forKey: .declaredUndertone)
+        )
         preferredFit = try container.decodeIfPresent(FitPreference.self, forKey: .preferredFit) ?? .unset
         styleGoals = try container.decodeIfPresent([String].self, forKey: .styleGoals) ?? []
         preferredNeutrals = try container.decodeIfPresent([String].self, forKey: .preferredNeutrals) ?? []
@@ -432,7 +434,6 @@ enum DeclaredUndertone: String, Codable, CaseIterable {
     case warm
     case cool
     case neutral
-    case olive
     case notSure
     case preferNotToSay
 
@@ -447,7 +448,6 @@ enum DeclaredUndertone: String, Codable, CaseIterable {
         case .warm: return "warm"
         case .cool: return "cool"
         case .neutral: return "neutral"
-        case .olive: return "olive"
         case .notSure: return nil
         case .preferNotToSay: return nil
         }
@@ -458,7 +458,6 @@ enum DeclaredUndertone: String, Codable, CaseIterable {
         case .warm: return "Warm"
         case .cool: return "Cool"
         case .neutral: return "Neutral"
-        case .olive: return "Olive"
         case .notSure: return "Not sure"
         case .preferNotToSay: return "Prefer not to say"
         }

@@ -1417,9 +1417,7 @@ struct ScanView: View {
                         .minimumScaleFactor(0.78)
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    "Overall StyleMatch score, \(result.score) out of 100, \(scoreRatingTitle(for: result.score))"
-                )
+                .accessibilityLabel(scanResultAccessibilitySummary(result))
             }
 
             detectedStyleContextCard(for: result, darkMode: true)
@@ -1670,6 +1668,25 @@ struct ScanView: View {
         }
     }
 
+    private func scanResultAccessibilitySummary(_ result: OutfitAnalysisResult) -> String {
+        var categories: [String] = []
+        if let breakdown = result.scoreBreakdown {
+            categories = [
+                "Color Harmony \(breakdown.colorHarmony) out of 25",
+                "Pattern Balance \(breakdown.patternBalance) out of 20",
+                "Fit Quality \(breakdown.fitQuality) out of 25",
+                "Accessory Use \(breakdown.accessoryUse) out of 10"
+            ]
+        }
+        return StyleMatchAccessibilityText.scanResultSummary(
+            score: result.score,
+            rating: scoreRatingTitle(for: result.score),
+            categoryScores: categories,
+            detectedItems: Array(result.safeDetectedClothingItems.prefix(6)),
+            recommendations: Array(result.suggestions.prefix(2))
+        )
+    }
+
     private func speakIfEnabled(_ script: VoiceScript) {
         guard voiceAssistantEnabled else { return }
         voiceAssistant.speak(script)
@@ -1828,6 +1845,8 @@ struct ScanView: View {
             }
             .frame(height: 7)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(points) out of \(maximum)")
     }
 
     private func scoreRawTotal(for breakdown: OutfitScoreBreakdown) -> Int {
@@ -2420,6 +2439,8 @@ struct ScanView: View {
                         TextField("Ask about this outfit...", text: $scanAIInput, axis: .vertical)
                             .lineLimit(1...4)
                             .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Ask AI about this scan")
+                            .accessibilityHint("Enter a question about the completed outfit scan")
 
                         Button {
                             sendScanAIMessage(scanAIInput, analysis: analysis)
@@ -2504,6 +2525,12 @@ struct ScanView: View {
                     .font(.subheadline)
                     .foregroundStyle(message.role == .customer ? scanBackground : .primary)
                     .lineSpacing(2)
+                    .accessibilityLabel(
+                        StyleMatchAccessibilityText.chatMessageLabel(
+                            role: message.role == .customer ? "You" : "Scan AI",
+                            content: message.text
+                        )
+                    )
 
                 HStack(spacing: 8) {
                     if message.isEdited {
@@ -2598,13 +2625,15 @@ struct ScanView: View {
 
             await MainActor.run {
                 let reason = scanAIFailureReason(error)
-                let fallbackReply = localScanAIReply(for: text, analysis: analysis, failureReason: reason)
+                let localAdvice = localScanAIReply(for: text, analysis: analysis)
+                let fallback = ScanAIFallbackPresentation.completed(localAdvice: localAdvice)
+                    ?? ScanAIFallbackPresentation.noAnswer(prompt: text)
                 scanAIChatMessages.append(
                     ScanAIChatMessage(
                         role: .assistant,
-                        text: fallbackReply,
-                        failedPrompt: text,
-                        failureReason: reason
+                        text: fallback.message,
+                        failedPrompt: fallback.retryPrompt,
+                        failureReason: fallback.retryPrompt == nil ? nil : reason
                     )
                 )
                 isScanAIThinking = false
@@ -2670,6 +2699,14 @@ struct ScanView: View {
     }
 
     private func scanAIFailureReason(_ error: Error) -> String {
+        if let diagnostic = error as? StylistChatDiagnosticError {
+            return scanAIChatFailureReason(diagnostic.category)
+        }
+
+        if let chatError = error as? StylistChatError {
+            return scanAIChatFailureReason(chatError)
+        }
+
         if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut:
@@ -2719,23 +2756,41 @@ struct ScanView: View {
         return "unknown"
     }
 
-    private func localScanAIReply(for message: String, analysis: OutfitAnalysisResult, failureReason: String) -> String {
+    private func scanAIChatFailureReason(_ error: StylistChatError) -> String {
+        switch error {
+        case .missingConfiguration:
+            return "missing_configuration"
+        case .unauthorized:
+            return "api_auth"
+        case .payloadTooLarge:
+            return "payload_too_large"
+        case .rateLimited:
+            return "rate_limit"
+        case .providerError:
+            return "provider_error"
+        case .invalidRequest:
+            return "invalid_request"
+        case .network:
+            return "network"
+        }
+    }
+
+    private func localScanAIReply(for message: String, analysis: OutfitAnalysisResult) -> String {
         let lower = message.lowercased()
-        let connectionNote = scanAIConnectionNote(for: failureReason)
 
         if lower.contains("why") || lower.contains("score") {
-            return "\(localScoreExplanation(for: analysis))\n\n\(connectionNote)"
+            return localScoreExplanation(for: analysis)
         }
 
         if lower.contains("improve") || lower.contains("better") || lower.contains("fix") {
-            return "\(localImprovementAdvice(for: analysis))\n\n\(connectionNote)"
+            return localImprovementAdvice(for: analysis)
         }
 
         if lower.contains("shoe") || lower.contains("accessor") || lower.contains("belt") || lower.contains("watch") {
-            return "\(localAccessoryAdvice(for: analysis))\n\n\(connectionNote)"
+            return localAccessoryAdvice(for: analysis)
         }
 
-        return "\(localScoreExplanation(for: analysis))\n\n\(localImprovementAdvice(for: analysis))\n\n\(connectionNote)"
+        return "\(localScoreExplanation(for: analysis))\n\n\(localImprovementAdvice(for: analysis))"
     }
 
     private func localScoreExplanation(for analysis: OutfitAnalysisResult) -> String {
@@ -2771,10 +2826,6 @@ struct ScanView: View {
         return """
         For this \(style) outfit, use \(shoeColor) sneakers or casual loafers depending on how polished you want it to feel. A simple black belt, silver watch, or low-profile bracelet would lift the accessory score without changing the outfit's casual direction.
         """
-    }
-
-    private func scanAIConnectionNote(for reason: String) -> String {
-        "Live ChatGPT is temporarily unavailable in this chat (\(reason)). This answer used the completed StyleMatch Pro scan facts; the score was not changed."
     }
 
     private func scanAIFailureMessage(for reason: String) -> String {
@@ -2817,7 +2868,43 @@ struct ScanView: View {
         analysis: OutfitAnalysisResult,
         conversation: [AIChatMessage]
     ) async throws -> String {
-        let structuredFacts = structuredOutfitFacts(for: analysis)
+        let scoreResult = lockedStyleScoreResult(from: analysis)
+        let detectedAttributes = lockedDetectedAttributes(from: analysis)
+        let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
+        let prompt = PersonalizationContextBuilder.buildScanFollowUpPrompt(
+            question: message,
+            score: scoreResult.total,
+            tier: scoreResult.tier,
+            breakdown: [
+                "accessories": scoreResult.breakdown.accessoryUse,
+                "color": scoreResult.breakdown.colorHarmony,
+                "fit": scoreResult.breakdown.fitQuality,
+                "occasion": scoreResult.breakdown.occasionMatch,
+                "pattern": scoreResult.breakdown.patternBalance
+            ],
+            garments: analysis.safeDetectedClothingItems,
+            colors: detectedAttributes.colors,
+            patterns: detectedAttributes.patterns,
+            fitAssessment: detectedAttributes.fitAssessment,
+            evidenceFacts: [
+                "color harmony: \(analysis.colorHarmony)",
+                "coordination: \(analysis.styleCoordination)",
+                "formality: \(analysis.formality)",
+                "seasonal evidence: \(analysis.seasonalMatch)",
+                "occasion evidence: \(analysis.occasionFit)"
+            ] + analysis.suggestions.prefix(3).map { "improvement evidence: \($0)" },
+            weatherFacts: phrasingContext.weatherFacts,
+            historyFacts: phrasingContext.historyFacts,
+            guardrails: [
+                "Keep objective score evidence distinct from personalized advice.",
+                "Keep the response under four sentences, warm and specific.",
+                StylistMessageComposer.aiPhrasingInstruction
+            ]
+        )
+        guard !prompt.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              StylistChatMessageLimit.isWithinLimit(prompt.message) else {
+            throw StylistChatError.payloadTooLarge
+        }
         let profile = StyleMatchStylistProfile(
             name: profileName,
             favoriteColors: favoriteColors,
@@ -2826,12 +2913,12 @@ struct ScanView: View {
             budget: budget,
             sizeProfile: sizeProfile,
             stylePreferences: stylePreferences,
-            occasions: activeScanOccasionText(environment: analysis.environment),
-            weather: weatherLocationText,
-            weatherPreferences: weatherLocationText,
-            dressCode: activeScanOccasionText(environment: analysis.environment),
+            occasions: "",
+            weather: "",
+            weatherPreferences: "",
+            dressCode: "",
             shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands); past purchases \(pastPurchases).",
-            pastOutfitRatings: "Current scan \(analysis.score)/100. StyleMatch Pro controls the score.",
+            pastOutfitRatings: "",
             frequentlyWornOutfits: favoriteOutfits,
             pastPurchases: pastPurchases,
             favoriteOutfits: favoriteOutfits,
@@ -2839,34 +2926,16 @@ struct ScanView: View {
             appContextSharingEnabled: true,
             appContext: """
             Current screen: Scan result AI Assist.
-            The customer is viewing this exact outfit analysis.
-            ChatGPT must use this structured analysis as screen awareness and must not create, change, or override any score.
-
-            Current outfit analysis JSON:
-            \(structuredFacts)
             """
         )
 
-        let question = """
-        Previous outfit analysis:
-        \(structuredFacts)
-
-        User question:
-        \(message)
-
-        Answer as StyleMatch Pro's Personal AI Stylist.
-        Give specific, actionable recommendations.
-        Include actual brand names, price ranges, stores, product types, or closet-item ideas when relevant.
-        Keep the response conversational, not JSON, because this is a chat follow-up.
-        Do not ask the customer to repeat the score, clothing, colors, lighting, weather, or detected items.
-        Do not generate a new score. Explain the existing StyleMatch Pro score only.
-        Use garment_colors/colorDetection only for colors and ignore background colors.
-        If the previous analysis says a style is casual, rugged casual, sleepwear, traditional wear, or another non-business category, do not call it business casual.
-        Keep the answer friendly, direct, professional, fashion-focused, and practical.
-        """
-
         let client = OpenAIStylistClient(apiKey: "", model: openAIModel)
-        return try await client.askStylist(profile: profile, messages: conversation, question: question)
+        return try await client.askStylist(
+            profile: profile,
+            messages: conversation,
+            question: prompt.message,
+            debugRequestLabel: "scan_follow_up"
+        )
     }
 
     private func generateDesignIdea(for analysis: OutfitAnalysisResult, userRequest: String) async throws -> String {
@@ -5705,11 +5774,33 @@ struct ScanView: View {
         }
 
         let client = OpenAIStylistClient(apiKey: "", model: openAIModel)
-        let structuredFacts = structuredOutfitFacts(for: analysis, identity: identity)
         let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
-        let enginePromptContext = PersonalizationContextBuilder.buildPersonalStylistEnginePromptContext(phrasingContext)
+        let detectedAttributes = lockedDetectedAttributes(from: analysis)
+        let scoreResult = lockedStyleScoreResult(from: analysis)
+        let prompt = PersonalizationContextBuilder.buildScanUpgradePrompt(
+            score: scoreResult.total,
+            tier: scoreResult.tier,
+            breakdown: [
+                "accessories": scoreResult.breakdown.accessoryUse,
+                "color": scoreResult.breakdown.colorHarmony,
+                "fit": scoreResult.breakdown.fitQuality,
+                "occasion": scoreResult.breakdown.occasionMatch,
+                "pattern": scoreResult.breakdown.patternBalance
+            ],
+            garments: analysis.safeDetectedClothingItems,
+            colors: detectedAttributes.colors,
+            patterns: detectedAttributes.patterns,
+            fitAssessment: detectedAttributes.fitAssessment,
+            weatherFacts: phrasingContext.weatherFacts,
+            historyFacts: phrasingContext.historyFacts,
+            guardrails: [
+                "Keep the response under four sentences, warm and specific.",
+                StylistMessageComposer.aiPhrasingInstruction
+            ]
+        )
         #if DEBUG
-        print("[StyleMatch PersonalStylist Context Debug]\n\(enginePromptContext)")
+        print("[Scan AI Upgrade Prompt] final_utf16_count=\(prompt.utf16Count) message_count=1 retained_history=\(prompt.retainedHistoryCount) retained_weather=\(prompt.retainedWeatherCount) outfit_trimmed=\(prompt.outfitWasTrimmed)")
+        assert(prompt.utf16Count < 2_000)
         #endif
         let profile = StyleMatchStylistProfile(
             name: "StyleMatch Customer",
@@ -5720,11 +5811,11 @@ struct ScanView: View {
             sizeProfile: sizeProfile,
             stylePreferences: stylePreferences,
             occasions: activeScanOccasionText(environment: analysis.environment),
-            weather: weatherLocationText,
-            weatherPreferences: weatherLocationText,
+            weather: "",
+            weatherPreferences: "",
             dressCode: activeScanOccasionText(environment: analysis.environment),
             shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands); past purchases \(pastPurchases).",
-            pastOutfitRatings: "Current scan \(analysis.score)/100; use saved scan history when available.",
+            pastOutfitRatings: "",
             frequentlyWornOutfits: favoriteOutfits,
             pastPurchases: pastPurchases,
             favoriteOutfits: favoriteOutfits,
@@ -5732,22 +5823,16 @@ struct ScanView: View {
             appContextSharingEnabled: shareAppContextWithChatGPT,
             appContext: """
             Current screen: Scan result.
-            StyleMatch AI score: \(analysis.score)/100. ChatGPT must not change this score.
-            Personal Stylist Intelligence context:
-            \(enginePromptContext)
-            Structured outfit facts:
-            \(structuredFacts)
             """
-        )
-
-        let question = buildScoreExplanationPrompt(
-            analysis: analysis,
-            structuredFacts: structuredFacts
         )
 
         Task {
             do {
-                let advice = try await client.askStylist(profile: profile, question: question)
+                let advice = try await client.askStylist(
+                    profile: profile,
+                    question: prompt.message,
+                    debugRequestLabel: "scan_upgrade"
+                )
                 await MainActor.run {
                     applyChatGPTRecommendation(
                         advice,
@@ -5799,136 +5884,6 @@ struct ScanView: View {
         - Do not invent score components or recalculate the score.
 
         \(analysisSchema(for: analysis.score))
-        """
-    }
-
-    private func buildScoreExplanationPrompt(analysis: OutfitAnalysisResult, structuredFacts: String) -> String {
-        let detectedAttributes = lockedDetectedAttributes(from: analysis)
-        let scoreResult = lockedStyleScoreResult(from: analysis)
-        let context = StyleScoreContext(
-            occasion: activeScanOccasionText(environment: analysis.environment),
-            weather: weatherLocationText,
-            temperature: currentWeatherTemperature.map { "\($0)°F" } ?? "unknown",
-            feelsLike: currentFeelsLikeTemperature.map { "\($0)°F" } ?? cleanWeatherFact(weatherFeelsLike),
-            humidity: cleanWeatherFact(weatherHumidity),
-            rainChance: cleanWeatherFact(weatherRainChance),
-            wind: cleanWeatherFact(weatherWindSpeed),
-            uvIndex: cleanWeatherFact(weatherUVIndex),
-            season: currentSeasonText,
-            timeOfDay: currentTimeOfDayText
-        )
-        let weatherGuardrails = weatherStylingGuardrails()
-        let stylistProfile = ProfileStore().currentProfile
-        let outfitMemories = OutfitMemoryStore().memories
-        let personalStylistMemorySection = PersonalizationContextBuilder.promptSection(
-            title: "PERSONAL STYLIST MEMORY",
-            profile: stylistProfile,
-            recentMemories: outfitMemories,
-            currentOccasion: currentScanOccasionForContext
-        )
-        let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
-        let occasionHonesty = occasionHonestyInstruction(for: analysis)
-
-        return """
-        You are StyleMatch AI's Personal Stylist. A rules-based scoring engine has already calculated this outfit's score. Your job is ONLY to explain WHY this score was given and offer improvement advice. Do not recalculate or contradict the score.
-
-        SCORE DATA (already final, do not change):
-        \(jsonString(scoreResult))
-
-        DETECTED OUTFIT ATTRIBUTES:
-        \(jsonString(detectedAttributes))
-
-        CONTEXT:
-        \(jsonString(context))
-
-        PERSONAL STYLIST INTELLIGENCE CONTEXT (computed deterministically on device; reword only, do not add facts):
-        \(PersonalizationContextBuilder.buildPersonalStylistEnginePromptContext(phrasingContext))
-
-        WEATHER STYLING RULES:
-        \(weatherGuardrails)
-
-        OCCASION HONESTY RULES:
-        \(occasionHonesty)
-
-        VISION CONFIDENCE RULES:
-        - Every detected item has its own confidence in FULL STRUCTURED SCAN FACTS.
-        - If an item confidence is below 85%, do not state it as certain. Use language like "I may have detected..." or "I'm not completely certain."
-        - Use only the garment terms provided by StyleMatch Pro; never echo internal labels like Textile, Apparel, Clothing, Fabric, or Person Wearing Outfit, and never invent garment names.
-        - Never recommend an item because you guessed it from the background, room, furniture, hanger, bed, floor, shopping bag, or non-worn object.
-        - Treat clothing, colors, patterns, accessories, footwear, and surroundings as separate checks. If any check is uncertain, say it is uncertain.
-        - If detected_style or outfitCategory is "Unrecognized Item" or occasion is "Category Uncertain", say StyleMatch Pro could not identify enough clothing detail and ask for a clearer scan. Do not invent a dress code, occasion, garment, or score rationale.
-        - If detected_style or outfitCategory is Sleepwear or Loungewear, describe it as sleepwear/loungewear for home comfort. Do not call it workwear, professional, office-ready, polished business, or business casual.
-
-        RECOMMENDATION VALIDATION:
-        Before writing each tip, validate it against weather, season, occasion, user preferences, budget, closet, saved sizes, and visible garment confidence. If the tip conflicts with any of those facts, replace it with a practical alternative.
-
-        AI PHRASING RULE:
-        \(StylistMessageComposer.aiPhrasingInstruction)
-        You may only reference facts explicitly provided in the context object.
-        Do not invent weather conditions, garments, colors, dates, prices, or deals.
-        Do not modify or reinterpret the score.
-        Keep the message under 4 sentences, warm and specific.
-
-        REASONING GUARDRAIL:
-        Before returning JSON, silently self-check:
-        - Would a professional stylist actually recommend this?
-        - Does it make sense for today's weather, season, and time of day?
-        - Am I recommending an item I did not detect or the user did not save?
-        - Is there enough confidence to make this statement?
-        - Did I avoid impossible, contradictory, duplicate, hallucinated, or weather-conflicting advice?
-
-        The numeric score above is fixed and must not be recalculated, corrected, downgraded, upgraded, or contradicted. Use the user's style profile below only to personalize how you explain the score and improvement tips, not to change the score or score breakdown.
-
-        \(personalStylistMemorySection)
-
-        FULL STRUCTURED SCAN FACTS:
-        \(structuredFacts)
-
-        Explain in plain, encouraging language why this outfit received this score, referencing the actual breakdown categories: color harmony, pattern balance, fit, occasion match, and accessories. Give 2-3 specific improvement tips that pass the recommendation validation and reasoning guardrail. Every sentence must trace to SCORE DATA, DETECTED OUTFIT ATTRIBUTES, CONTEXT, PERSONAL STYLIST INTELLIGENCE CONTEXT, PERSONAL STYLIST MEMORY, or FULL STRUCTURED SCAN FACTS. If a fact is missing, omit it silently. Return ONLY valid JSON:
-
-        {
-          "score_reasoning": "string",
-          "strengths": "string",
-          "improvement_tips": ["tip1", "tip2", "tip3"]
-        }
-        """
-    }
-
-    private func weatherStylingGuardrails() -> String {
-        let context = weatherLocationText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayContext = context.isEmpty ? "unknown weather" : context
-        let recommendation = weatherContextRecommendation(environment: result?.environment ?? "Unspecified")
-        if !recommendation.canGiveSpecificWeatherClothingAdvice {
-            return """
-            - Current weather context is \(displayContext).
-            - Weather severity is \(recommendation.severity.rawValue), but weather confidence is below 90%.
-            - Do not make specific weather clothing recommendations. Keep advice general until current weather is confirmed.
-            - Rationale: \(recommendation.rationale)
-            - Regional context: \(recommendation.regionalNote)
-            """
-        }
-
-        if recommendation.severity.isWarmOrHot {
-            return """
-            - Current weather is \(displayContext), which should be treated as hot-weather styling.
-            - Severity: \(recommendation.severity.rawValue). Effective temperature: \(recommendation.effectiveTemperature.map { "\($0)°F" } ?? "unknown").
-            - Use feels-like temperature over air temperature when both are available.
-            - Do not recommend a jacket, blazer, coat, sweater, shacket, structured layer, or heavy layer unless the customer explicitly asks for one or the weather context says cold.
-            - For polish in hot weather, recommend breathable fabrics, lighter colors, clean shoes, a belt, watch, sunglasses, moisture-friendly grooming, or a lightweight short-sleeve/linen/cotton shirt.
-            - If the occasion is work or smart casual, replace blazer/jacket advice with lightweight polish: crisp shirt, tailored lightweight pants, clean sneakers or loafers, belt, and watch.
-            - Rationale: \(recommendation.rationale)
-            - Regional context: \(recommendation.regionalNote)
-            """
-        }
-
-        return """
-        - Use the current weather context: \(displayContext).
-        - Severity: \(recommendation.severity.rawValue). Effective temperature: \(recommendation.effectiveTemperature.map { "\($0)°F" } ?? "unknown").
-        - Use feels-like temperature over air temperature when both are available.
-        - Only recommend jackets, blazers, coats, sweaters, or heavy layers when the weather and occasion make them practical.
-        - Never recommend jackets solely because it is evening or nighttime if the feels-like temperature remains warm.
-        - Rationale: \(recommendation.rationale)
-        - Regional context: \(recommendation.regionalNote)
         """
     }
 

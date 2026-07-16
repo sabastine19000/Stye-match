@@ -230,6 +230,74 @@ struct PersonalizationContextBuilder {
         """
     }
 
+    static func buildScanUpgradePrompt(
+        score: Int,
+        tier: String,
+        breakdown: [String: Int],
+        garments: [String],
+        colors: [String],
+        patterns: [String],
+        fitAssessment: String,
+        weatherFacts: [String],
+        historyFacts: [String],
+        guardrails: [String],
+        budget: Int = ScanUpgradePrompt.maximumUTF16Count
+    ) -> ScanUpgradePrompt {
+        ScanUpgradePrompt.build(
+            instruction: ScanUpgradePrompt.initialAdviceInstruction,
+            score: score,
+            tier: tier,
+            breakdown: breakdown,
+            garments: garments,
+            colors: colors,
+            patterns: patterns,
+            fitAssessment: fitAssessment,
+            evidenceFacts: [],
+            weatherFacts: weatherFacts,
+            historyFacts: historyFacts,
+            guardrails: guardrails,
+            budget: budget
+        )
+    }
+
+    static func buildScanFollowUpPrompt(
+        question: String,
+        score: Int,
+        tier: String,
+        breakdown: [String: Int],
+        garments: [String],
+        colors: [String],
+        patterns: [String],
+        fitAssessment: String,
+        evidenceFacts: [String],
+        weatherFacts: [String],
+        historyFacts: [String],
+        guardrails: [String],
+        budget: Int = ScanUpgradePrompt.maximumUTF16Count
+    ) -> ScanUpgradePrompt {
+        let trimmedQuestion = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let instruction = """
+        Answer the user's follow-up conversationally using only the completed StyleMatch scan facts below. Give specific, practical advice without claiming visual access beyond those facts. Keep the completed score objective and separate from personalized advice.
+        USER QUESTION:
+        \(trimmedQuestion)
+        """
+        return ScanUpgradePrompt.build(
+            instruction: instruction,
+            score: score,
+            tier: tier,
+            breakdown: breakdown,
+            garments: garments,
+            colors: colors,
+            patterns: patterns,
+            fitAssessment: fitAssessment,
+            evidenceFacts: evidenceFacts,
+            weatherFacts: weatherFacts,
+            historyFacts: historyFacts,
+            guardrails: guardrails,
+            budget: budget
+        )
+    }
+
     static func buildShoppingRecommendationPromptContext(_ reasonFacts: ProductRecommendationReasonFacts) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -587,6 +655,234 @@ struct PersonalizationContextBuilder {
 
     private static func currency(_ value: Double) -> String {
         "$\(Int(value.rounded()))"
+    }
+}
+
+struct ScanUpgradePrompt: Equatable {
+    static let maximumUTF16Count = 1_800
+    static let initialAdviceInstruction = "Explain this fixed StyleMatch score and give 2-3 practical tips. Use only these facts. Return JSON with score_reasoning, strengths, and improvement_tips."
+    static let immutableGuardrails = [
+        "<85% garment confidence=uncertain/not fact; ignore background/non-worn; object-only/non-outfit=ask worn photo; insufficient/unrecognized=admit, invent no garment/color/fit/occasion/reason; sleepwear/lounge=home, not work/professional/business casual; occasion needs evidence; no casual-to-business upgrade; weather specifics need high confidence else general; hot=no heavy layers/jackets/blazers/coats/sweaters unless supported/asked; validate profile/budget/closet/weather/outfit facts, omit conflicts/unknowns; final=factual/practical/consistent/nonduplicate/weather-safe; fixed scores: explain only, no recompute/reinterpret/change/contradict; scan facts only, no visual-inspection/unsupported claims"
+    ]
+
+    let message: String
+    let retainedHistoryCount: Int
+    let retainedWeatherCount: Int
+    let outfitWasTrimmed: Bool
+
+    var utf16Count: Int { message.utf16.count }
+
+    fileprivate static func build(
+        instruction: String,
+        score: Int,
+        tier: String,
+        breakdown: [String: Int],
+        garments: [String],
+        colors: [String],
+        patterns: [String],
+        fitAssessment: String,
+        evidenceFacts: [String],
+        weatherFacts: [String],
+        historyFacts: [String],
+        guardrails: [String],
+        budget: Int
+    ) -> ScanUpgradePrompt {
+        precondition(budget > 0)
+
+        var retainedHistory = stableUnique(historyFacts)
+        let retainedWeather = stableUnique(weatherFacts)
+        var retainedEvidence = stableUnique(evidenceFacts)
+        var outfit = OutfitFacts(
+            garments: stableUnique(garments),
+            colors: stableUnique(colors),
+            patterns: stableUnique(patterns),
+            fitAssessment: fitAssessment
+        )
+        let retainedGuardrails = stableUnique(immutableGuardrails + guardrails)
+        var message = encodedMessage(
+            instruction: instruction,
+            score: score,
+            tier: tier,
+            breakdown: breakdown,
+            outfit: outfit,
+            evidenceFacts: retainedEvidence,
+            weatherFacts: retainedWeather,
+            historyFacts: retainedHistory,
+            guardrails: retainedGuardrails
+        )
+
+        while message.utf16.count > budget, !retainedHistory.isEmpty {
+            retainedHistory.removeFirst()
+            message = encodedMessage(
+                instruction: instruction,
+                score: score,
+                tier: tier,
+                breakdown: breakdown,
+                outfit: outfit,
+                evidenceFacts: retainedEvidence,
+                weatherFacts: retainedWeather,
+                historyFacts: retainedHistory,
+                guardrails: retainedGuardrails
+            )
+        }
+
+        var outfitWasTrimmed = false
+        while message.utf16.count > budget {
+            let excess = message.utf16.count - budget
+            let candidates: [(Section, Int)] = [
+                (.fit, outfit.fitAssessment.utf16.count),
+                (.garments, outfit.garments.joined(separator: ", ").utf16.count),
+                (.patterns, outfit.patterns.joined(separator: ", ").utf16.count),
+                (.evidence, retainedEvidence.joined(separator: ", ").utf16.count)
+            ]
+            guard let longest = candidates.max(by: { $0.1 < $1.1 }), longest.1 > 0 else {
+                break
+            }
+
+            let target = max(0, longest.1 - excess - 1)
+            switch longest.0 {
+            case .fit:
+                outfit.fitAssessment = utf16Prefix(outfit.fitAssessment, limit: target)
+            case .garments:
+                outfit.garments = compact(outfit.garments, limit: target)
+            case .patterns:
+                outfit.patterns = compact(outfit.patterns, limit: target)
+            case .evidence:
+                retainedEvidence = compact(retainedEvidence, limit: target)
+            }
+            outfitWasTrimmed = true
+            message = encodedMessage(
+                instruction: instruction,
+                score: score,
+                tier: tier,
+                breakdown: breakdown,
+                outfit: outfit,
+                evidenceFacts: retainedEvidence,
+                weatherFacts: retainedWeather,
+                historyFacts: retainedHistory,
+                guardrails: retainedGuardrails
+            )
+        }
+
+        return ScanUpgradePrompt(
+            message: message,
+            retainedHistoryCount: retainedHistory.count,
+            retainedWeatherCount: retainedWeather.count,
+            outfitWasTrimmed: outfitWasTrimmed
+        )
+    }
+
+    private enum Section {
+        case fit
+        case garments
+        case patterns
+        case evidence
+    }
+
+    private struct OutfitFacts: Codable {
+        var garments: [String]
+        var colors: [String]
+        var patterns: [String]
+        var fitAssessment: String
+    }
+
+    private struct ScoreFacts: Codable {
+        let value: Int
+        let tier: String
+        let breakdown: [String: Int]
+    }
+
+    private struct Payload: Codable {
+        let score: ScoreFacts
+        let outfit: OutfitFacts
+        let evidence: [String]?
+        let weather: [String]
+        let history: [String]
+        let guardrails: [String]
+    }
+
+    private static func encodedMessage(
+        instruction: String,
+        score: Int,
+        tier: String,
+        breakdown: [String: Int],
+        outfit: OutfitFacts,
+        evidenceFacts: [String],
+        weatherFacts: [String],
+        historyFacts: [String],
+        guardrails: [String]
+    ) -> String {
+        let payload = Payload(
+            score: ScoreFacts(value: score, tier: tier, breakdown: breakdown),
+            outfit: outfit,
+            evidence: evidenceFacts.isEmpty ? nil : evidenceFacts,
+            weather: weatherFacts,
+            history: historyFacts,
+            guardrails: guardrails
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data = try! encoder.encode(payload)
+        let json = String(decoding: data, as: UTF8.self)
+        return "\(instruction) FACTS:\n\(json)"
+    }
+
+    private static func compact(_ values: [String], limit: Int) -> [String] {
+        guard limit > 0 else { return [] }
+        var result: [String] = []
+        var remaining = limit
+        for value in values where remaining > 0 {
+            let separatorCost = result.isEmpty ? 0 : 2
+            guard remaining > separatorCost else { break }
+            remaining -= separatorCost
+            let compacted = utf16Prefix(value, limit: remaining)
+            guard !compacted.isEmpty else { break }
+            result.append(compacted)
+            remaining -= compacted.utf16.count
+        }
+        return result
+    }
+
+    private static func stableUnique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
+    }
+
+    private static func utf16Prefix(_ value: String, limit: Int) -> String {
+        guard limit > 0, !value.isEmpty else { return "" }
+        let nsValue = value as NSString
+        guard nsValue.length > limit else { return value }
+        var end = limit
+        if end > 0 {
+            let last = nsValue.character(at: end - 1)
+            if (0xD800...0xDBFF).contains(last) {
+                end -= 1
+            }
+        }
+        return nsValue.substring(to: end)
+    }
+}
+
+struct ScanAIFallbackPresentation: Equatable {
+    static let friendlyOfflineMessage = "I’m temporarily unavailable online, but here’s my best advice based on your scan."
+
+    let message: String
+    let retryPrompt: String?
+
+    static func completed(localAdvice: String) -> ScanAIFallbackPresentation? {
+        let advice = localAdvice.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !advice.isEmpty else { return nil }
+        return ScanAIFallbackPresentation(
+            message: "\(friendlyOfflineMessage)\n\n\(advice)",
+            retryPrompt: nil
+        )
+    }
+
+    static func noAnswer(prompt: String) -> ScanAIFallbackPresentation {
+        ScanAIFallbackPresentation(
+            message: "I couldn’t produce a useful answer from this scan. Please try again.",
+            retryPrompt: prompt
+        )
     }
 }
 

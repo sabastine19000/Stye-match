@@ -312,7 +312,9 @@ struct ContentView: View {
             if mountedTabs.contains(.ai) {
                 preservedTab(.ai) {
                     if FeatureFlags.conversationalStylist {
-                        StylistChatView(voiceInputEnabled: false)
+                        StylistChatView(
+                            onSignInRequested: { selectedTab = .profile }
+                        )
                     } else {
                         StableAIFallbackView(selectedTab: $selectedTab)
                     }
@@ -321,7 +323,7 @@ struct ContentView: View {
 
             if mountedTabs.contains(.profile) {
                 preservedTab(.profile) {
-                    ProfileView(selectedTab: $selectedTab, voiceControlsEnabled: false)
+                    ProfileView(selectedTab: $selectedTab)
                 }
             }
         }
@@ -458,6 +460,15 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .zIndex(isSelected ? 1 : 0)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(
+            [isSelected ? "Selected" : "Not selected", badgeCount > 0 ? "\(badgeCount) new alerts" : nil]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
+        .accessibilityHint("Opens the \(title) tab")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private func refreshSaleWatcher() {

@@ -83,6 +83,35 @@ struct ChatRequest: Codable, Equatable {
     let stream: Bool
 }
 
+enum StylistChatMessageLimit {
+    static let maximumUTF16Length = 2_000
+    static let maximumPayloadMessages = 20
+    static let retainedConversationMessages = 12
+    static let limitMessage = "Messages are limited to 2,000 characters. Shorten your message before sending."
+
+    static func utf16Length(of text: String) -> Int {
+        text.utf16.count
+    }
+
+    static func trimmedForSending(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func isWithinLimit(_ text: String) -> Bool {
+        utf16Length(of: text) <= maximumUTF16Length
+    }
+
+    static func validationError(for messages: [ChatRequest.RequestMessage]) -> StylistChatError? {
+        guard messages.count <= maximumPayloadMessages else { return .payloadTooLarge }
+        for message in messages {
+            let trimmed = trimmedForSending(message.content)
+            guard !trimmed.isEmpty else { return .invalidRequest }
+            guard isWithinLimit(message.content) else { return .payloadTooLarge }
+        }
+        return nil
+    }
+}
+
 enum StylistChatError: LocalizedError, Equatable {
     case missingConfiguration
     case unauthorized
@@ -99,7 +128,7 @@ enum StylistChatError: LocalizedError, Equatable {
         case .unauthorized:
             return "Sign in with Apple to use the live AI Stylist."
         case .payloadTooLarge:
-            return "That message is too long. Please shorten it and try again."
+            return StylistChatMessageLimit.limitMessage
         case .rateLimited:
             return "You have hit the hourly limit. Try again soon."
         case .providerError:
@@ -109,5 +138,29 @@ enum StylistChatError: LocalizedError, Equatable {
         case .network:
             return "Could not connect to the stylist. Check your connection and try again."
         }
+    }
+}
+
+struct StylistChatDiagnosticError: LocalizedError, Equatable, CustomDebugStringConvertible {
+    let category: StylistChatError
+    let statusCode: Int?
+    let responseBody: String?
+    let requestID: String?
+    let endpoint: URL
+    let underlyingErrorDescription: String?
+
+    var errorDescription: String? { category.errorDescription }
+
+    var debugDescription: String {
+        [
+            "category=\(category)",
+            statusCode.map { "status=\($0)" },
+            responseBody.map { "body=\($0)" },
+            requestID.map { "request_id=\($0)" },
+            "endpoint=\(endpoint.absoluteString)",
+            underlyingErrorDescription.map { "underlying=\($0)" }
+        ]
+        .compactMap { $0 }
+        .joined(separator: " ")
     }
 }

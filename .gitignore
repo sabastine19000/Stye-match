@@ -1,4 +1,5 @@
 Secrets.xcconfig
+.dev.vars
 *.xcuserstate
 xcuserdata/
 **/xcuserdata/

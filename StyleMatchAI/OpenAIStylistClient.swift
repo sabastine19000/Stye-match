@@ -6,29 +6,63 @@ struct OpenAIStylistClient {
 
     static let systemInstruction = StyleMatchAIGuardrails.directOpenAIStylistSystemInstruction
 
-    func askStylist(profile: StyleMatchStylistProfile, question: String) async throws -> String {
-        try await askStylist(profile: profile, messages: [], question: question)
+    func askStylist(
+        profile: StyleMatchStylistProfile,
+        question: String,
+        debugRequestLabel: String? = nil
+    ) async throws -> String {
+        try await askStylist(
+            profile: profile,
+            messages: [],
+            question: question,
+            debugRequestLabel: debugRequestLabel
+        )
     }
 
-    func askStylist(profile: StyleMatchStylistProfile, messages: [AIChatMessage], question: String) async throws -> String {
+    func askStylist(
+        profile: StyleMatchStylistProfile,
+        messages: [AIChatMessage],
+        question: String,
+        debugRequestLabel: String? = nil
+    ) async throws -> String {
         guard let configuration = StylistChatConfiguration.production else {
             throw OpenAIStylistError.invalidResponse
         }
 
-        let requestMessages = messages.suffix(11).map { message in
-            ChatRequest.RequestMessage(
+        let preparedQuestion = StylistChatMessageLimit.trimmedForSending(question)
+        guard !preparedQuestion.isEmpty else { throw StylistChatError.invalidRequest }
+        guard StylistChatMessageLimit.isWithinLimit(preparedQuestion) else {
+            throw StylistChatError.payloadTooLarge
+        }
+        let recentMessages = messages.compactMap { message -> ChatRequest.RequestMessage? in
+            let content = StylistChatMessageLimit.trimmedForSending(message.text)
+            guard !content.isEmpty, StylistChatMessageLimit.isWithinLimit(content) else { return nil }
+            return ChatRequest.RequestMessage(
                 role: message.role == .customer ? "user" : "assistant",
-                content: message.text
+                content: content
             )
-        } + [ChatRequest.RequestMessage(role: "user", content: question)]
+        }
+        let requestMessages = Array(recentMessages.suffix(11))
+            + [ChatRequest.RequestMessage(role: "user", content: preparedQuestion)]
+        if let validationError = StylistChatMessageLimit.validationError(for: requestMessages) {
+            throw validationError
+        }
         let context = ChatContext(
-            profileSummary: profileContextBlock(profile: profile, question: question),
+            profileSummary: profileContextBlock(profile: profile, question: preparedQuestion),
             recentOutfits: conversationText(from: messages),
             scoreBreakdown: [profile.pastOutfitRatings, profile.appContext]
                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n")
         )
         let request = ChatRequest(messages: requestMessages, context: context, stream: true)
+        #if DEBUG
+        if let debugRequestLabel {
+            let bodyBytes = (try? JSONEncoder().encode(request).count) ?? -1
+            let maximumMessageUTF16 = requestMessages.map { $0.content.utf16.count }.max() ?? 0
+            print("[Stylist Request Size] label=\(debugRequestLabel) final_utf16_count=\(maximumMessageUTF16) encoded_body_bytes=\(bodyBytes) message_count=\(requestMessages.count)")
+            assert(requestMessages.allSatisfy { $0.content.utf16.count <= 2_000 })
+        }
+        #endif
         let transport = LiveChatTransport(configuration: configuration)
         var response = ""
 
@@ -36,8 +70,10 @@ struct OpenAIStylistClient {
             for try await token in transport.send(request) {
                 response += token
             }
+        } catch let error as StylistChatDiagnosticError {
+            throw error
         } catch let error as StylistChatError {
-            throw OpenAIStylistError.api(message: error.errorDescription ?? "The AI Stylist is unavailable right now.")
+            throw error
         } catch {
             throw OpenAIStylistError.api(message: "The AI Stylist is unavailable right now.")
         }

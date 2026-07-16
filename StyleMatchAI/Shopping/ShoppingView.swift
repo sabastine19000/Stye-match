@@ -1129,7 +1129,8 @@ struct ShoppingView: View {
                 }
         )
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(product.name), \(product.brand ?? product.retailer.name), \(deckPriceText(for: product))")
+        .accessibilityLabel(productAccessibilitySummary(product, action: "Like or skip product"))
+        .accessibilityHint("Use the Like and Skip buttons, or swipe right to like and left to skip")
     }
 
     private var feedbackRecommendedSection: some View {
@@ -2168,7 +2169,7 @@ struct ShoppingView: View {
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(viewModel.name), \(viewModel.retailerName), \(viewModel.priceText)")
+            .accessibilityLabel(productAccessibilitySummary(product, action: viewModel.actionTitle))
             .accessibilityHint("Opens this product through the retailer link")
 
             whyRecommendationButton(product: product, rationale: rationale)
@@ -2297,6 +2298,20 @@ struct ShoppingView: View {
 
     private func isWishlistProduct(_ product: AffiliateProduct) -> Bool {
         return store.wishlistProductIDs.contains(product.id)
+    }
+
+    private func productAccessibilitySummary(_ product: AffiliateProduct, action: String) -> String {
+        let viewModel = AffiliateProductViewModel(product: product)
+        let saleStatus = viewModel.saleBadgeText ?? (isRecentSaleEvent(productID: product.id) ? "New sale" : nil)
+        return StyleMatchAccessibilityText.shoppingProductSummary(
+            name: viewModel.name,
+            retailer: viewModel.retailerName,
+            price: viewModel.priceText,
+            saleStatus: saleStatus,
+            isFavorite: isFavoriteProduct(product),
+            isWishlist: isWishlistProduct(product),
+            action: action
+        )
     }
 
     private func toggleFavoriteProduct(_ product: AffiliateProduct) {

@@ -7,6 +7,13 @@ struct StyleMatchAccountSession: Codable, Equatable {
     let expiresAt: Date
 }
 
+enum StyleMatchLocalAccountIdentity {
+    static func isAppleConnected(defaults: UserDefaults = .standard) -> Bool {
+        defaults.string(forKey: "customerAccountMode") == "Sign in with Apple"
+            && !(defaults.string(forKey: "customerAppleUserID") ?? "").isEmpty
+    }
+}
+
 enum StyleMatchAccountError: LocalizedError {
     case authorizationIncomplete
     case configurationUnavailable
@@ -58,6 +65,7 @@ enum StyleMatchAppleNonce {
 enum StyleMatchAccountSessionStore {
     private static let service = "com.sabastine.stylematchai.account"
     private static let account = "worker-session"
+    static let didChangeNotification = Notification.Name("StyleMatchAccountSessionDidChange")
 
     static func load() -> StyleMatchAccountSession? {
         var query = baseQuery
@@ -78,7 +86,10 @@ enum StyleMatchAccountSessionStore {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         let status = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess { return }
+        if status == errSecSuccess {
+            NotificationCenter.default.post(name: didChangeNotification, object: nil)
+            return
+        }
         guard status == errSecItemNotFound else { throw StyleMatchAccountError.serviceUnavailable }
 
         var insertion = baseQuery
@@ -86,10 +97,12 @@ enum StyleMatchAccountSessionStore {
         guard SecItemAdd(insertion as CFDictionary, nil) == errSecSuccess else {
             throw StyleMatchAccountError.serviceUnavailable
         }
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 
     static func delete() {
         SecItemDelete(baseQuery as CFDictionary)
+        NotificationCenter.default.post(name: didChangeNotification, object: nil)
     }
 
     private static var baseQuery: [String: Any] {
@@ -98,6 +111,24 @@ enum StyleMatchAccountSessionStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+}
+
+enum StyleMatchAccountSessionDiagnostics {
+    static func log(stage: String, defaults: UserDefaults = .standard) {
+        #if DEBUG
+        let userID = defaults.string(forKey: "customerAppleUserID") ?? ""
+        let userHash = userID.isEmpty ? "none" : String(StylistChatAuthHeaders.sha256Hex(userID).prefix(8))
+        let session = StyleMatchAccountSessionStore.load()
+        let expiration: String
+        if let session {
+            expiration = session.expiresAt > Date() ? "valid" : "expired"
+        } else {
+            expiration = "missing"
+        }
+        let mode = defaults.string(forKey: "customerAccountMode") ?? "unset"
+        print("[StyleMatch Account] stage=\(stage) mode=\(mode) apple_user_hash=\(userHash) token_present=\(session != nil) expiration=\(expiration)")
+        #endif
     }
 }
 

@@ -2,6 +2,140 @@ import XCTest
 @testable import StyleMatchPro
 
 final class StylistChatServiceTests: XCTestCase {
+    func testMessageLimitAcceptsExactlyTwoThousandUTF16CodeUnits() {
+        let text = String(repeating: "a", count: 2_000)
+
+        XCTAssertEqual(StylistChatMessageLimit.utf16Length(of: text), 2_000)
+        XCTAssertTrue(StylistChatMessageLimit.isWithinLimit(text))
+    }
+
+    func testMessageLimitRejectsTwoThousandAndOneUTF16CodeUnits() {
+        let text = String(repeating: "a", count: 2_001)
+
+        XCTAssertEqual(StylistChatMessageLimit.utf16Length(of: text), 2_001)
+        XCTAssertFalse(StylistChatMessageLimit.isWithinLimit(text))
+    }
+
+    func testMessageLimitCountsEmojiAndComposedUnicodeAsUTF16CodeUnits() {
+        XCTAssertEqual(StylistChatMessageLimit.utf16Length(of: "😀"), 2)
+        XCTAssertEqual(StylistChatMessageLimit.utf16Length(of: "e\u{301}"), 2)
+        XCTAssertEqual("😀".count, 1)
+        XCTAssertEqual("e\u{301}".count, 1)
+    }
+
+    @MainActor
+    func testWhitespaceOnlyInputDoesNotSend() {
+        let transport = MockChatTransport(chunks: [])
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: temporaryStoreURL()),
+            transport: transport
+        )
+
+        service.send(" \n\t ")
+
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(service.activeConversation.messages.isEmpty)
+    }
+
+    @MainActor
+    func testInputOverLimitBeforeTrimmingSendsWhenTrimmedInputIsValid() async throws {
+        let transport = MockChatTransport(chunks: ["done"])
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: temporaryStoreURL()),
+            transport: transport
+        )
+        let input = " " + String(repeating: "a", count: 2_000) + " "
+
+        XCTAssertEqual(StylistChatMessageLimit.utf16Length(of: input), 2_002)
+        service.send(input)
+        try await waitUntil { !service.isStreaming }
+
+        let sent = try XCTUnwrap(transport.requests.last?.messages.last?.content)
+        XCTAssertEqual(StylistChatMessageLimit.utf16Length(of: sent), 2_000)
+        XCTAssertEqual(sent, StylistChatMessageLimit.trimmedForSending(input))
+    }
+
+    @MainActor
+    func testOversizedInputIsRejectedWithoutTruncationOrRequest() {
+        let transport = MockChatTransport(chunks: [])
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: temporaryStoreURL()),
+            transport: transport
+        )
+        let input = String(repeating: "a", count: 2_001)
+
+        service.send(input)
+
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(service.activeConversation.messages.isEmpty)
+        XCTAssertEqual(service.inlineError, StylistChatMessageLimit.limitMessage)
+    }
+
+    func testHTTP413MapsToPayloadTooLargeDefensively() {
+        XCTAssertEqual(LiveChatTransport.error(forHTTPStatusCode: 413), .payloadTooLarge)
+        XCTAssertEqual(
+            LiveChatTransport.error(forHTTPStatusCode: 413)?.localizedDescription,
+            StylistChatMessageLimit.limitMessage
+        )
+    }
+
+    func testHTTP413RetainsStatusBodyRequestIDAndEndpointDiagnostically() throws {
+        let endpoint = try XCTUnwrap(URL(string: "https://api.stylematchpro.com/v1/chat"))
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: endpoint,
+            statusCode: 413,
+            httpVersion: "HTTP/2",
+            headerFields: ["CF-Ray": "request-413-ATL"]
+        ))
+        let diagnostic = LiveChatTransport.diagnosticError(
+            forHTTPResponse: response,
+            responseBody: "{\"error\":\"payload_too_large\"}",
+            endpoint: endpoint
+        )
+
+        XCTAssertEqual(diagnostic.category, .payloadTooLarge)
+        XCTAssertEqual(diagnostic.statusCode, 413)
+        XCTAssertEqual(diagnostic.responseBody, "{\"error\":\"payload_too_large\"}")
+        XCTAssertEqual(diagnostic.requestID, "request-413-ATL")
+        XCTAssertEqual(diagnostic.endpoint, endpoint)
+        XCTAssertNil(diagnostic.underlyingErrorDescription)
+        XCTAssertEqual(diagnostic.localizedDescription, StylistChatMessageLimit.limitMessage)
+    }
+
+    func testOversizedGeneratedPayloadIsRejectedBeforeTransportStarts() async throws {
+        NoNetworkURLProtocol.requestCount = 0
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NoNetworkURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let transport = LiveChatTransport(
+            configuration: StylistChatConfiguration(baseURL: URL(string: "https://api.stylematchpro.com")!),
+            session: session,
+            accountSession: {
+                StyleMatchAccountSession(token: String(repeating: "t", count: 64), expiresAt: .distantFuture)
+            }
+        )
+        let request = ChatRequest(
+            messages: [
+                ChatRequest.RequestMessage(role: "user", content: String(repeating: "x", count: 2_001))
+            ],
+            context: ChatContext(),
+            stream: true
+        )
+
+        do {
+            for try await _ in transport.send(request) {}
+            XCTFail("Expected the local payload limit to reject the request.")
+        } catch {
+            XCTAssertEqual(error as? StylistChatError, .payloadTooLarge)
+        }
+        XCTAssertEqual(NoNetworkURLProtocol.requestCount, 0)
+    }
+
+    func testPayloadValidationRejectsWhitespaceOnlyGeneratedMessage() {
+        let messages = [ChatRequest.RequestMessage(role: "user", content: " \n\t ")]
+        XCTAssertEqual(StylistChatMessageLimit.validationError(for: messages), .invalidRequest)
+    }
+
     func testChatContextClampsOversizedFields() {
         let context = ChatContext(
             profileSummary: String(repeating: "p", count: 700),
@@ -39,7 +173,13 @@ final class StylistChatServiceTests: XCTestCase {
         try await waitUntil { !service.isStreaming }
 
         XCTAssertEqual(transport.requests.last?.messages.count, 12)
-        XCTAssertEqual(transport.requests.last?.messages.last?.content, "")
+        XCTAssertEqual(transport.requests.last?.messages.first?.content, "message-9")
+        XCTAssertEqual(transport.requests.last?.messages.last?.content, "new question")
+        XCTAssertLessThanOrEqual(
+            transport.requests.last?.messages.count ?? .max,
+            StylistChatMessageLimit.maximumPayloadMessages
+        )
+        XCTAssertFalse(transport.requests.last?.messages.contains { $0.content.isEmpty } ?? true)
     }
 
     @MainActor
@@ -201,8 +341,8 @@ final class StylistChatServiceTests: XCTestCase {
         service.send("Give me three outfits with olive pants.", forcedContext: context)
         try await waitUntil { !service.isStreaming }
 
-        XCTAssertEqual(transport.requests.last?.messages.last?.content, "")
-        XCTAssertEqual(transport.requests.last?.messages.dropLast().last?.content, "Give me three outfits with olive pants.")
+        XCTAssertEqual(transport.requests.last?.messages.last?.content, "Give me three outfits with olive pants.")
+        XCTAssertFalse(transport.requests.last?.messages.contains { $0.content.isEmpty } ?? true)
         XCTAssertEqual(transport.requests.last?.context, context)
         XCTAssertTrue(service.activeConversation.messages.contains { $0.role == .assistant && $0.content.contains("Option 1") })
     }
@@ -248,7 +388,7 @@ final class StylistChatServiceTests: XCTestCase {
         chatService.send(speechInput.transcript, forcedContext: context)
         try await waitUntil { !chatService.isStreaming }
 
-        XCTAssertEqual(transport.requests.last?.messages.dropLast().last?.content, "Build a dinner outfit with white sneakers")
+        XCTAssertEqual(transport.requests.last?.messages.last?.content, "Build a dinner outfit with white sneakers")
         XCTAssertEqual(transport.requests.last?.context, context)
     }
 
@@ -331,7 +471,114 @@ final class StylistChatServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedOutfitCombinationPreservesUserMessageWithoutDuplicateRetryMessage() async throws {
+    func testUnauthorizedSubmissionDoesNotCreateMessagesOrRequest() {
+        let store = ChatConversationStore(fileURL: temporaryStoreURL())
+        let transport = MockChatTransport(chunks: [], authorizationState: .signInRequired)
+        let service = StylistChatService(
+            store: store,
+            transport: transport,
+            contextProvider: { ChatContext() }
+        )
+
+        service.send("Build three outfits around olive pants.")
+
+        XCTAssertTrue(service.activeConversation.messages.isEmpty)
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(service.requiresSignIn)
+        XCTAssertEqual(service.inlineError, StylistChatError.unauthorized.localizedDescription)
+        XCTAssertTrue(ChatConversationStore(fileURL: storeURL(from: store)).conversations.isEmpty)
+    }
+
+    @MainActor
+    func testUnauthorizedPreseededQuestionDoesNotReplaceCurrentConversation() {
+        let store = ChatConversationStore(fileURL: temporaryStoreURL())
+        var existing = ChatConversation()
+        existing.messages = [ChatMessage(role: .assistant, content: "Existing advice")]
+        store.save(existing)
+        let transport = MockChatTransport(chunks: [], authorizationState: .signInRequired)
+        let service = StylistChatService(store: store, transport: transport)
+
+        service.sendPreseededQuestion("Build around this scan", context: ChatContext())
+
+        XCTAssertEqual(service.activeConversation.id, existing.id)
+        XCTAssertEqual(service.activeConversation.messages, existing.messages)
+        XCTAssertTrue(transport.requests.isEmpty)
+        XCTAssertTrue(service.requiresSignIn)
+    }
+
+    @MainActor
+    func testRelaunchRestoresAuthorizedAIStateFromValidBackendSession() {
+        let validSession = StyleMatchAccountSession(
+            token: String(repeating: "s", count: 40),
+            expiresAt: Date().addingTimeInterval(3_600)
+        )
+        let transport = LiveChatTransport(
+            configuration: StylistChatConfiguration(baseURL: URL(string: "https://example.com")!),
+            accountSession: { validSession },
+            appleAccountIsConnected: { true }
+        )
+
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: temporaryStoreURL()),
+            transport: transport
+        )
+
+        XCTAssertEqual(service.authorizationState, .authorized)
+        XCTAssertFalse(service.requiresSignIn)
+    }
+
+    func testExpiredBackendSessionForConnectedAppleAccountRequiresReconnect() {
+        let expiredSession = StyleMatchAccountSession(
+            token: String(repeating: "s", count: 40),
+            expiresAt: Date().addingTimeInterval(-60)
+        )
+        let transport = LiveChatTransport(
+            configuration: StylistChatConfiguration(baseURL: URL(string: "https://example.com")!),
+            accountSession: { expiredSession },
+            appleAccountIsConnected: { true }
+        )
+
+        XCTAssertEqual(transport.authorizationState, .reconnectRequired)
+    }
+
+    @MainActor
+    func testSuccessfulSessionRefreshSynchronizesAIStateImmediately() async throws {
+        let transport = MockChatTransport(chunks: [], authorizationState: .reconnectRequired)
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: temporaryStoreURL()),
+            transport: transport
+        )
+        XCTAssertTrue(service.requiresSignIn)
+
+        transport.authorizationState = .authorized
+        NotificationCenter.default.post(name: StyleMatchAccountSessionStore.didChangeNotification, object: nil)
+        try await waitUntil { service.authorizationState == .authorized }
+
+        XCTAssertFalse(service.requiresSignIn)
+        XCTAssertNil(service.inlineError)
+    }
+
+    @MainActor
+    func testRapidDuplicateSubmissionStartsOnlyOneRequest() async throws {
+        let store = ChatConversationStore(fileURL: temporaryStoreURL())
+        let transport = MockChatTransport(chunks: ["One response"], delayNanoseconds: 200_000_000)
+        let service = StylistChatService(
+            store: store,
+            transport: transport,
+            contextProvider: { ChatContext() }
+        )
+
+        service.send("What goes with olive pants?")
+        service.send("What goes with olive pants?")
+        try await waitUntil { !service.isStreaming }
+
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(service.activeConversation.messages.filter { $0.role == .user }.count, 1)
+        XCTAssertEqual(service.activeConversation.messages.filter { $0.role == .assistant }.count, 1)
+    }
+
+    @MainActor
+    func testFailedOutfitCombinationLeavesNoDeadConversationRecord() async throws {
         let store = ChatConversationStore(fileURL: temporaryStoreURL())
         let transport = ThrowingChatTransport(error: StylistChatError.network)
         let service = StylistChatService(
@@ -343,10 +590,122 @@ final class StylistChatServiceTests: XCTestCase {
         service.send("Build three outfits around olive pants.")
         try await waitUntil { !service.isStreaming }
 
-        let userMessages = service.activeConversation.messages.filter { $0.role == .user }
-        XCTAssertEqual(userMessages.map(\.content), ["Build three outfits around olive pants."])
-        XCTAssertEqual(service.activeConversation.messages.filter { $0.role == .assistant }.count, 1)
+        XCTAssertTrue(service.activeConversation.messages.isEmpty)
         XCTAssertEqual(service.inlineError, StylistChatError.network.localizedDescription)
+        XCTAssertFalse(service.requiresSignIn)
+        XCTAssertTrue(ChatConversationStore(fileURL: storeURL(from: store)).conversations.isEmpty)
+    }
+
+    @MainActor
+    func testFailedFollowUpRestoresExistingConversationWithoutDeadMessages() async throws {
+        let store = ChatConversationStore(fileURL: temporaryStoreURL())
+        var existing = ChatConversation()
+        existing.messages = [
+            ChatMessage(role: .user, content: "What works with navy?"),
+            ChatMessage(role: .assistant, content: "Try white or tan.")
+        ]
+        store.save(existing)
+        let service = StylistChatService(
+            store: store,
+            transport: ThrowingChatTransport(error: StylistChatError.network),
+            contextProvider: { ChatContext() }
+        )
+
+        service.send("What about olive?")
+        try await waitUntil { !service.isStreaming }
+
+        XCTAssertEqual(service.activeConversation.messages, existing.messages)
+        XCTAssertEqual(
+            ChatConversationStore(fileURL: storeURL(from: store)).conversations.first?.messages,
+            existing.messages
+        )
+    }
+
+    @MainActor
+    func testLegacyEmptyAssistantPlaceholderIsRemovedWhenConversationLoads() {
+        let url = temporaryStoreURL()
+        let store = ChatConversationStore(fileURL: url)
+        var conversation = ChatConversation()
+        conversation.messages = [
+            ChatMessage(role: .assistant, content: ""),
+            ChatMessage(role: .assistant, content: "   ")
+        ]
+        store.save(conversation)
+
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: url),
+            transport: MockChatTransport(chunks: []),
+            contextProvider: { ChatContext() }
+        )
+
+        XCTAssertTrue(service.activeConversation.messages.isEmpty)
+    }
+
+    @MainActor
+    func testLegacyOrphanUserMessagesAreRemovedWhenConversationLoads() {
+        let url = temporaryStoreURL()
+        let store = ChatConversationStore(fileURL: url)
+        var conversation = ChatConversation()
+        conversation.messages = [
+            ChatMessage(role: .user, content: "Completed question"),
+            ChatMessage(role: .assistant, content: "Completed response"),
+            ChatMessage(role: .user, content: "Dead failed attempt"),
+            ChatMessage(role: .user, content: "Duplicate dead attempt")
+        ]
+        store.save(conversation)
+
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: url),
+            transport: MockChatTransport(chunks: [])
+        )
+
+        XCTAssertEqual(service.activeConversation.messages.map(\.content), ["Completed question", "Completed response"])
+    }
+
+    func testStylistChatViewRetainsBuild17PromptLibraryAndCoreControls() throws {
+        let source = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+        let expectedPrompts = [
+            "What goes with olive pants?",
+            "Build an outfit around this item.",
+            "Build three outfits around this item.",
+            "What shoes work with this outfit?",
+            "Make this look more professional.",
+            "Make this outfit business casual.",
+            "Give me a casual and an elevated version.",
+            "Give me three color combinations.",
+            "Suggest another shirt-and-pants combination.",
+            "Build a dinner outfit.",
+            "Give me a warm-weather option.",
+            "What should I wear for dinner?",
+            "Help me match this shirt."
+        ]
+
+        XCTAssertTrue(source.contains("Button(\"History\")"))
+        XCTAssertTrue(source.contains("Button(\"New chat\")"))
+        XCTAssertTrue(source.contains("TextField(\"Ask your stylist...\""))
+        XCTAssertTrue(source.contains("ForEach(starterPrompts"))
+        XCTAssertTrue(source.contains(".disabled(service.isStreaming)"))
+        XCTAssertTrue(source.contains("\"Sign in with Apple\""))
+        XCTAssertTrue(source.contains("Reconnect with Apple"))
+        for prompt in expectedPrompts {
+            XCTAssertTrue(source.contains("\"\(prompt)\""), "Missing prompt: \(prompt)")
+        }
+    }
+
+    func testStylistChatComposerRemainsAnchoredAndRoutesUnauthorizedSendToSignIn() throws {
+        let source = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+
+        XCTAssertTrue(source.contains(".safeAreaInset(edge: .bottom, spacing: 0)"))
+        XCTAssertTrue(source.contains("anchoredInputBar"))
+        XCTAssertTrue(source.contains(".scrollDismissesKeyboard(.interactively)"))
+        XCTAssertTrue(source.contains(".onSubmit {\n                        sendDraft()"))
+        XCTAssertTrue(source.contains("guard service.authorizationState == .authorized else"))
+        XCTAssertTrue(source.contains("onSignInRequested()"))
+        XCTAssertTrue(source.contains("guard submitQuestion(preparedDraft) else { return }"))
+        XCTAssertTrue(source.contains("StylistChatMessageLimit.utf16Length(of: preparedDraft)"))
+        XCTAssertTrue(source.contains("Text(\"\\(draftUTF16Length) / 2,000\")"))
+        XCTAssertTrue(source.contains("Text(StylistChatMessageLimit.limitMessage)"))
+        XCTAssertTrue(source.contains(".disabled(preparedDraft.isEmpty || draftExceedsLimit)"))
     }
 
     @MainActor
@@ -476,6 +835,13 @@ final class StylistChatServiceTests: XCTestCase {
         Mirror(reflecting: store).children.first { $0.label == "fileURL" }?.value as! URL
     }
 
+    private func projectSource(_ relativePath: String, filePath: String = #filePath) throws -> String {
+        let repositoryRoot = URL(fileURLWithPath: filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 2,
         condition: @escaping @MainActor () -> Bool
@@ -495,10 +861,16 @@ private final class MockChatTransport: StylistChatTransport {
     private(set) var requests: [ChatRequest] = []
     private let chunks: [String]
     private let delayNanoseconds: UInt64
+    var authorizationState: StylistChatAuthorizationState
 
-    init(chunks: [String], delayNanoseconds: UInt64 = 0) {
+    init(
+        chunks: [String],
+        delayNanoseconds: UInt64 = 0,
+        authorizationState: StylistChatAuthorizationState = .authorized
+    ) {
         self.chunks = chunks
         self.delayNanoseconds = delayNanoseconds
+        self.authorizationState = authorizationState
     }
 
     func send(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
@@ -525,6 +897,20 @@ private struct ThrowingChatTransport: StylistChatTransport {
             continuation.finish(throwing: error)
         }
     }
+}
+
+private final class NoNetworkURLProtocol: URLProtocol {
+    static var requestCount = 0
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.requestCount += 1
+        client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+    }
+
+    override func stopLoading() {}
 }
 
 private final class MockSpeechRecognitionController: StylistSpeechRecognitionControlling {

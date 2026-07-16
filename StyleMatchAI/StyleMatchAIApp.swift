@@ -10,6 +10,96 @@ import UserNotifications
 import UIKit
 #endif
 
+#if DEBUG
+private struct StyleMatchBuildIdentity {
+    static let gitCommit = "not embedded"
+    static let buildConfiguration = "Debug"
+    static let targetName = "StyleMatchAI"
+    static let schemeName = "StyleMatchAI"
+
+    let bundleIdentifier: String
+    let version: String
+    let build: String
+    let gitCommit: String
+    let buildDate: Date?
+    let buildConfiguration: String
+    let targetName: String
+    let schemeName: String
+    let apiBaseURL: String
+    let shareDomain: String
+
+    static var current: StyleMatchBuildIdentity {
+        let bundle = Bundle.main
+        let backend = AppBackendConfiguration.production(bundle: bundle)
+        let executableDate = bundle.executableURL.flatMap {
+            try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        }
+        return StyleMatchBuildIdentity(
+            bundleIdentifier: bundle.bundleIdentifier ?? "unknown",
+            version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
+            build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown",
+            gitCommit: gitCommit,
+            buildDate: executableDate,
+            buildConfiguration: buildConfiguration,
+            targetName: targetName,
+            schemeName: schemeName,
+            apiBaseURL: backend.apiBaseURL.absoluteString,
+            shareDomain: backend.shareDomain
+        )
+    }
+
+    static func logLaunch(at timestamp: Date = Date()) {
+        let identity = current
+        print("[StyleMatch Build Identity] bundle_id=\(identity.bundleIdentifier) version=\(identity.version) build=\(identity.build) git_commit=\(identity.gitCommit) configuration=\(identity.buildConfiguration) target=\(identity.targetName) scheme=\(identity.schemeName) build_date=\(dateText(identity.buildDate)) launch_timestamp=\(dateText(timestamp)) api_base_url=\(identity.apiBaseURL) share_domain=\(identity.shareDomain)")
+    }
+
+    static func dateText(_ date: Date?) -> String {
+        guard let date else { return "unknown" }
+        return ISO8601DateFormatter().string(from: date)
+    }
+}
+
+private struct StyleMatchBuildInformationView: View {
+    @Environment(\.dismiss) private var dismiss
+    private let identity = StyleMatchBuildIdentity.current
+
+    var body: some View {
+        NavigationStack {
+            List {
+                buildRow("Bundle ID", identity.bundleIdentifier)
+                buildRow("Version", identity.version)
+                buildRow("Build", identity.build)
+                buildRow("Git commit", identity.gitCommit)
+                buildRow("Build date", StyleMatchBuildIdentity.dateText(identity.buildDate))
+                buildRow("Configuration", identity.buildConfiguration)
+                buildRow("Target", identity.targetName)
+                buildRow("Scheme", identity.schemeName)
+                buildRow("API base URL", identity.apiBaseURL)
+                buildRow("Share domain", identity.shareDomain)
+            }
+            .navigationTitle("Build Information")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func buildRow(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.body.monospaced())
+                .textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
+    }
+}
+#endif
+
 private enum StartupDataRepair {
     static func run(defaults: UserDefaults = .standard) {
 #if DEBUG
@@ -130,6 +220,10 @@ final class StyleMatchAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
             object: nil
         )
         verifyAppleCredentialState()
+        StyleMatchAccountSessionDiagnostics.log(stage: "app_launch")
+        #if DEBUG
+        StyleMatchBuildIdentity.logLaunch()
+        #endif
         return true
     }
 
@@ -146,6 +240,10 @@ final class StyleMatchAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
         }
 
         ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { state, _ in
+            #if DEBUG
+            let userHash = String(StylistChatAuthHeaders.sha256Hex(userID).prefix(8))
+            print("[StyleMatch Account] stage=apple_credential_checked apple_user_hash=\(userHash) credential_state=\(state.rawValue)")
+            #endif
             guard state == .revoked || state == .notFound else { return }
             DispatchQueue.main.async {
                 self.moveRevokedAppleSessionToGuest()
@@ -220,6 +318,9 @@ private struct AppLaunchFlowView: View {
     @AppStorage("hasChosenAccessMode") private var hasChosenAccessMode = false
     @State private var isShowingSplash = true
     @State private var pendingSharedCardToken: String?
+    #if DEBUG
+    @State private var isShowingBuildInformation = false
+    #endif
 
     var body: some View {
         ZStack {
@@ -237,6 +338,10 @@ private struct AppLaunchFlowView: View {
             }
         }
         .onAppear {
+            #if DEBUG
+            let destination = hasChosenAccessMode ? "ContentView" : "LoginWelcomeView"
+            print("[StyleMatch UI Route] root=AppLaunchFlowView splash=SplashScreenView destination=\(destination) has_chosen_access_mode=\(hasChosenAccessMode)")
+            #endif
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
                 withAnimation(.easeInOut(duration: 0.32)) {
                     isShowingSplash = false
@@ -253,6 +358,15 @@ private struct AppLaunchFlowView: View {
         .sheet(item: sharedCardSheetBinding) { route in
             SharedScoreCardRecipientView(token: route.token)
         }
+        #if DEBUG
+        .simultaneousGesture(
+            TapGesture(count: 5)
+                .onEnded { isShowingBuildInformation = true }
+        )
+        .sheet(isPresented: $isShowingBuildInformation) {
+            StyleMatchBuildInformationView()
+        }
+        #endif
     }
 
     private var sharedCardSheetBinding: Binding<ShareableScoreCardRoute?> {

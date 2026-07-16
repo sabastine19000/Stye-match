@@ -5,7 +5,18 @@ import UIKit
 #endif
 
 protocol StylistChatTransport {
+    var authorizationState: StylistChatAuthorizationState { get }
     func send(_ request: ChatRequest) -> AsyncThrowingStream<String, Error>
+}
+
+enum StylistChatAuthorizationState: Equatable {
+    case authorized
+    case signInRequired
+    case reconnectRequired
+}
+
+extension StylistChatTransport {
+    var authorizationState: StylistChatAuthorizationState { .authorized }
 }
 
 struct StylistChatConfiguration {
@@ -54,25 +65,54 @@ final class LiveChatTransport: StylistChatTransport {
     private let configuration: StylistChatConfiguration
     private let session: URLSession
     private let accountSession: () -> StyleMatchAccountSession?
+    private let appleAccountIsConnected: () -> Bool
 
     init(
         configuration: StylistChatConfiguration,
         session: URLSession = .shared,
-        accountSession: @escaping () -> StyleMatchAccountSession? = StyleMatchAccountSessionStore.load
+        accountSession: @escaping () -> StyleMatchAccountSession? = StyleMatchAccountSessionStore.load,
+        appleAccountIsConnected: @escaping () -> Bool = { StyleMatchLocalAccountIdentity.isAppleConnected() }
     ) {
         self.configuration = configuration
         self.session = session
         self.accountSession = accountSession
+        self.appleAccountIsConnected = appleAccountIsConnected
+    }
+
+    var authorizationState: StylistChatAuthorizationState {
+        guard let session = accountSession(), session.expiresAt > Date() else {
+            return appleAccountIsConnected() ? .reconnectRequired : .signInRequired
+        }
+        return .authorized
     }
 
     func send(_ request: ChatRequest) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                let endpoint = configuration.baseURL.appendingPathComponent("v1/chat")
                 do {
+                    if let validationError = StylistChatMessageLimit.validationError(for: request.messages) {
+                        throw validationError
+                    }
                     var urlRequest = try makeURLRequest(for: request)
                     urlRequest.httpBody = try JSONEncoder().encode(request)
                     let (bytes, response) = try await session.bytes(for: urlRequest)
-                    try validate(response: response)
+                    if let http = response as? HTTPURLResponse,
+                       Self.error(forHTTPStatusCode: http.statusCode) != nil {
+                        let body = try await Self.responseBody(from: bytes)
+                        let diagnostic = Self.diagnosticError(
+                            forHTTPResponse: http,
+                            responseBody: body,
+                            endpoint: endpoint
+                        )
+                        if diagnostic.category == .unauthorized {
+                            StyleMatchAccountSessionStore.delete()
+                        }
+                        #if DEBUG
+                        print("[Stylist Chat HTTP] \(diagnostic.debugDescription)")
+                        #endif
+                        throw diagnostic
+                    }
 
                     for try await line in bytes.lines {
                         if Task.isCancelled { break }
@@ -86,7 +126,13 @@ final class LiveChatTransport: StylistChatTransport {
                     }
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: Self.mappedError(error))
+                    let mapped = Self.mappedError(error, endpoint: endpoint)
+                    #if DEBUG
+                    if let diagnostic = mapped as? StylistChatDiagnosticError {
+                        print("[Stylist Chat Transport] \(diagnostic.debugDescription)")
+                    }
+                    #endif
+                    continuation.finish(throwing: mapped)
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -107,22 +153,52 @@ final class LiveChatTransport: StylistChatTransport {
         return urlRequest
     }
 
-    private func validate(response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else { return }
-        switch http.statusCode {
-        case 200..<300:
-            return
-        case 401:
-            throw StylistChatError.unauthorized
-        case 413:
-            throw StylistChatError.payloadTooLarge
-        case 429:
-            throw StylistChatError.rateLimited
-        case 400:
-            throw StylistChatError.invalidRequest
-        default:
-            throw StylistChatError.providerError
+    static func error(forHTTPStatusCode statusCode: Int) -> StylistChatError? {
+        switch statusCode {
+        case 200..<300: nil
+        case 401: .unauthorized
+        case 413: .payloadTooLarge
+        case 429: .rateLimited
+        case 400: .invalidRequest
+        default: .providerError
         }
+    }
+
+    static func diagnosticError(
+        forHTTPResponse response: HTTPURLResponse,
+        responseBody: String?,
+        endpoint: URL,
+        underlyingErrorDescription: String? = nil
+    ) -> StylistChatDiagnosticError {
+        StylistChatDiagnosticError(
+            category: error(forHTTPStatusCode: response.statusCode) ?? .providerError,
+            statusCode: response.statusCode,
+            responseBody: responseBody,
+            requestID: requestID(from: response),
+            endpoint: endpoint,
+            underlyingErrorDescription: underlyingErrorDescription
+        )
+    }
+
+    private static func requestID(from response: HTTPURLResponse) -> String? {
+        for header in ["x-request-id", "request-id", "openai-request-id", "cf-ray"] {
+            if let value = response.value(forHTTPHeaderField: header)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func responseBody(from bytes: URLSession.AsyncBytes, limit: Int = 8_192) async throws -> String? {
+        var data = Data()
+        data.reserveCapacity(limit)
+        for try await byte in bytes {
+            guard data.count < limit else { break }
+            data.append(byte)
+        }
+        guard !data.isEmpty else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private static func payload(from line: String) -> String? {
@@ -140,10 +216,17 @@ final class LiveChatTransport: StylistChatTransport {
         return delta["content"] as? String
     }
 
-    private static func mappedError(_ error: Error) -> Error {
-        if let chatError = error as? StylistChatError {
-            return chatError
+    private static func mappedError(_ error: Error, endpoint: URL) -> Error {
+        if error is StylistChatError || error is StylistChatDiagnosticError {
+            return error
         }
-        return StylistChatError.network
+        return StylistChatDiagnosticError(
+            category: .network,
+            statusCode: nil,
+            responseBody: nil,
+            requestID: nil,
+            endpoint: endpoint,
+            underlyingErrorDescription: String(describing: error)
+        )
     }
 }

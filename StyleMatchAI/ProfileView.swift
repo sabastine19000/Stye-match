@@ -68,6 +68,7 @@ struct ProfileView: View {
     @State private var pendingAppleSignIn: StyleMatchAppleSignInPayload?
     @State private var pendingAppleNonce: String?
     @State private var isAccountRequestInFlight = false
+    @State private var isReconnectingBackendSession = false
     @State private var isPreparingAccountDeletion = false
     @State private var showSignOutConfirmation = false
     @State private var showDeleteAccountConfirmation = false
@@ -93,8 +94,21 @@ struct ProfileView: View {
         self.voiceControlsEnabled = voiceControlsEnabled
     }
 
+    private var effectiveVoiceControlsEnabled: Bool {
+        #if DEBUG
+        voiceControlsEnabled
+        #else
+        true
+        #endif
+    }
+
     private var selectedAccountMode: CustomerAccountMode {
         CustomerAccountMode(rawValue: customerAccountMode) ?? .guest
+    }
+
+    private var hasValidBackendSession: Bool {
+        guard let session = StyleMatchAccountSessionStore.load() else { return false }
+        return session.expiresAt > Date()
     }
 
     private var activeAccountUserID: String {
@@ -125,7 +139,7 @@ struct ProfileView: View {
     private let womenShoeSizeOptions = ["4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "13"]
     private let youthShoeSizeOptions = ["Toddler 5", "Toddler 6", "Toddler 7", "Toddler 8", "Toddler 9", "Toddler 10", "Little Kid 11", "Little Kid 12", "Little Kid 13", "Big Kid 1", "Big Kid 2", "Big Kid 3", "Big Kid 4", "Big Kid 5", "Big Kid 6", "Big Kid 7"]
     private let fitPreferenceOptions = ["Slim", "Regular", "Relaxed", "Oversized"]
-    private let undertoneOptions = DeclaredUndertone.allCases
+    private let declaredUndertoneChoices = DeclaredUndertone.allCases
     private let styleIdentityOptions = ["Casual", "Business Casual", "Classic", "Minimalist", "Streetwear", "Athletic", "Luxury", "Trend-Focused", "Smart Casual"]
     private let styleGoalOptions = ["Dress more professionally", "Build confidence", "Improve color matching", "Create better everyday outfits", "Build a versatile wardrobe", "Spend more intentionally", "Prepare outfits faster", "Try new styles"]
     private let neutralColorOptions = ["Black", "White", "Gray", "Navy", "Cream", "Tan", "Brown", "Olive"]
@@ -261,7 +275,7 @@ struct ProfileView: View {
                     styleIdentityOptions: styleIdentityOptions,
                     styleGoalOptions: styleGoalOptions,
                     fitPreferenceOptions: fitPreferenceOptions,
-                    undertoneOptions: undertoneOptions,
+                    declaredUndertoneChoices: declaredUndertoneChoices,
                     neutralColorOptions: neutralColorOptions,
                     accentColorOptions: accentColorOptions,
                     pantRiseOptions: pantRiseOptions,
@@ -412,7 +426,7 @@ struct ProfileView: View {
     @ViewBuilder
     private var voiceAssistantSection: some View {
         Section("Voice Assistant") {
-            if voiceControlsEnabled {
+            if effectiveVoiceControlsEnabled {
                 Toggle("Speak outfit guidance", isOn: $voiceAssistantEnabled)
 
                 if voiceAssistantEnabled,
@@ -457,9 +471,11 @@ struct ProfileView: View {
                         .accessibilityLabel("Voice playback error. \(playbackError)")
                 }
             } else {
+                #if DEBUG
                 Label("Voice controls disabled for launch diagnosis", systemImage: "speaker.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                #endif
             }
         }
     }
@@ -484,7 +500,7 @@ struct ProfileView: View {
                 Section("Color & Fit") {
                     Picker("Color undertone (optional)", selection: draftBinding(\.declaredUndertone)) {
                         Text("Not provided").tag("")
-                        ForEach(undertoneOptions, id: \.rawValue) { undertone in
+                        ForEach(declaredUndertoneChoices, id: \.rawValue) { undertone in
                             Text(undertone.displayName).tag(undertone.rawValue)
                         }
                     }
@@ -521,7 +537,11 @@ struct ProfileView: View {
 
                     TextField("Weather city", text: $weatherCity)
                         .textInputAutocapitalization(.words)
+                        .accessibilityLabel(StyleMatchAccessibilityText.profileFieldLabel(title: "Weather city", isRequired: false))
+                        .accessibilityValue(StyleMatchAccessibilityText.profileFieldValue(text: weatherCity))
                     TextField("Weather", text: $weather)
+                        .accessibilityLabel(StyleMatchAccessibilityText.profileFieldLabel(title: "Weather", isRequired: false))
+                        .accessibilityValue(StyleMatchAccessibilityText.profileFieldValue(text: weather))
 
                     Picker("Weather condition", selection: $weatherCondition) {
                         Text("Not set").tag("")
@@ -548,8 +568,12 @@ struct ProfileView: View {
                 Section("Occasion Styling") {
                     TextField("Planned occasion", text: $plannedOccasion)
                         .textInputAutocapitalization(.words)
+                        .accessibilityLabel(StyleMatchAccessibilityText.profileFieldLabel(title: "Planned occasion", isRequired: false))
+                        .accessibilityValue(StyleMatchAccessibilityText.profileFieldValue(text: plannedOccasion))
                     TextField("Dress code", text: $dressCode)
                         .textInputAutocapitalization(.words)
+                        .accessibilityLabel(StyleMatchAccessibilityText.profileFieldLabel(title: "Dress code", isRequired: false))
+                        .accessibilityValue(StyleMatchAccessibilityText.profileFieldValue(text: dressCode))
 
                     Picker("Formality", selection: $occasionFormality) {
                         Text("Not set").tag("")
@@ -683,7 +707,6 @@ struct ProfileView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    profileInfoRow("Subscription", "Not active", icon: "crown.fill")
                     profileInfoRow("App Version", appVersionText, icon: "info.circle.fill")
 
                     Button {
@@ -774,6 +797,8 @@ struct ProfileView: View {
             guestDataLinkedToApple: guestDataLinkedToApple,
             guestDataTransferSummary: guestDataTransferSummary,
             isAccountRequestInFlight: isAccountRequestInFlight,
+            hasValidBackendSession: hasValidBackendSession,
+            isReconnectingBackendSession: $isReconnectingBackendSession,
             isPreparingAccountDeletion: $isPreparingAccountDeletion,
             showSignOutConfirmation: $showSignOutConfirmation,
             showDeleteAccountConfirmation: $showDeleteAccountConfirmation,
@@ -960,7 +985,12 @@ struct ProfileView: View {
         #endif
     }
 
-    private func profileDraftField(_ title: String, text: Binding<String>, prompt: String) -> some View {
+    private func profileDraftField(
+        _ title: String,
+        text: Binding<String>,
+        prompt: String,
+        isRequired: Bool = false
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption)
@@ -970,6 +1000,9 @@ struct ProfileView: View {
             TextField(prompt, text: text, axis: .vertical)
                 .textInputAutocapitalization(.words)
                 .lineLimit(1...3)
+                .accessibilityLabel(StyleMatchAccessibilityText.profileFieldLabel(title: title, isRequired: isRequired))
+                .accessibilityValue(StyleMatchAccessibilityText.profileFieldValue(text: text.wrappedValue))
+                .accessibilityHint(isRequired ? "This field must be completed before saving." : "This field is optional.")
         }
         .padding(.vertical, 4)
     }
@@ -1316,6 +1349,14 @@ struct ProfileView: View {
                 dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
                 return
             }
+            if isReconnectingBackendSession,
+               PersonalStylistStorage.normalizedUserID(credential.user)
+                != PersonalStylistStorage.normalizedUserID(customerAppleUserID) {
+                pendingAppleNonce = nil
+                isReconnectingBackendSession = false
+                dataDeletionMessage = "Use the same Apple account that is currently connected to StyleMatch Pro."
+                return
+            }
             let payload = StyleMatchAppleSignInPayload(
                 userID: credential.user,
                 email: credential.email,
@@ -1325,6 +1366,7 @@ struct ProfileView: View {
             )
 
             pendingAppleNonce = nil
+            isReconnectingBackendSession = false
             isAccountRequestInFlight = true
             Task {
                 do {
@@ -1334,6 +1376,7 @@ struct ProfileView: View {
                         nonce: nonce
                     )
                     try StyleMatchAccountSessionStore.save(session)
+                    StyleMatchAccountSessionDiagnostics.log(stage: "apple_exchange_succeeded")
                     if payload.sourceUserID == "guest",
                        hasTransferableGuestData,
                        !AccountScopedStorage.hasUserData(for: payload.userID) {
@@ -1345,6 +1388,7 @@ struct ProfileView: View {
                     dataDeletionMessage = "Signed in with Apple. Your account session is protected."
                 } catch {
                     StyleMatchAccountSessionStore.delete()
+                    StyleMatchAccountSessionDiagnostics.log(stage: "apple_exchange_failed")
                     dataDeletionMessage = (error as? StyleMatchAccountError)?.localizedDescription
                         ?? StyleMatchAccountError.serviceUnavailable.localizedDescription
                 }
@@ -1352,6 +1396,7 @@ struct ProfileView: View {
             }
         case .failure:
             pendingAppleNonce = nil
+            isReconnectingBackendSession = false
             isAccountRequestInFlight = false
             dataDeletionMessage = StyleMatchAccountError.authorizationIncomplete.localizedDescription
         }
@@ -1674,7 +1719,7 @@ struct ProfileView: View {
             ? "Profile saved locally and marked for account sync when cloud sync is available."
             : "Profile saved locally on this phone."
         showProfileSavedConfirmation = true
-        if voiceControlsEnabled, voiceAssistantEnabled {
+        if effectiveVoiceControlsEnabled, voiceAssistantEnabled {
             voiceAssistant.speak(VoiceScriptBuilder.profileSaved())
         }
     }
@@ -1892,7 +1937,7 @@ private struct StyleConsultationSheet: View {
     let styleIdentityOptions: [String]
     let styleGoalOptions: [String]
     let fitPreferenceOptions: [String]
-    let undertoneOptions: [DeclaredUndertone]
+    let declaredUndertoneChoices: [DeclaredUndertone]
     let neutralColorOptions: [String]
     let accentColorOptions: [String]
     let pantRiseOptions: [String]
@@ -2040,7 +2085,7 @@ private struct StyleConsultationSheet: View {
                 multiSelectGrid(options: accentColorOptions, keyPath: \.preferredAccentColors, accessibilityGroup: "preferred accent colors")
                 Picker("Optional self-selected undertone", selection: binding(\.declaredUndertone)) {
                     Text("Not provided").tag("")
-                    ForEach(undertoneOptions, id: \.rawValue) { undertone in
+                    ForEach(declaredUndertoneChoices, id: \.rawValue) { undertone in
                         Text(undertone.displayName).tag(undertone.rawValue)
                     }
                 }
@@ -2173,6 +2218,9 @@ private struct StyleConsultationSheet: View {
             TextField(prompt, text: binding(keyPath), axis: .vertical)
                 .textInputAutocapitalization(.words)
                 .lineLimit(1...3)
+                .accessibilityLabel(StyleMatchAccessibilityText.profileFieldLabel(title: title, isRequired: false))
+                .accessibilityValue(StyleMatchAccessibilityText.profileFieldValue(text: draft[keyPath: keyPath]))
+                .accessibilityHint("This Style DNA field is optional.")
         }
         .padding(.vertical, 4)
     }
@@ -2509,6 +2557,8 @@ private struct ProfileAccountSection: View {
     let guestDataLinkedToApple: Bool
     let guestDataTransferSummary: String
     let isAccountRequestInFlight: Bool
+    let hasValidBackendSession: Bool
+    @Binding var isReconnectingBackendSession: Bool
     @Binding var isPreparingAccountDeletion: Bool
     @Binding var showSignOutConfirmation: Bool
     @Binding var showDeleteAccountConfirmation: Bool
@@ -2541,6 +2591,7 @@ private struct ProfileAccountSection: View {
     private var guestControls: some View {
         Group {
             SignInWithAppleButton(.continue) { request in
+                isReconnectingBackendSession = false
                 request.requestedScopes = [.fullName, .email]
                 prepareAppleRequest(request)
             } onCompletion: { result in
@@ -2568,6 +2619,25 @@ private struct ProfileAccountSection: View {
         Label("Signed in with Apple. Your profile can be saved and synced when cloud sync is available.", systemImage: "checkmark.seal.fill")
             .font(.subheadline)
             .foregroundStyle(.green)
+
+        if !hasValidBackendSession {
+            Text("Your Apple account is connected, but secure AI and account services need a renewed session.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            SignInWithAppleButton(.continue) { request in
+                isReconnectingBackendSession = true
+                request.requestedScopes = []
+                prepareAppleRequest(request)
+            } onCompletion: { result in
+                handleAppleSignIn(result)
+            }
+            .signInWithAppleButtonStyle(.black)
+            .frame(height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .disabled(isAccountRequestInFlight)
+            .accessibilityLabel("Reconnect StyleMatch Pro with Apple")
+        }
 
         if !guestDataTransferSummary.isEmpty {
             Label(guestDataTransferSummary, systemImage: guestDataLinkedToApple ? "checkmark.shield" : "iphone")

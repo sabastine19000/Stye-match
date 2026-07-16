@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 
 struct StylistChatView: View {
     @StateObject private var service: StylistChatService
@@ -6,17 +9,20 @@ struct StylistChatView: View {
     @State private var draft = ""
     @State private var showingHistory = false
     @State private var activeConversationContext: ChatContext?
+    @State private var lastAnnouncedAssistantID: UUID?
 
     private let initialQuestion: String?
     private let initialContext: ChatContext?
     private let voiceInputEnabled: Bool
+    private let onSignInRequested: () -> Void
 
     init(
         service: StylistChatService? = nil,
         speechInput: StylistSpeechInputService? = nil,
         voiceInputEnabled: Bool = true,
         initialQuestion: String? = nil,
-        initialContext: ChatContext? = nil
+        initialContext: ChatContext? = nil,
+        onSignInRequested: @escaping () -> Void = {}
     ) {
         _service = StateObject(
             wrappedValue: service ?? StylistChatService(
@@ -27,14 +33,24 @@ struct StylistChatView: View {
         self.voiceInputEnabled = voiceInputEnabled
         self.initialQuestion = initialQuestion
         self.initialContext = initialContext
+        self.onSignInRequested = onSignInRequested
+    }
+
+    private var effectiveVoiceInputEnabled: Bool {
+        #if DEBUG
+        voiceInputEnabled
+        #else
+        true
+        #endif
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                messageList
-                inputBar
-            }
+            messageList
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    anchoredInputBar
+                }
+                .scrollDismissesKeyboard(.interactively)
             .navigationTitle("AI Stylist Chat")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -55,6 +71,7 @@ struct StylistChatView: View {
                 }
             }
             .onAppear {
+                service.refreshAuthorizationState()
                 if let initialQuestion, let initialContext, service.activeConversation.messages.isEmpty {
                     activeConversationContext = initialContext
                     service.sendPreseededQuestion(initialQuestion, context: initialContext)
@@ -78,9 +95,15 @@ struct StylistChatView: View {
                         selectedScanContextNote
                     }
 
-                    if service.activeConversation.messages.isEmpty {
-                        emptyState
-                    } else {
+                    if shouldShowStarterPrompts {
+                        promptLibrary
+                    }
+
+                    if service.requiresSignIn {
+                        signInPrompt
+                    }
+
+                    if !service.activeConversation.messages.isEmpty {
                         ForEach(service.activeConversation.messages) { message in
                             ChatBubble(message: message, isStreaming: service.isStreaming)
                                 .id(message.id)
@@ -98,18 +121,19 @@ struct StylistChatView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .padding(.bottom, 90)
+                .padding(.bottom, 12)
             }
             .styleMatchOnChange(of: service.activeConversation.messages.count) { _ in
                 scrollToBottom(proxy)
             }
             .styleMatchOnChange(of: service.isStreaming) { _ in
                 scrollToBottom(proxy)
+                announceCompletedResponseIfNeeded()
             }
         }
     }
 
-    private var emptyState: some View {
+    private var promptLibrary: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Ask your stylist")
                 .font(.title2)
@@ -119,7 +143,7 @@ struct StylistChatView: View {
 
             ForEach(starterPrompts, id: \.self) { prompt in
                 Button {
-                    service.send(prompt, forcedContext: currentConversationContext)
+                    _ = submitQuestion(prompt)
                 } label: {
                     HStack {
                         Text(prompt)
@@ -132,11 +156,33 @@ struct StylistChatView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
+                .disabled(service.isStreaming)
                 .accessibilityLabel(prompt)
                 .accessibilityHint("Sends this suggested styling question.")
             }
         }
         .padding(18)
+        .appCard(.ai)
+    }
+
+    private var signInPrompt: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(service.authorizationState == .reconnectRequired ? "Reconnect AI Stylist" : "Sign in required")
+                .font(.headline)
+            Text(
+                service.authorizationState == .reconnectRequired
+                    ? "Your Apple account is connected, but its secure AI session needs to be renewed."
+                    : "Sign in with Apple before sending a question to the live AI Stylist."
+            )
+                .foregroundStyle(.secondary)
+            Button(service.authorizationState == .reconnectRequired ? "Reconnect with Apple" : "Sign in with Apple") {
+                onSignInRequested()
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityHint("Opens Profile where you can sign in with Apple.")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
         .appCard(.ai)
     }
 
@@ -151,17 +197,22 @@ struct StylistChatView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .disabled(service.isStreaming)
                     .submitLabel(.send)
+                    .onSubmit {
+                        sendDraft()
+                    }
                     .accessibilityLabel("Stylist question")
                     .accessibilityHint("Type a styling question. The send button becomes available when text is entered.")
 
-                if voiceInputEnabled {
+                if effectiveVoiceInputEnabled {
                     voiceInputButton
                 } else {
+                    #if DEBUG
                     Image(systemName: "mic.slash")
                         .font(.title3)
                         .frame(width: 44, height: 44)
                         .foregroundStyle(.secondary)
                         .accessibilityLabel("Voice input disabled for launch diagnosis")
+                    #endif
                 }
 
                 if service.isStreaming {
@@ -184,18 +235,45 @@ struct StylistChatView: View {
                             .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(preparedDraft.isEmpty || draftExceedsLimit)
                     .accessibilityLabel("Send styling question")
                     .accessibilityHint("Sends your typed question to the personal stylist.")
                 }
             }
-            if voiceInputEnabled {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if draftExceedsLimit {
+                    Text(StylistChatMessageLimit.limitMessage)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Spacer(minLength: 0)
+                }
+                Text("\(draftUTF16Length) / 2,000")
+                    .foregroundStyle(draftExceedsLimit ? .red : .secondary)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .font(.caption)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Message length")
+            .accessibilityValue("\(draftUTF16Length) of 2,000 UTF-16 units\(draftExceedsLimit ? ", over the limit" : "")")
+            if effectiveVoiceInputEnabled {
                 voiceStatusRow
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(.ultraThinMaterial)
             }
         }
+    }
+
+    private var anchoredInputBar: some View {
+        inputBar
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.bar)
+            .overlay(alignment: .top) {
+                Divider()
+            }
     }
 
     private var voiceInputButton: some View {
@@ -264,7 +342,7 @@ struct StylistChatView: View {
                     .accessibilityLabel("Clear transcript")
                 }
             }
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .contain)
         }
     }
 
@@ -286,15 +364,44 @@ struct StylistChatView: View {
         ]
     }
 
+    private var shouldShowStarterPrompts: Bool {
+        return !service.activeConversation.messages.contains {
+            $0.role == .assistant
+                && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     private func sendDraft() {
         if speechInput.state.isActive {
             speechInput.stopListening()
         }
-        let trimmedDraft = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedDraft.isEmpty else { return }
-        service.send(trimmedDraft, forcedContext: currentConversationContext)
+        guard !preparedDraft.isEmpty, !draftExceedsLimit else { return }
+        guard submitQuestion(preparedDraft) else { return }
         draft = ""
         speechInput.clearTranscript()
+    }
+
+    private var preparedDraft: String {
+        StylistChatMessageLimit.trimmedForSending(draft)
+    }
+
+    private var draftUTF16Length: Int {
+        StylistChatMessageLimit.utf16Length(of: preparedDraft)
+    }
+
+    private var draftExceedsLimit: Bool {
+        draftUTF16Length > StylistChatMessageLimit.maximumUTF16Length
+    }
+
+    @discardableResult
+    private func submitQuestion(_ question: String) -> Bool {
+        service.refreshAuthorizationState()
+        guard service.authorizationState == .authorized else {
+            onSignInRequested()
+            return false
+        }
+        service.send(question, forcedContext: currentConversationContext)
+        return true
     }
 
     private var currentConversationContext: ChatContext {
@@ -339,6 +446,21 @@ struct StylistChatView: View {
             }
         }
     }
+
+    private func announceCompletedResponseIfNeeded() {
+        guard !service.isStreaming,
+              let message = service.activeConversation.messages.last(where: {
+                  $0.role == .assistant && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              }),
+              lastAnnouncedAssistantID != message.id else {
+            return
+        }
+        lastAnnouncedAssistantID = message.id
+        #if canImport(UIKit)
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        UIAccessibility.post(notification: .announcement, argument: "Stylist response ready.")
+        #endif
+    }
 }
 
 private struct ChatBubble: View {
@@ -360,6 +482,14 @@ private struct ChatBubble: View {
             }
             if message.role != .user { Spacer(minLength: 42) }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            StyleMatchAccessibilityText.chatMessageLabel(
+                role: message.role == .user ? "You" : "Stylist",
+                content: message.content.isEmpty && isStreaming ? "Thinking" : message.content
+            )
+        )
+        .accessibilityValue(Text(message.timestamp, style: .time))
     }
 }
 
@@ -373,6 +503,8 @@ private struct TypingIndicator: View {
         }
         .font(.subheadline)
         .padding(12)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Stylist is typing")
     }
 }
 
@@ -387,6 +519,7 @@ private struct SystemChatRow: View {
             .frame(maxWidth: .infinity)
             .background(Color(.secondarySystemBackground))
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .accessibilityLabel("Stylist message. \(text)")
     }
 }
 

@@ -446,7 +446,7 @@ struct HomeView: View {
                     homeSignal(icon: "cloud.sun.fill", text: homeWeatherSnapshot.chipText, tint: Color(hex: 0xF5B84B))
                 }
                 .buttonStyle(.plain)
-                homeSignal(icon: "person.fill.checkmark", text: outfitMoodText, tint: AppTab.closet.palette.accent)
+                homeStatus(icon: "person.fill.checkmark", text: outfitMoodText, tint: AppTab.closet.palette.accent)
                 homeSignal(
                     icon: "tshirt.fill",
                     text: StyleMatchHomeDisplay.closetItemLabel(closetItemCount),
@@ -511,7 +511,26 @@ struct HomeView: View {
         .appCard(.home, radius: 16)
     }
 
+    @ViewBuilder
     private var recommendedOutfitHero: some View {
+        switch StyleMatchHomeDisplay.recommendationDestination(closetItemCount: closetItemCount) {
+        case .closet:
+            Button {
+                selectTab(.closet)
+            } label: {
+                recommendedOutfitHeroContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add a closet piece")
+            .accessibilityHint("Opens Virtual Closet")
+        case nil:
+            recommendedOutfitHeroContent
+        }
+    }
+
+    private var recommendedOutfitHeroContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -974,6 +993,32 @@ struct HomeView: View {
         } else {
             content
         }
+    }
+
+    private func homeStatus(icon: String, text: String, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.14))
+                .clipShape(Circle())
+                .accessibilityHidden(true)
+
+            Text(text)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.78)
+
+            Spacer()
+        }
+        .frame(width: 190, alignment: .leading)
+        .frame(minHeight: 58, alignment: .leading)
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .combine)
     }
 
     private var quickActionsSection: some View {

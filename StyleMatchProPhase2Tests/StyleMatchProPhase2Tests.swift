@@ -36,6 +36,71 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         super.tearDown()
     }
 
+    func testPublicAppHasNoSubscriptionOrPaywallSurfaceAndKeepsFreeCoreAndAffiliateShopping() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appRoot = root.appendingPathComponent("StyleMatchAI", isDirectory: true)
+        let resourceKeys: Set<URLResourceKey> = [.isRegularFileKey]
+        let auditedExtensions = Set(["swift", "plist", "json", "strings", "xcprivacy"])
+        let files = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: appRoot,
+                includingPropertiesForKeys: Array(resourceKeys),
+                options: [.skipsHiddenFiles]
+            )?.allObjects as? [URL]
+        ).filter { url in
+            (try? url.resourceValues(forKeys: resourceKeys).isRegularFile) == true
+                && auditedExtensions.contains(url.pathExtension.lowercased())
+        }
+        let publicAppSource = try files
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+        let normalizedSource = publicAppSource.lowercased()
+
+        let prohibitedPublicTerms = [
+            "sub" + "scription",
+            "pay" + "wall",
+            "restore" + " purchase",
+            "manage" + " subscription",
+            "free" + " trial",
+            "monthly" + " plan",
+            "yearly" + " plan"
+        ]
+        for term in prohibitedPublicTerms {
+            XCTAssertFalse(normalizedSource.contains(term), "Public app source or resources contain prohibited term: \(term)")
+        }
+
+        let prohibitedPurchaseAPIs = [
+            "import " + "StoreKit",
+            "SK" + "PaymentQueue",
+            "SK" + "Product",
+            "Product." + "subscription",
+            "AppStore." + "sync"
+        ]
+        for token in prohibitedPurchaseAPIs {
+            XCTAssertFalse(publicAppSource.contains(token), "Public app integrates purchase API: \(token)")
+        }
+
+        let contentSource = try projectSource("StyleMatchAI/ContentView.swift")
+        for coreView in ["HomeView(", "ScanView(", "ClosetView(", "ShoppingView(", "StylistChatView(", "ProfileView("] {
+            XCTAssertTrue(contentSource.contains(coreView), "Core free surface is missing: \(coreView)")
+        }
+        XCTAssertFalse(contentSource.localizedCaseInsensitiveContains("paid entitlement"))
+
+        let profileSource = try projectSource("StyleMatchAI/ProfileView.swift")
+        XCTAssertFalse(profileSource.contains("profileInfoRow(\"Subscription\""))
+
+        let affiliateSource = try projectSource("StyleMatchAI/Shopping/AffiliateProduct.swift")
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        XCTAssertTrue(affiliateSource.contains("enum AffiliateLinkBuilder"))
+        XCTAssertTrue(affiliateSource.contains("View Product"))
+        XCTAssertTrue(shoppingSource.contains("disclosureSummary"))
+        XCTAssertTrue(shoppingSource.contains("AffiliateLinkBuilder.outboundURL(for: product)"))
+
+        XCTAssertTrue(publicAppSource.contains("StyleMatch Pro"), "The product name remains valid branding")
+    }
+
     // MARK: - Profile pants size sync tests
 
     func testMenPantsSizeParserExtractsWaistAndInseam() {
@@ -1022,7 +1087,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         profile.favoriteColors = ["navy"]
         profile.dislikedColors = ["neon"]
         profile.favoriteBrands = ["Nike"]
-        profile.declaredUndertone = .olive
+        profile.declaredUndertone = .neutral
         profile.preferredFit = .relaxed
         profile.styleGoals = ["Build confidence", "Spend more intentionally"]
         profile.preferredNeutrals = ["Black", "White"]
@@ -1040,7 +1105,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         let reloaded = ProfileStore(defaults: defaults, userId: userA).currentProfile
 
-        XCTAssertEqual(reloaded.declaredUndertone, .olive)
+        XCTAssertEqual(reloaded.declaredUndertone, .neutral)
         XCTAssertEqual(reloaded.preferredFit, .relaxed)
         XCTAssertEqual(reloaded.styleGoals, ["Build confidence", "Spend more intentionally"])
         XCTAssertEqual(reloaded.preferredNeutrals, ["Black", "White"])
@@ -1198,7 +1263,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         profile.favoriteColors = [" Navy ", "Olive"]
         profile.dislikedColors = ["Neon"]
         profile.favoriteBrands = ["Nike"]
-        profile.declaredUndertone = .olive
+        profile.declaredUndertone = .cool
         profile.preferredFit = .relaxed
         profile.styleGoals = ["Build confidence"]
         profile.preferredNeutrals = ["Black", "White"]
@@ -1220,7 +1285,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(context.favoriteColors, ["Navy", "Olive"])
         XCTAssertEqual(context.avoidedColors, ["Neon"])
         XCTAssertEqual(context.favoriteBrands, ["Nike"])
-        XCTAssertEqual(context.declaredUndertone, .olive)
+        XCTAssertEqual(context.declaredUndertone, .cool)
         XCTAssertEqual(context.preferredFit, .relaxed)
         XCTAssertEqual(context.styleGoals, ["Build confidence"])
         XCTAssertEqual(context.preferredNeutrals, ["Black", "White"])
@@ -1251,6 +1316,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
           "favoriteColors": ["Navy"],
           "dislikedColors": [],
           "favoriteBrands": ["Nike"],
+          "declaredUndertone": "olive",
           "preferredFit": "regular",
           "budgetRange": { "minPrice": 50, "maxPrice": 200, "preferredTier": "Mid" },
           "climate": "Mild",
@@ -1266,7 +1332,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         var decoded = try decoder.decode(StylistProfile.self, from: Data(oldProfileJSON.utf8))
 
-        XCTAssertNil(decoded.declaredUndertone)
+        XCTAssertNil(decoded.declaredUndertone, "Unsupported legacy undertones must migrate to not provided")
         XCTAssertTrue(decoded.preferredNeutrals.isEmpty)
         XCTAssertTrue(decoded.preferredAccentColors.isEmpty)
         XCTAssertTrue(decoded.comfortPreferences.isEmpty)
@@ -5775,7 +5841,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertTrue(shoppingSource.contains("Text(\"AI Stylist Feed\")"))
         XCTAssertTrue(shoppingSource.contains("Text(\"Recommendations\")"))
-        XCTAssertTrue(shoppingSource.contains(".accessibilityLabel(\"\\(viewModel.name), \\(viewModel.retailerName), \\(viewModel.priceText)\")"))
+        XCTAssertTrue(shoppingSource.contains(".accessibilityLabel(productAccessibilitySummary(product, action: viewModel.actionTitle))"))
+        XCTAssertTrue(shoppingSource.contains("StyleMatchAccessibilityText.shoppingProductSummary("))
         XCTAssertTrue(shoppingSource.contains(".accessibilityHint(\"Opens this product through the retailer link\")"))
 
         XCTAssertTrue(chatSource.contains(".accessibilityValue(speechInput.state.userMessage ?? \"Voice input active\")"))
@@ -5966,7 +6033,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         }
 
         let promptBlocks = [
-            ("let enginePromptContext = PersonalizationContextBuilder.buildPersonalStylistEnginePromptContext", "let profile = StyleMatchStylistProfile("),
+            ("let prompt = PersonalizationContextBuilder.buildScanUpgradePrompt", "let profile = StyleMatchStylistProfile("),
             ("private func makeShareableScoreCardPayload() -> ShareableScoreCardCreatePayload", "@MainActor\n    private func showShareError")
         ]
         for (startMarker, endMarker) in promptBlocks {
@@ -7444,7 +7511,8 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(chatView.contains("await speechInput.startListening(existingText: draft)"))
         XCTAssertTrue(chatView.contains("speechInput.stopListening()"))
         XCTAssertTrue(chatView.contains("speechInput.cancelListening()"))
-        XCTAssertTrue(chatView.contains("service.send(trimmedDraft, forcedContext: currentConversationContext)"))
+        XCTAssertTrue(chatView.contains("guard submitQuestion(preparedDraft) else { return }"))
+        XCTAssertTrue(chatView.contains("service.send(question, forcedContext: currentConversationContext)"))
         XCTAssertFalse(chatView.contains("OpenAIStylistClient"))
         XCTAssertFalse(chatView.contains("askStylist(profile:"))
 
@@ -7482,12 +7550,13 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(context.contains("Common colors include black, white, cream, gray, charcoal, navy, light blue, olive"))
         XCTAssertTrue(chatView.contains("Build three outfits around this item."))
         XCTAssertTrue(chatView.contains("Give me a casual and an elevated version."))
-        XCTAssertTrue(chatView.contains("service.send(trimmedDraft, forcedContext: currentConversationContext)"))
+        XCTAssertTrue(chatView.contains("guard submitQuestion(preparedDraft) else { return }"))
         XCTAssertTrue(chatView.contains("@State private var activeConversationContext: ChatContext?"))
         XCTAssertTrue(chatView.contains("activeConversationContext = initialContext"))
         XCTAssertTrue(chatView.contains("private var currentConversationContext: ChatContext"))
         XCTAssertTrue(chatView.contains("activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext()"))
-        XCTAssertTrue(chatView.contains("service.send(prompt, forcedContext: currentConversationContext)"))
+        XCTAssertTrue(chatView.contains("_ = submitQuestion(prompt)"))
+        XCTAssertTrue(chatView.contains("service.send(question, forcedContext: currentConversationContext)"))
         XCTAssertTrue(chatView.contains("activeConversationContext = nil"))
         XCTAssertTrue(chatView.contains("speechInput.clearTranscript()"))
         XCTAssertTrue(chatView.contains("Using selected scan context"))
@@ -7540,6 +7609,27 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertEqual(StyleMatchHomeDisplay.countText(2, singular: "person", plural: "people"), "2 people")
         XCTAssertEqual(StyleMatchHomeDisplay.starSystemName(index: 4, for: 82), "star.fill")
         XCTAssertEqual(StyleMatchHomeDisplay.starSystemName(index: 5, for: 82), "star")
+    }
+
+    func testHomeRecommendationRoutesOnlyEmptyClosetToExistingClosetDestination() {
+        XCTAssertEqual(
+            StyleMatchHomeDisplay.recommendationDestination(closetItemCount: 0),
+            .closet
+        )
+        XCTAssertNil(StyleMatchHomeDisplay.recommendationDestination(closetItemCount: 1))
+        XCTAssertNil(StyleMatchHomeDisplay.recommendationDestination(closetItemCount: 3))
+    }
+
+    func testHomeEmptyClosetHeroUsesAccessibleFullCardButtonAndOccasionStaysStatusOnly() throws {
+        let source = try projectSource("StyleMatchAI/HomeView.swift")
+
+        XCTAssertTrue(source.contains("switch StyleMatchHomeDisplay.recommendationDestination(closetItemCount: closetItemCount)"))
+        XCTAssertTrue(source.contains("Button {\n                selectTab(.closet)"))
+        XCTAssertTrue(source.contains("recommendedOutfitHeroContent\n                    .frame(maxWidth: .infinity, alignment: .leading)\n                    .contentShape(Rectangle())"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(\"Add a closet piece\")"))
+        XCTAssertTrue(source.contains(".accessibilityHint(\"Opens Virtual Closet\")"))
+        XCTAssertTrue(source.contains("case nil:\n            recommendedOutfitHeroContent"))
+        XCTAssertTrue(source.contains("homeStatus(icon: \"person.fill.checkmark\", text: outfitMoodText"))
     }
 
     func testHomeClosetItemLabelRemovesProfileName() {
@@ -7654,6 +7744,69 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(contentSource.contains("homeNavigationResetID &+= 1"))
         XCTAssertFalse(homeSource.contains("ShoppingView(selectedTab:"))
         XCTAssertFalse(homeSource.contains("ScanView(selectedTab:"))
+    }
+
+    func testAccessibilityScanSummaryPreservesLogicalResultOrder() {
+        let summary = StyleMatchAccessibilityText.scanResultSummary(
+            score: 84,
+            rating: "Strong",
+            categoryScores: ["Color Harmony 22 out of 25", "Fit Quality 20 out of 25"],
+            detectedItems: ["navy blazer", "white shirt"],
+            recommendations: ["Try a lighter shoe."]
+        )
+
+        XCTAssertEqual(
+            summary,
+            "Overall StyleMatch score, 84 out of 100, Strong. Category scores: Color Harmony 22 out of 25, Fit Quality 20 out of 25. Detected items: navy blazer, white shirt. Recommendations: Try a lighter shoe."
+        )
+    }
+
+    func testAccessibilityShoppingSummaryIncludesStateAndAction() {
+        let summary = StyleMatchAccessibilityText.shoppingProductSummary(
+            name: "Classic Oxford",
+            retailer: "Macy's",
+            price: "$59.99",
+            saleStatus: "20 percent off",
+            isFavorite: true,
+            isWishlist: false,
+            action: "View Product"
+        )
+
+        XCTAssertTrue(summary.contains("Classic Oxford"))
+        XCTAssertTrue(summary.contains("Retailer: Macy's"))
+        XCTAssertTrue(summary.contains("Price: $59.99"))
+        XCTAssertTrue(summary.contains("Sale status: 20 percent off"))
+        XCTAssertTrue(summary.contains("Favorite"))
+        XCTAssertTrue(summary.contains("Not in wishlist"))
+        XCTAssertTrue(summary.contains("Action: View Product"))
+    }
+
+    func testAccessibilityProfileAndChatTextExposeMeaningfulValues() {
+        XCTAssertEqual(
+            StyleMatchAccessibilityText.profileFieldLabel(title: "Favorite colors", isRequired: false),
+            "Favorite colors, optional"
+        )
+        XCTAssertEqual(
+            StyleMatchAccessibilityText.profileFieldValue(text: "  navy and white  "),
+            "navy and white"
+        )
+        XCTAssertEqual(
+            StyleMatchAccessibilityText.chatMessageLabel(role: "Stylist", content: "  Try loafers.  "),
+            "Stylist: Try loafers."
+        )
+    }
+
+    func testReleaseTabHierarchyDoesNotDisableVoiceControls() throws {
+        let contentSource = try projectSource("StyleMatchAI/ContentView.swift")
+        let profileSource = try projectSource("StyleMatchAI/ProfileView.swift")
+        let stylistSource = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+
+        XCTAssertFalse(contentSource.contains("voiceControlsEnabled: false"))
+        XCTAssertFalse(contentSource.contains("voiceInputEnabled: false"))
+        XCTAssertTrue(profileSource.contains("private var effectiveVoiceControlsEnabled"))
+        XCTAssertTrue(stylistSource.contains("private var effectiveVoiceInputEnabled"))
+        XCTAssertTrue(profileSource.contains("#if DEBUG"))
+        XCTAssertTrue(stylistSource.contains("#if DEBUG"))
     }
 
     private func projectSource(_ relativePath: String) throws -> String {

@@ -6,12 +6,17 @@ final class StylistChatService: ObservableObject {
     @Published private(set) var activeConversation: ChatConversation
     @Published private(set) var conversations: [ChatConversation]
     @Published private(set) var isStreaming = false
+    @Published private(set) var requiresSignIn = false
+    @Published private(set) var authorizationState: StylistChatAuthorizationState
     @Published var inlineError: String?
 
     private let store: ChatConversationStore
     private let transport: StylistChatTransport
     private let contextProvider: () -> ChatContext
     private var streamTask: Task<Void, Never>?
+    private var conversationBeforeRequest: ChatConversation?
+    private var pendingAssistantID: UUID?
+    private var sessionChangeCancellable: AnyCancellable?
 
     init(
         store: ChatConversationStore = ChatConversationStore(),
@@ -23,29 +28,62 @@ final class StylistChatService: ObservableObject {
         self.store = store
         self.transport = transport ?? Self.defaultTransport()
         self.contextProvider = contextProvider
-        conversations = store.conversations
-        activeConversation = store.conversations.first ?? ChatConversation()
+        let initialAuthorizationState = self.transport.authorizationState
+        authorizationState = initialAuthorizationState
+        requiresSignIn = initialAuthorizationState != .authorized
+        let sanitizedConversations = store.conversations.map(Self.removingEmptyAssistantMessages)
+        conversations = sanitizedConversations
+        activeConversation = sanitizedConversations.first ?? ChatConversation()
+        sessionChangeCancellable = NotificationCenter.default.publisher(
+            for: StyleMatchAccountSessionStore.didChangeNotification
+        ).sink { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshAuthorizationState()
+            }
+        }
+        StyleMatchAccountSessionDiagnostics.log(stage: "chat_service_init")
     }
 
     func newChat() {
         stopStreaming()
         inlineError = nil
+        refreshAuthorizationState()
         activeConversation = ChatConversation()
     }
 
     func openConversation(_ conversation: ChatConversation) {
         stopStreaming()
         inlineError = nil
-        activeConversation = conversation
+        refreshAuthorizationState()
+        activeConversation = Self.removingEmptyAssistantMessages(conversation)
+    }
+
+    func refreshAuthorizationState() {
+        authorizationState = transport.authorizationState
+        requiresSignIn = authorizationState != .authorized
+        if authorizationState == .authorized,
+           inlineError == StylistChatError.unauthorized.localizedDescription {
+            inlineError = nil
+        }
+        StyleMatchAccountSessionDiagnostics.log(stage: "chat_auth_refreshed")
     }
 
     func send(_ text: String, forcedContext: ChatContext? = nil) {
-        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = StylistChatMessageLimit.trimmedForSending(text)
         guard !prompt.isEmpty, !isStreaming else { return }
+        guard StylistChatMessageLimit.isWithinLimit(prompt) else {
+            inlineError = StylistChatMessageLimit.limitMessage
+            return
+        }
 
+        guard validateAuthorization() else { return }
+
+        requiresSignIn = false
         inlineError = nil
+        conversationBeforeRequest = activeConversation
         activeConversation.messages.append(ChatMessage(role: .user, content: prompt))
         let assistantID = UUID()
+        pendingAssistantID = assistantID
         activeConversation.messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
         activeConversation.updatedAt = Date()
         isStreaming = true
@@ -65,13 +103,15 @@ final class StylistChatService: ObservableObject {
                     append(token, to: assistantID)
                 }
             } catch {
-                inlineError = (error as? LocalizedError)?.errorDescription ?? StylistChatError.network.localizedDescription
+                finishStreaming(error: error)
+                return
             }
             finishStreaming()
         }
     }
 
     func sendPreseededQuestion(_ text: String, context: ChatContext) {
+        guard validateAuthorization() else { return }
         newChat()
         send(text, forcedContext: context)
     }
@@ -84,12 +124,33 @@ final class StylistChatService: ObservableObject {
         }
     }
 
-    private func finishStreaming() {
+    private func finishStreaming(error: Error? = nil) {
         isStreaming = false
         streamTask = nil
+        let chatError = (error as? StylistChatError)
+            ?? (error as? StylistChatDiagnosticError)?.category
+        let hasAssistantResponse = pendingAssistantID.flatMap { assistantID in
+            activeConversation.messages.first { $0.id == assistantID }
+        }.map {
+            !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } ?? false
+
+        if !hasAssistantResponse, let previousConversation = conversationBeforeRequest {
+            activeConversation = previousConversation
+            inlineError = (chatError ?? StylistChatError.providerError).localizedDescription
+            requiresSignIn = chatError == .unauthorized
+            conversationBeforeRequest = nil
+            pendingAssistantID = nil
+            conversations = store.conversations
+            return
+        }
+
+        activeConversation = Self.removingEmptyAssistantMessages(activeConversation)
         activeConversation.updatedAt = Date()
         store.save(activeConversation)
         conversations = store.conversations
+        conversationBeforeRequest = nil
+        pendingAssistantID = nil
     }
 
     private func append(_ token: String, to messageID: UUID) {
@@ -101,11 +162,40 @@ final class StylistChatService: ObservableObject {
         activeConversation.updatedAt = Date()
     }
 
+    private func validateAuthorization() -> Bool {
+        refreshAuthorizationState()
+        guard authorizationState == .authorized else {
+            requiresSignIn = true
+            inlineError = StylistChatError.unauthorized.localizedDescription
+            return false
+        }
+        return true
+    }
+
     private func requestMessages(from messages: [ChatMessage]) -> [ChatRequest.RequestMessage] {
         messages
-            .filter { $0.role == .user || $0.role == .assistant }
-            .suffix(12)
-            .map { ChatRequest.RequestMessage(role: $0.role.rawValue, content: $0.content) }
+            .compactMap { message -> ChatRequest.RequestMessage? in
+                guard message.role == .user || message.role == .assistant else { return nil }
+                let content = message.content
+                guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      StylistChatMessageLimit.isWithinLimit(content) else {
+                    return nil
+                }
+                return ChatRequest.RequestMessage(role: message.role.rawValue, content: content)
+            }
+            .suffix(StylistChatMessageLimit.retainedConversationMessages)
+    }
+
+    private static func removingEmptyAssistantMessages(_ conversation: ChatConversation) -> ChatConversation {
+        var sanitized = conversation
+        sanitized.messages.removeAll {
+            $0.role == .assistant
+                && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        while sanitized.messages.last?.role == .user {
+            sanitized.messages.removeLast()
+        }
+        return sanitized
     }
 
     private static func defaultTransport() -> StylistChatTransport {

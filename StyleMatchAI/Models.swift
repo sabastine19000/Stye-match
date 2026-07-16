@@ -793,7 +793,15 @@ struct StyleMatchHomeScoreBand: Equatable {
     let title: String
 }
 
+enum StyleMatchHomeRecommendationDestination: Equatable {
+    case closet
+}
+
 enum StyleMatchHomeDisplay {
+    static func recommendationDestination(closetItemCount: Int) -> StyleMatchHomeRecommendationDestination? {
+        closetItemCount == 0 ? .closet : nil
+    }
+
     static func scoreBand(for score: Int) -> StyleMatchHomeScoreBand {
         switch min(100, max(0, score)) {
         case 90...100:
@@ -861,6 +869,66 @@ enum StyleMatchHomeDisplay {
         return cleaned
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "-_,•")))
+    }
+}
+
+enum StyleMatchAccessibilityText {
+    static func scanResultSummary(
+        score: Int,
+        rating: String,
+        categoryScores: [String],
+        detectedItems: [String],
+        recommendations: [String]
+    ) -> String {
+        var parts = ["Overall StyleMatch score, \(score) out of 100, \(rating)"]
+        if !categoryScores.isEmpty {
+            parts.append("Category scores: \(categoryScores.joined(separator: ", "))")
+        }
+        if !detectedItems.isEmpty {
+            parts.append("Detected items: \(detectedItems.joined(separator: ", "))")
+        }
+        if !recommendations.isEmpty {
+            parts.append("Recommendations: \(recommendations.joined(separator: "; "))")
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    static func shoppingProductSummary(
+        name: String,
+        retailer: String,
+        price: String,
+        saleStatus: String?,
+        isFavorite: Bool,
+        isWishlist: Bool,
+        action: String
+    ) -> String {
+        [
+            name,
+            "Retailer: \(retailer)",
+            "Price: \(price)",
+            saleStatus.map { "Sale status: \($0)" } ?? "Not marked on sale",
+            isFavorite ? "Favorite" : "Not favorite",
+            isWishlist ? "In wishlist" : "Not in wishlist",
+            "Action: \(action)"
+        ].joined(separator: ". ")
+    }
+
+    static func chatMessageLabel(role: String, content: String) -> String {
+        "\(role): \(content.trimmingCharacters(in: .whitespacesAndNewlines))"
+    }
+
+    static func profileFieldLabel(title: String, isRequired: Bool) -> String {
+        "\(title), \(isRequired ? "required" : "optional")"
+    }
+
+    static func profileFieldValue(text: String, validationMessage: String? = nil) -> String {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = value.isEmpty ? "Not provided" : value
+        guard let validationMessage,
+              !validationMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return current
+        }
+        return "\(current). \(validationMessage)"
     }
 }
 
