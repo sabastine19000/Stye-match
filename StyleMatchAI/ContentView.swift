@@ -1,6 +1,21 @@
 import CoreLocation
 import SwiftUI
 import WeatherKit
+#if canImport(UIKit)
+import UIKit
+#endif
+
+enum StyleMatchKeyboardFrameVisibility {
+    static func intersectsActiveWindow(keyboardFrame: CGRect, windowBounds: CGRect) -> Bool {
+        guard !keyboardFrame.isNull,
+              !keyboardFrame.isEmpty,
+              !windowBounds.isNull,
+              !windowBounds.isEmpty else {
+            return false
+        }
+        return windowBounds.intersects(keyboardFrame)
+    }
+}
 
 enum AppTab: Hashable {
     case home
@@ -232,6 +247,7 @@ struct ContentView: View {
     @State private var pendingFeedbackPrompt: ScheduledFeedbackPrompt?
     @State private var hasShownFeedbackPromptThisSession = false
     @State private var shoppingSaleUnreadCount = 0
+    @State private var isSoftwareKeyboardVisible = false
     @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
 
     private var activeTheme: StyleMatchAppTheme {
@@ -241,9 +257,20 @@ struct ContentView: View {
     var body: some View {
         activeScreen
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomNavigation
+                if !isSoftwareKeyboardVisible {
+                    bottomNavigation
+                }
             }
+#if canImport(UIKit)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            updateSoftwareKeyboardVisibility(from: notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            isSoftwareKeyboardVisible = false
+        }
+#endif
         .tint(activeTheme.palette(for: selectedTab).accent)
         .preferredColorScheme(activeTheme.preferredColorScheme)
         .onAppear {
@@ -251,15 +278,22 @@ struct ContentView: View {
             checkForPendingFeedbackPrompt()
             refreshSaleWatcher()
         }
+        .onDisappear {
+            dismissSoftwareKeyboard()
+            isSoftwareKeyboardVisible = false
+        }
         .styleMatchOnChange(of: scenePhase) { phase in
             if phase == .active {
                 checkForPendingFeedbackPrompt()
                 refreshSaleWatcher()
             } else if phase == .background || phase == .inactive {
+                dismissSoftwareKeyboard()
+                isSoftwareKeyboardVisible = false
                 dismissActiveFeedbackPrompt()
             }
         }
         .styleMatchOnChange(of: selectedTab) { tab in
+            dismissSoftwareKeyboard()
             mountedTabs.insert(tab)
             if tab == .home {
                 checkForPendingFeedbackPrompt()
@@ -267,6 +301,43 @@ struct ContentView: View {
                 dismissActiveFeedbackPrompt()
             }
         }
+    }
+
+#if canImport(UIKit)
+    private func updateSoftwareKeyboardVisibility(from notification: Notification) {
+        guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+              let window = activeWindow else {
+            isSoftwareKeyboardVisible = false
+            return
+        }
+        let keyboardFrameInWindow = window.screen.coordinateSpace.convert(
+            keyboardFrame,
+            to: window.coordinateSpace
+        )
+        isSoftwareKeyboardVisible = StyleMatchKeyboardFrameVisibility.intersectsActiveWindow(
+            keyboardFrame: keyboardFrameInWindow,
+            windowBounds: window.bounds
+        )
+    }
+
+    private var activeWindow: UIWindow? {
+        let windows = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive }
+            .flatMap(\.windows)
+        return windows.first(where: \.isKeyWindow) ?? windows.first(where: { !$0.isHidden })
+    }
+#endif
+
+    private func dismissSoftwareKeyboard() {
+#if canImport(UIKit)
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+#endif
     }
 
     @ViewBuilder
@@ -340,7 +411,10 @@ struct ContentView: View {
         if tab == .home {
             homeNavigationResetID &+= 1
         }
-        guard selectedTab != tab else { return }
+        guard selectedTab != tab else {
+            dismissSoftwareKeyboard()
+            return
+        }
         mountedTabs.insert(tab)
         var transaction = Transaction()
         transaction.disablesAnimations = true

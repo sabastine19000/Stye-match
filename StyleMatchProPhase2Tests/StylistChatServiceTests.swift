@@ -694,10 +694,13 @@ final class StylistChatServiceTests: XCTestCase {
 
     func testStylistChatComposerRemainsAnchoredAndRoutesUnauthorizedSendToSignIn() throws {
         let source = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+        let contentSource = try projectSource("StyleMatchAI/ContentView.swift")
 
         XCTAssertTrue(source.contains(".safeAreaInset(edge: .bottom, spacing: 0)"))
         XCTAssertTrue(source.contains("anchoredInputBar"))
         XCTAssertTrue(source.contains(".scrollDismissesKeyboard(.interactively)"))
+        XCTAssertTrue(source.contains("TextField(\"Ask your stylist...\", text: $draft, axis: .vertical)"))
+        XCTAssertTrue(source.contains(".lineLimit(1...4)"))
         XCTAssertTrue(source.contains(".onSubmit {\n                        sendDraft()"))
         XCTAssertTrue(source.contains("guard service.authorizationState == .authorized else"))
         XCTAssertTrue(source.contains("onSignInRequested()"))
@@ -706,6 +709,59 @@ final class StylistChatServiceTests: XCTestCase {
         XCTAssertTrue(source.contains("Text(\"\\(draftUTF16Length) / 2,000\")"))
         XCTAssertTrue(source.contains("Text(StylistChatMessageLimit.limitMessage)"))
         XCTAssertTrue(source.contains(".disabled(preparedDraft.isEmpty || draftExceedsLimit)"))
+        XCTAssertTrue(contentSource.contains("if !isSoftwareKeyboardVisible {\n                    bottomNavigation"))
+        XCTAssertTrue(contentSource.contains(".scrollDismissesKeyboard(.interactively)"))
+        XCTAssertTrue(contentSource.contains("UIResponder.keyboardWillChangeFrameNotification"))
+        XCTAssertTrue(contentSource.contains("UIResponder.keyboardWillHideNotification"))
+        XCTAssertTrue(contentSource.contains("updateSoftwareKeyboardVisibility(from: notification)"))
+        XCTAssertTrue(contentSource.contains("isSoftwareKeyboardVisible = false"))
+        XCTAssertTrue(contentSource.contains("#selector(UIResponder.resignFirstResponder)"))
+    }
+
+    func testStylistChatTabEntryDoesNotAutomaticallyFocusComposerOrPresentKeyboard() throws {
+        let source = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+
+        XCTAssertTrue(source.contains("Button(\"History\")"))
+        XCTAssertTrue(source.contains("TextField(\"Ask your stylist...\", text: $draft, axis: .vertical)"))
+        XCTAssertFalse(source.contains("@FocusState"))
+        XCTAssertFalse(source.contains(".focused("))
+        XCTAssertFalse(source.contains("becomeFirstResponder"))
+    }
+
+    func testKeyboardFrameVisibilityUsesActiveWindowIntersectionAndSafeResetPaths() throws {
+        let source = try projectSource("StyleMatchAI/ContentView.swift")
+
+        XCTAssertTrue(source.contains("UIResponder.keyboardFrameEndUserInfoKey"))
+        XCTAssertTrue(source.contains("window.screen.coordinateSpace.convert("))
+        XCTAssertTrue(source.contains("to: window.coordinateSpace"))
+        XCTAssertTrue(source.contains("windowBounds.intersects(keyboardFrame)"))
+        XCTAssertTrue(source.contains("$0.activationState == .foregroundActive || $0.activationState == .foregroundInactive"))
+        XCTAssertTrue(source.contains("windows.first(where: \\.isKeyWindow)"))
+        XCTAssertTrue(source.contains("phase == .background || phase == .inactive"))
+        XCTAssertTrue(source.contains("isSoftwareKeyboardVisible = false"))
+    }
+
+    func testRootTabSelectionDismissesKeyboardForSameTabCrossTabAndProgrammaticChanges() throws {
+        let source = try projectSource("StyleMatchAI/ContentView.swift")
+        let sceneStart = try XCTUnwrap(source.range(of: ".styleMatchOnChange(of: scenePhase)"))
+        let selectionStart = try XCTUnwrap(source.range(of: ".styleMatchOnChange(of: selectedTab)", range: sceneStart.upperBound..<source.endIndex))
+        let bodyEnd = try XCTUnwrap(source.range(of: "@ViewBuilder\n    private var activeScreen", range: selectionStart.upperBound..<source.endIndex))
+        let sceneObserver = String(source[sceneStart.lowerBound..<selectionStart.lowerBound])
+        let selectionObserver = String(source[selectionStart.lowerBound..<bodyEnd.lowerBound])
+        let selectTabStart = try XCTUnwrap(source.range(of: "private func selectTab(_ tab: AppTab)"))
+        let selectTabEnd = try XCTUnwrap(source.range(of: "private func checkForPendingFeedbackPrompt", range: selectTabStart.upperBound..<source.endIndex))
+        let selectTab = String(source[selectTabStart.lowerBound..<selectTabEnd.lowerBound])
+
+        XCTAssertTrue(source.contains("private func dismissSoftwareKeyboard()"))
+        XCTAssertTrue(source.contains("#selector(UIResponder.resignFirstResponder)"))
+        XCTAssertTrue(sceneObserver.contains("phase == .background || phase == .inactive"))
+        XCTAssertTrue(sceneObserver.contains("dismissSoftwareKeyboard()"))
+        XCTAssertTrue(sceneObserver.contains("isSoftwareKeyboardVisible = false"))
+        XCTAssertTrue(source.contains(".onDisappear {\n            dismissSoftwareKeyboard()\n            isSoftwareKeyboardVisible = false"))
+        XCTAssertTrue(selectionObserver.contains("dismissSoftwareKeyboard()"))
+        XCTAssertTrue(selectTab.contains("guard selectedTab != tab else"))
+        XCTAssertTrue(selectTab.contains("dismissSoftwareKeyboard()\n            return"))
+        XCTAssertTrue(selectTab.contains("withTransaction(transaction) {\n            selectedTab = tab"))
     }
 
     @MainActor
