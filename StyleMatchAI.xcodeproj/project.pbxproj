@@ -51,6 +51,7 @@
 		AA00000000000000000000E5 /* WeatherContextEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E6 /* WeatherContextEngine.swift */; };
 		AA00000000000000000000E7 /* PersonalStylistIntelligence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */; };
 		AA00000000000000000000E9 /* StylistMessageComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EA /* StylistMessageComposer.swift */; };
+		AA0000000000000000000190 /* ScanNarrativeConsistency.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000191 /* ScanNarrativeConsistency.swift */; };
 		AA00000000000000000000EB /* OutfitRecallService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EC /* OutfitRecallService.swift */; };
 		AA00000000000000000000ED /* SaleMatchingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000EE /* SaleMatchingService.swift */; };
 		AA00000000000000000000EF /* WeatherAdvisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F0 /* WeatherAdvisor.swift */; };
@@ -132,6 +133,7 @@
 		AA00000000000000000000E6 /* WeatherContextEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherContextEngine.swift; sourceTree = "<group>"; };
 		AA00000000000000000000E8 /* PersonalStylistIntelligence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalStylistIntelligence.swift; sourceTree = "<group>"; };
 		AA00000000000000000000EA /* StylistMessageComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StylistMessageComposer.swift; sourceTree = "<group>"; };
+		AA0000000000000000000191 /* ScanNarrativeConsistency.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanNarrativeConsistency.swift; sourceTree = "<group>"; };
 		AA00000000000000000000EC /* OutfitRecallService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitRecallService.swift; sourceTree = "<group>"; };
 		AA00000000000000000000EE /* SaleMatchingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaleMatchingService.swift; sourceTree = "<group>"; };
 		AA00000000000000000000F0 /* WeatherAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherAdvisor.swift; sourceTree = "<group>"; };
@@ -294,6 +296,7 @@
 				AA00000000000000000000E4 /* PersonalStylistSnapshotStore.swift */,
 				AA00000000000000000000E0 /* PersonalStylistEngines.swift */,
 				AA00000000000000000000EA /* StylistMessageComposer.swift */,
+				AA0000000000000000000191 /* ScanNarrativeConsistency.swift */,
 				AA00000000000000000000EC /* OutfitRecallService.swift */,
 				AA00000000000000000000EE /* SaleMatchingService.swift */,
 				AA00000000000000000000F0 /* WeatherAdvisor.swift */,
@@ -466,6 +469,7 @@
 				AA00000000000000000000E3 /* PersonalStylistSnapshotStore.swift in Sources */,
 				AA00000000000000000000DF /* PersonalStylistEngines.swift in Sources */,
 				AA00000000000000000000E9 /* StylistMessageComposer.swift in Sources */,
+				AA0000000000000000000190 /* ScanNarrativeConsistency.swift in Sources */,
 				AA00000000000000000000EB /* OutfitRecallService.swift in Sources */,
 				AA00000000000000000000ED /* SaleMatchingService.swift in Sources */,
 				AA00000000000000000000EF /* WeatherAdvisor.swift in Sources */,

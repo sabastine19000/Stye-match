@@ -77,6 +77,7 @@ let package = Package(
                 "PersonalStylist/FeedbackPromptScheduler.swift",
                 "PersonalStylist/PersonalStylistEngines.swift",
                 "PersonalStylist/StylistMessageComposer.swift",
+                "PersonalStylist/ScanNarrativeConsistency.swift",
                 "PersonalStylist/OutfitRecallService.swift",
                 "PersonalStylist/SaleMatchingService.swift",
                 "PersonalStylist/WeatherAdvisor.swift",

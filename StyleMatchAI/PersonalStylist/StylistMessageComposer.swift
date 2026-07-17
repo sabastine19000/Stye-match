@@ -82,19 +82,19 @@ enum StylistMessageComposer {
         confidences: [DetectedItemConfidence],
         colors: [String]
     ) -> String {
-        let cleanColors = colors.map(clean).filter { !$0.isEmpty }
-        let color = cleanColors.first
+        let facts = ScanNarrativeFacts(
+            palette: colors,
+            detectedGarments: garments,
+            detectedItemConfidences: confidences
+        )
         let garment = reliablePrimaryGarment(garments: garments, confidences: confidences)
 
-        if let garment, cleanColors.count == 1, let color {
-            return "the detected \(color) \(garment)"
+        // The palette has no per-garment color association, so never turn its
+        // first entry into a dominant color or a color-garment claim.
+        if let paletteAnchor = ScanNarrativeConsistencyValidator.paletteAnchor(for: facts) {
+            return paletteAnchor
         }
-        if let garment, color == nil {
-            return "the detected \(garment)"
-        }
-        if let color {
-            return "the detected \(color) outfit item"
-        }
+        if let garment { return "the detected \(garment)" }
         return "the score itself"
     }
 
@@ -112,7 +112,7 @@ enum StylistMessageComposer {
             guard let item = GarmentLabelMapper.humanReadableTerm(for: confidence.item),
                   primaryGarments.contains(item),
                   detected.contains(item),
-                  confidence.confidence >= 90 else {
+                  confidence.confidence >= ScanNarrativeFacts.authoritativeGarmentConfidence else {
                 return nil
             }
             return (item, confidence.confidence)
@@ -154,7 +154,4 @@ enum StylistMessageComposer {
         return weakest?.3 ?? "tighten one visible detail such as fit, shoe coordination, or accessories"
     }
 
-    private static func clean(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
 }

@@ -1813,7 +1813,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
             XCTAssertEqual(StylistScoreBand(score: sample.0), sample.1)
             XCTAssertTrue(message.body.contains("\(sample.0)/100"))
-            XCTAssertTrue(message.body.localizedCaseInsensitiveContains("navy shirt"))
+            XCTAssertTrue(message.body.localizedCaseInsensitiveContains("detected navy palette"))
+            XCTAssertFalse(message.body.localizedCaseInsensitiveContains("navy shirt"))
         }
     }
 
@@ -1843,7 +1844,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
                 colors: ["gray"]
             )
         )
-        XCTAssertTrue(lowConfidenceTie.body.contains("the detected gray outfit item"))
+        XCTAssertTrue(lowConfidenceTie.body.contains("the detected gray palette"))
+        XCTAssertFalse(lowConfidenceTie.body.contains("gray outfit item"))
         XCTAssertFalse(lowConfidenceTie.body.contains("gray tie"))
 
         let competingNouns = StylistMessageComposer.scoreEncouragement(
@@ -1859,7 +1861,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
                 colors: ["navy"]
             )
         )
-        XCTAssertTrue(competingNouns.body.contains("the detected navy outfit item"))
+        XCTAssertTrue(competingNouns.body.contains("the detected navy palette"))
         XCTAssertFalse(competingNouns.body.contains("navy jacket"))
 
         let reliablePolo = StylistMessageComposer.scoreEncouragement(
@@ -1872,7 +1874,197 @@ final class StyleMatchProPhase2Tests: XCTestCase {
                 colors: ["navy"]
             )
         )
-        XCTAssertTrue(reliablePolo.body.contains("the detected navy polo shirt"))
+        XCTAssertTrue(reliablePolo.body.contains("the detected navy palette"))
+        XCTAssertFalse(reliablePolo.body.contains("navy polo shirt"))
+    }
+
+    func testScanNarrativePaletteDoesNotInventDominanceOrGarmentAssociation() {
+        let facts = ScanNarrativeFacts(
+            palette: ["gray", "brown"],
+            detectedGarments: ["shirt"],
+            detectedItemConfidences: [DetectedItemConfidence(item: "shirt", confidence: 96)]
+        )
+
+        XCTAssertEqual(ScanNarrativeConsistencyValidator.paletteAnchor(for: facts), "the detected gray-and-brown palette")
+        XCTAssertFalse(ScanNarrativeConsistencyValidator.paletteAnchor(for: facts)?.contains("outfit item") == true)
+        XCTAssertFalse(ScanNarrativeConsistencyValidator.paletteAnchor(for: facts)?.contains("gray shirt") == true)
+    }
+
+    func testScanNarrativeGarmentQualificationRejectsFallbackAndPreservesAuthoritativeEvidence() {
+        let lowConfidence = ScanNarrativeFacts(
+            palette: ["brown"],
+            detectedGarments: ["jacket"],
+            detectedItemConfidences: [DetectedItemConfidence(item: "jacket", confidence: 89)]
+        )
+        let authoritative = ScanNarrativeFacts(
+            palette: ["brown"],
+            detectedGarments: ["jacket"],
+            detectedItemConfidences: [DetectedItemConfidence(item: "jacket", confidence: 90)]
+        )
+        let confidenceWithoutStructuredIdentity = ScanNarrativeFacts(
+            palette: ["brown"],
+            detectedGarments: [],
+            detectedItemConfidences: [DetectedItemConfidence(item: "jacket", confidence: 95)]
+        )
+
+        XCTAssertTrue(lowConfidence.qualifiedGarments.isEmpty)
+        XCTAssertEqual(authoritative.qualifiedGarments, ["jacket"])
+        XCTAssertTrue(confidenceWithoutStructuredIdentity.qualifiedGarments.isEmpty)
+
+        let genericAdvice = WeatherAdvisor.advice(for: WeatherAdvisorInput(
+            feelsLikeTemperature: 90,
+            humidityPercent: 60,
+            rainChancePercent: nil,
+            windMph: nil,
+            uvIndex: nil,
+            condition: "Hot",
+            confidence: 95,
+            detectedGarments: lowConfidence.qualifiedGarments
+        ))
+        let jacketAdvice = WeatherAdvisor.advice(for: WeatherAdvisorInput(
+            feelsLikeTemperature: 90,
+            humidityPercent: 60,
+            rainChancePercent: nil,
+            windMph: nil,
+            uvIndex: nil,
+            condition: "Hot",
+            confidence: 95,
+            detectedGarments: authoritative.qualifiedGarments
+        ))
+        XCTAssertFalse(genericAdvice?.reason.contains("scanned outfit includes jacket") == true)
+        XCTAssertTrue(jacketAdvice?.reason.contains("scanned outfit includes jacket") == true)
+    }
+
+    func testScanNarrativeSoftensUnsupportedLeadInWithoutLosingValidAdvice() {
+        let facts = ScanNarrativeFacts(palette: ["brown"], detectedGarments: [], detectedItemConfidences: [])
+        let sections = [ChatGPTStylistSection(
+            title: "Improvement Tips",
+            body: "The scanned outfit includes a jacket, so choose breathable shoes. The detected gray palette is muted, so pair the brown pants with a cream top."
+        )]
+
+        let result = ScanNarrativeConsistencyValidator.validate(sections, facts: facts)
+        XCTAssertEqual(result.map(\.title), ["Improvement Tips"])
+        XCTAssertEqual(result.map(\.body), ["Choose breathable shoes. Pair the brown pants with a cream top."])
+    }
+
+    func testScanNarrativeRetainsDistinctHotWeatherAdviceAndDropsEmptySectionsCleanly() {
+        let facts = ScanNarrativeFacts(palette: [], detectedGarments: [], detectedItemConfidences: [])
+        let sections = [
+            ChatGPTStylistSection(title: "Weather", body: "Keep fabrics breathable today."),
+            ChatGPTStylistSection(title: "Improvement Tips", body: "Choose lightweight layers for easier cooling."),
+            ChatGPTStylistSection(title: "Unsupported", body: "The scanned outfit includes a jacket."),
+            ChatGPTStylistSection(title: "Duplicate", body: "  keep fabrics breathable today! ")
+        ]
+
+        let result = ScanNarrativeConsistencyValidator.validate(sections, facts: facts)
+        XCTAssertEqual(result.map(\.title), ["Weather", "Improvement Tips"])
+        XCTAssertEqual(result[0].body, "Keep fabrics breathable today.")
+        XCTAssertEqual(result[1].body, "Choose lightweight layers for easier cooling.")
+        XCTAssertFalse(result.map(\.body).joined(separator: " ").contains("jacket"))
+    }
+
+    func testScanNarrativeValidatorRemovesUnsupportedProviderColorsAndGarments() {
+        let facts = ScanNarrativeFacts(
+            palette: ["gray", "brown"],
+            detectedGarments: ["shirt"],
+            detectedItemConfidences: [DetectedItemConfidence(item: "shirt", confidence: 96)]
+        )
+        let sections = [ChatGPTStylistSection(
+            title: "Outfit Summary",
+            body: "The scanned outfit includes a jacket. The detected beige palette looks warm. The detected gray and brown palette is balanced."
+        )]
+
+        let result = ScanNarrativeConsistencyValidator.validate(sections, facts: facts)
+        XCTAssertEqual(result.count, 1)
+        XCTAssertFalse(result[0].body.contains("jacket"))
+        XCTAssertFalse(result[0].body.contains("beige"))
+        XCTAssertTrue(result[0].body.contains("gray and brown"))
+    }
+
+    func testScanNarrativeValidatorRejectsUnsupportedWeatherClaims() {
+        let facts = ScanNarrativeFacts(
+            palette: [],
+            detectedGarments: [],
+            detectedItemConfidences: [],
+            weatherEvidence: ["Partly cloudy today at 92°F with 48% humidity."]
+        )
+        let sections = [ChatGPTStylistSection(
+            title: "Weather",
+            body: "It is raining today. It is cloudy today. Humidity is 80%. Humidity is 48%."
+        )]
+
+        let result = ScanNarrativeConsistencyValidator.validate(sections, facts: facts)
+        let body = result.map(\.body).joined(separator: " ").lowercased()
+        XCTAssertFalse(body.contains("raining"))
+        XCTAssertFalse(body.contains("80%"))
+        XCTAssertTrue(body.contains("cloudy"))
+        XCTAssertTrue(body.contains("48%"))
+    }
+
+    func testScanNarrativeClosetAttributionRequiresVerifiedStableIdentifier() {
+        let verifiedID = UUID()
+        let unverifiedID = UUID()
+        let facts = ScanNarrativeFacts(
+            palette: [],
+            detectedGarments: [],
+            detectedItemConfidences: [],
+            verifiedClosetRecordIDs: [verifiedID]
+        )
+        let sections = [ChatGPTStylistSection(
+            title: "Suggestions",
+            body: "Wear the loafers From your closet [[closet-item:\(verifiedID.uuidString)]]. Add the belt From your closet [[closet-item:\(unverifiedID.uuidString)]]."
+        )]
+
+        let result = ScanNarrativeConsistencyValidator.validate(sections, facts: facts)
+        XCTAssertEqual(result.count, 1)
+        XCTAssertTrue(result[0].body.contains("loafers From your closet"))
+        XCTAssertFalse(result[0].body.contains("belt From your closet"))
+        XCTAssertFalse(result[0].body.contains("closet-item"))
+    }
+
+    func testScanNarrativeDeduplicatesNormalizedAdviceAndPreservesDistinctAdvice() {
+        let facts = ScanNarrativeFacts(palette: [], detectedGarments: [], detectedItemConfidences: [])
+        let sections = [
+            ChatGPTStylistSection(title: "Weather", body: "Keep this breathable today. Choose clean shoes."),
+            ChatGPTStylistSection(title: "Tips", body: "  keep this breathable today! Add a simple belt.")
+        ]
+
+        let result = ScanNarrativeConsistencyValidator.validate(sections, facts: facts)
+        let combined = result.map(\.body).joined(separator: " ").lowercased()
+        XCTAssertEqual(combined.components(separatedBy: "keep this breathable today").count - 1, 1)
+        XCTAssertTrue(combined.contains("choose clean shoes"))
+        XCTAssertTrue(combined.contains("add a simple belt"))
+    }
+
+    func testScanNarrativeFreshAndSavedSectionsUseSameValidationResult() {
+        let facts = ScanNarrativeFacts(
+            palette: ["brown"],
+            detectedGarments: ["shirt"],
+            detectedItemConfidences: [DetectedItemConfidence(item: "shirt", confidence: 95)]
+        )
+        let storedSections = [ChatGPTStylistSection(
+            title: "Personal Stylist Intelligence",
+            body: "The detected brown palette works well. The scanned outfit includes a jacket."
+        )]
+
+        let fresh = ScanNarrativeConsistencyValidator.validate(storedSections, facts: facts)
+        let restored = ScanNarrativeConsistencyValidator.validate(storedSections, facts: facts)
+        XCTAssertEqual(fresh.map(\.body), restored.map(\.body))
+        XCTAssertFalse(restored.map(\.body).joined().contains("jacket"))
+    }
+
+    func testScanNarrativeReplacementPreservesScoreAndBreakdown() throws {
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+        let recommendationsStart = try XCTUnwrap(scanSource.range(of: "func replacingRecommendations"))
+        let sectionsStart = try XCTUnwrap(scanSource.range(of: "func replacingChatGPTStylistSections"))
+        let extensionEnd = try XCTUnwrap(scanSource.range(of: "#if DEBUG", range: sectionsStart.upperBound..<scanSource.endIndex))
+        let recommendationsBody = scanSource[recommendationsStart.lowerBound..<sectionsStart.lowerBound]
+        let sectionsBody = scanSource[sectionsStart.lowerBound..<extensionEnd.lowerBound]
+
+        for body in [recommendationsBody, sectionsBody] {
+            XCTAssertTrue(body.contains("score: score"))
+            XCTAssertTrue(body.contains("scoreBreakdown: scoreBreakdown"))
+        }
     }
 
     func testStylistMessageComposerScoreBandBoundaries() {

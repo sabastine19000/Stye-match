@@ -5642,25 +5642,32 @@ struct ScanView: View {
 
     private func analysisWithPersonalStylistIntelligence(_ analysis: OutfitAnalysisResult) -> OutfitAnalysisResult {
         let message = deterministicPersonalStylistMessage(for: analysis)
-        guard !message.isEmpty else {
-            return analysis
+        let generatedSections: [ChatGPTStylistSection]
+        if message.isEmpty {
+            generatedSections = []
+        } else {
+            let unifiedBody = message.sections
+                .map { section in "\(section.title): \(section.body)" }
+                .joined(separator: " ")
+            generatedSections = [ChatGPTStylistSection(
+                title: "Personal Stylist Intelligence",
+                body: unifiedBody
+            )]
         }
-
-        let unifiedBody = message.sections
-            .map { section in
-                "\(section.title): \(section.body)"
-            }
-            .joined(separator: " ")
-        let section = ChatGPTStylistSection(
-            title: "Personal Stylist Intelligence",
-            body: unifiedBody
-        )
         let existingSections = analysis.chatGPTStylistSections
             .filter { $0.title != "Personal Stylist Intelligence" }
-        return analysis.replacingChatGPTStylistSections([section] + existingSections)
+        let weatherEvidence = message.sections
+            .filter { $0.source == .weather }
+            .map(\.body)
+        let validatedSections = ScanNarrativeConsistencyValidator.validate(
+            generatedSections + existingSections,
+            facts: scanNarrativeFacts(for: analysis, weatherEvidence: weatherEvidence)
+        )
+        return analysis.replacingChatGPTStylistSections(validatedSections)
     }
 
     private func deterministicPersonalStylistMessage(for analysis: OutfitAnalysisResult) -> PersonalStylistMessage {
+        let narrativeFacts = scanNarrativeFacts(for: analysis)
         let weatherRecommendation: WeatherContextRecommendation?
         if FeatureFlags.weatherAdviceEnabled {
             weatherRecommendation = weatherContextRecommendation(environment: analysis.environment)
@@ -5679,12 +5686,12 @@ struct ScanView: View {
             score: analysis.score,
             scoreTier: scoreRatingTitle(for: analysis.score),
             scoreBreakdown: analysis.scoreBreakdown,
-            detectedGarments: analysis.safeDetectedClothingItems,
+            detectedGarments: narrativeFacts.qualifiedGarments,
             detectedItemConfidences: analysis.detectedItemConfidences,
-            colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+            colors: narrativeFacts.palette,
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: activeScanOccasionText(environment: analysis.environment),
-            weather: weatherAdvisorAdvice(for: analysis),
+            weather: weatherAdvisorAdvice(for: analysis, qualifiedGarments: narrativeFacts.qualifiedGarments),
             legacyWeather: weatherRecommendation,
             memories: OutfitMemoryStore().memories,
             profile: ProfileStore().currentProfile,
@@ -5700,6 +5707,7 @@ struct ScanView: View {
     }
 
     private func deterministicPersonalStylistPhrasingContext(for analysis: OutfitAnalysisResult) -> PersonalStylistEngineContext {
+        let narrativeFacts = scanNarrativeFacts(for: analysis)
         let weatherRecommendation: WeatherContextRecommendation?
         if FeatureFlags.weatherAdviceEnabled {
             weatherRecommendation = weatherContextRecommendation(environment: analysis.environment)
@@ -5718,12 +5726,12 @@ struct ScanView: View {
             score: analysis.score,
             scoreTier: scoreRatingTitle(for: analysis.score),
             scoreBreakdown: analysis.scoreBreakdown,
-            detectedGarments: analysis.safeDetectedClothingItems,
+            detectedGarments: narrativeFacts.qualifiedGarments,
             detectedItemConfidences: analysis.detectedItemConfidences,
-            colors: analysis.colorPalette,
+            colors: narrativeFacts.palette,
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: activeScanOccasionText(environment: analysis.environment),
-            weather: weatherAdvisorAdvice(for: analysis),
+            weather: weatherAdvisorAdvice(for: analysis, qualifiedGarments: narrativeFacts.qualifiedGarments),
             legacyWeather: weatherRecommendation,
             memories: OutfitMemoryStore().memories,
             profile: ProfileStore().currentProfile,
@@ -5738,7 +5746,10 @@ struct ScanView: View {
         )
     }
 
-    private func weatherAdvisorAdvice(for analysis: OutfitAnalysisResult) -> WeatherAdvisorAdvice? {
+    private func weatherAdvisorAdvice(
+        for analysis: OutfitAnalysisResult,
+        qualifiedGarments: [String]
+    ) -> WeatherAdvisorAdvice? {
         guard FeatureFlags.weatherAdviceEnabled else {
             return nil
         }
@@ -5752,10 +5763,29 @@ struct ScanView: View {
             uvIndex: snapshot.uvIndex,
             condition: snapshot.condition,
             confidence: snapshot.confidence,
-            detectedGarments: analysis.safeDetectedClothingItems,
+            detectedGarments: qualifiedGarments,
             activity: snapshot.activity,
             citySummary: weatherLocationText
         ))
+    }
+
+    private func scanNarrativeFacts(
+        for analysis: OutfitAnalysisResult,
+        weatherEvidence: [String] = []
+    ) -> ScanNarrativeFacts {
+        let closetRecordIDs: Set<UUID>
+        if let items = try? JSONDecoder().decode([ClosetItem].self, from: closetItemsData) {
+            closetRecordIDs = Set(items.map(\.id))
+        } else {
+            closetRecordIDs = []
+        }
+        return ScanNarrativeFacts(
+            palette: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+            detectedGarments: analysis.safeDetectedClothingItems,
+            detectedItemConfidences: analysis.detectedItemConfidences,
+            verifiedClosetRecordIDs: closetRecordIDs,
+            weatherEvidence: weatherEvidence
+        )
     }
 
     private func deterministicDealMatches(for analysis: OutfitAnalysisResult) -> [PersonalStylistDealMatch] {
@@ -6168,17 +6198,26 @@ struct ScanView: View {
             .filter { $0.title == "Personal Stylist Intelligence" }
         let finalSections = (preservedLocalSections + sections)
             .removingDuplicateStylistSections()
+        let validatedSections = ScanNarrativeConsistencyValidator.validate(
+            finalSections,
+            facts: scanNarrativeFacts(
+                for: analysis,
+                weatherEvidence: deterministicPersonalStylistPhrasingContext(for: analysis).weatherFacts
+            )
+        )
         let updatedAnalysis = analysis
             .replacingRecommendations(Array(updatedRecommendations))
             .replacingChatGPTStylistSections(finalSections)
+        let displayAnalysis = updatedAnalysis
+            .replacingChatGPTStylistSections(validatedSections)
 
         guard activeScanSessionID == scanSessionID,
               activeScanFingerprint == fingerprint else {
             return
         }
 
-        result = updatedAnalysis
-        preparedAnalysis = updatedAnalysis
+        result = displayAnalysis
+        preparedAnalysis = displayAnalysis
         saveChatGPTUpgrade(updatedAnalysis, fingerprint: fingerprint)
         scanMessage = ScanMessage(
             title: "ChatGPT stylist analysis ready",
@@ -9198,6 +9237,7 @@ private extension OutfitAnalysisResult {
     func replacingRecommendations(_ recommendations: [ClothingRecommendation]) -> OutfitAnalysisResult {
         OutfitAnalysisResult(
             score: score,
+            scoreBreakdown: scoreBreakdown,
             colorMatch: colorMatch,
             occasionFit: occasionFit,
             styleBalance: styleBalance,
@@ -9227,6 +9267,7 @@ private extension OutfitAnalysisResult {
     func replacingChatGPTStylistSections(_ sections: [ChatGPTStylistSection]) -> OutfitAnalysisResult {
         OutfitAnalysisResult(
             score: score,
+            scoreBreakdown: scoreBreakdown,
             colorMatch: colorMatch,
             occasionFit: occasionFit,
             styleBalance: styleBalance,
