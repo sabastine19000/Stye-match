@@ -410,10 +410,28 @@ struct StylistChatView: View {
         if speechInput.state.isActive {
             speechInput.stopListening()
         }
-        guard !preparedDraft.isEmpty, !draftExceedsLimit else { return }
-        guard submitQuestion(preparedDraft) else { return }
+        let capturedDraft = preparedDraft
+        debugLogSubmit(
+            tapped: true,
+            textUnits: StylistChatMessageLimit.utf16Length(of: capturedDraft),
+            sendEnabled: !capturedDraft.isEmpty && !draftExceedsLimit && !service.isStreaming,
+            requestCreated: false,
+            blockedReason: submitBlockedReason(for: capturedDraft)
+        )
+        guard !capturedDraft.isEmpty, !draftExceedsLimit else { return }
+        guard submitQuestion(capturedDraft) else { return }
         draft = ""
         speechInput.clearTranscript()
+        #if DEBUG
+        print("[Stylist Submit] composer_cleared=true draft_restored=false")
+        #endif
+        debugLogSubmit(
+            tapped: true,
+            textUnits: StylistChatMessageLimit.utf16Length(of: capturedDraft),
+            sendEnabled: true,
+            requestCreated: true,
+            blockedReason: "none"
+        )
     }
 
     private var preparedDraft: String {
@@ -435,8 +453,31 @@ struct StylistChatView: View {
             onSignInRequested()
             return false
         }
-        service.send(question, forcedContext: currentConversationContext)
-        return true
+        return service.send(question, forcedContext: currentConversationContext)
+    }
+
+    private func submitBlockedReason(for capturedDraft: String) -> String {
+        if capturedDraft.isEmpty { return "empty" }
+        if draftExceedsLimit { return "validation" }
+        if service.isStreaming { return "busy" }
+        if service.authorizationState != .authorized { return "other" }
+        return "none"
+    }
+
+    private func debugLogSubmit(
+        tapped: Bool,
+        textUnits: Int,
+        sendEnabled: Bool,
+        requestCreated: Bool,
+        blockedReason: String
+    ) {
+        #if DEBUG
+        print(
+            "[Stylist Submit] tapped=\(tapped) text_units=\(textUnits) " +
+            "send_enabled=\(sendEnabled) is_sending=\(service.isStreaming) " +
+            "request_created=\(requestCreated) blocked_reason=\(blockedReason)"
+        )
+        #endif
     }
 
     private var currentConversationContext: ChatContext {

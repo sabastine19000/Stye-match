@@ -480,7 +480,7 @@ final class StylistChatServiceTests: XCTestCase {
             contextProvider: { ChatContext() }
         )
 
-        service.send("Build three outfits around olive pants.")
+        XCTAssertFalse(service.send("Build three outfits around olive pants."))
 
         XCTAssertTrue(service.activeConversation.messages.isEmpty)
         XCTAssertTrue(transport.requests.isEmpty)
@@ -568,8 +568,8 @@ final class StylistChatServiceTests: XCTestCase {
             contextProvider: { ChatContext() }
         )
 
-        service.send("What goes with olive pants?")
-        service.send("What goes with olive pants?")
+        XCTAssertTrue(service.send("What goes with olive pants?"))
+        XCTAssertFalse(service.send("What goes with olive pants?"))
         try await waitUntil { !service.isStreaming }
 
         XCTAssertEqual(transport.requests.count, 1)
@@ -578,7 +578,7 @@ final class StylistChatServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedOutfitCombinationLeavesNoDeadConversationRecord() async throws {
+    func testFailedOutfitCombinationKeepsAcceptedUserMessageAndClearsSendingState() async throws {
         let store = ChatConversationStore(fileURL: temporaryStoreURL())
         let transport = ThrowingChatTransport(error: StylistChatError.network)
         let service = StylistChatService(
@@ -587,17 +587,21 @@ final class StylistChatServiceTests: XCTestCase {
             contextProvider: { PersonalizationContextBuilder.conversationalStylistContext() }
         )
 
-        service.send("Build three outfits around olive pants.")
+        XCTAssertTrue(service.send("Build three outfits around olive pants."))
         try await waitUntil { !service.isStreaming }
 
-        XCTAssertTrue(service.activeConversation.messages.isEmpty)
+        XCTAssertEqual(service.activeConversation.messages.map(\.content), ["Build three outfits around olive pants."])
         XCTAssertEqual(service.inlineError, StylistChatError.network.localizedDescription)
         XCTAssertFalse(service.requiresSignIn)
-        XCTAssertTrue(ChatConversationStore(fileURL: storeURL(from: store)).conversations.isEmpty)
+        XCTAssertFalse(service.isStreaming)
+        XCTAssertEqual(
+            ChatConversationStore(fileURL: storeURL(from: store)).conversations.first?.messages.map(\.content),
+            ["Build three outfits around olive pants."]
+        )
     }
 
     @MainActor
-    func testFailedFollowUpRestoresExistingConversationWithoutDeadMessages() async throws {
+    func testFailedFollowUpKeepsAcceptedUserMessageWithoutEmptyAssistant() async throws {
         let store = ChatConversationStore(fileURL: temporaryStoreURL())
         var existing = ChatConversation()
         existing.messages = [
@@ -611,13 +615,17 @@ final class StylistChatServiceTests: XCTestCase {
             contextProvider: { ChatContext() }
         )
 
-        service.send("What about olive?")
+        XCTAssertTrue(service.send("What about olive?"))
         try await waitUntil { !service.isStreaming }
 
-        XCTAssertEqual(service.activeConversation.messages, existing.messages)
         XCTAssertEqual(
-            ChatConversationStore(fileURL: storeURL(from: store)).conversations.first?.messages,
-            existing.messages
+            service.activeConversation.messages.map(\.content),
+            existing.messages.map(\.content) + ["What about olive?"]
+        )
+        XCTAssertFalse(service.activeConversation.messages.contains { $0.role == .assistant && $0.content.isEmpty })
+        XCTAssertEqual(
+            ChatConversationStore(fileURL: storeURL(from: store)).conversations.first?.messages.map(\.content),
+            existing.messages.map(\.content) + ["What about olive?"]
         )
     }
 
@@ -642,7 +650,7 @@ final class StylistChatServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testLegacyOrphanUserMessagesAreRemovedWhenConversationLoads() {
+    func testPreviouslyAcceptedUserMessagesRemainWhenConversationLoads() {
         let url = temporaryStoreURL()
         let store = ChatConversationStore(fileURL: url)
         var conversation = ChatConversation()
@@ -659,7 +667,10 @@ final class StylistChatServiceTests: XCTestCase {
             transport: MockChatTransport(chunks: [])
         )
 
-        XCTAssertEqual(service.activeConversation.messages.map(\.content), ["Completed question", "Completed response"])
+        XCTAssertEqual(
+            service.activeConversation.messages.map(\.content),
+            ["Completed question", "Completed response", "Dead failed attempt", "Duplicate dead attempt"]
+        )
     }
 
     func testStylistChatViewRetainsBuild17PromptLibraryAndCoreControls() throws {
@@ -704,7 +715,21 @@ final class StylistChatServiceTests: XCTestCase {
         XCTAssertTrue(source.contains(".onSubmit {\n                        sendDraft()"))
         XCTAssertTrue(source.contains("guard service.authorizationState == .authorized else"))
         XCTAssertTrue(source.contains("onSignInRequested()"))
-        XCTAssertTrue(source.contains("guard submitQuestion(preparedDraft) else { return }"))
+        XCTAssertTrue(source.contains("let capturedDraft = preparedDraft"))
+        XCTAssertTrue(source.contains("guard submitQuestion(capturedDraft) else { return }"))
+        XCTAssertTrue(source.contains("draft = \"\""))
+        let captureIndex = try XCTUnwrap(source.range(of: "let capturedDraft = preparedDraft")?.lowerBound)
+        let submitIndex = try XCTUnwrap(
+            source.range(
+                of: "guard submitQuestion(capturedDraft) else { return }",
+                range: captureIndex..<source.endIndex
+            )?.lowerBound
+        )
+        let clearIndex = try XCTUnwrap(
+            source.range(of: "draft = \"\"", range: submitIndex..<source.endIndex)?.lowerBound
+        )
+        XCTAssertLessThan(captureIndex, submitIndex)
+        XCTAssertLessThan(submitIndex, clearIndex)
         XCTAssertTrue(source.contains("StylistChatMessageLimit.utf16Length(of: preparedDraft)"))
         XCTAssertTrue(source.contains("Text(\"\\(draftUTF16Length) / 2,000\")"))
         XCTAssertTrue(source.contains("Text(StylistChatMessageLimit.limitMessage)"))

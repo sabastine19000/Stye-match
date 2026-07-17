@@ -14,7 +14,6 @@ final class StylistChatService: ObservableObject {
     private let transport: StylistChatTransport
     private let contextProvider: () -> ChatContext
     private var streamTask: Task<Void, Never>?
-    private var conversationBeforeRequest: ChatConversation?
     private var pendingAssistantID: UUID?
     private var sessionChangeCancellable: AnyCancellable?
 
@@ -68,25 +67,31 @@ final class StylistChatService: ObservableObject {
         StyleMatchAccountSessionDiagnostics.log(stage: "chat_auth_refreshed")
     }
 
-    func send(_ text: String, forcedContext: ChatContext? = nil) {
+    @discardableResult
+    func send(_ text: String, forcedContext: ChatContext? = nil) -> Bool {
         let prompt = StylistChatMessageLimit.trimmedForSending(text)
-        guard !prompt.isEmpty, !isStreaming else { return }
+        guard !prompt.isEmpty, !isStreaming else { return false }
         guard StylistChatMessageLimit.isWithinLimit(prompt) else {
             inlineError = StylistChatMessageLimit.limitMessage
-            return
+            return false
         }
 
-        guard validateAuthorization() else { return }
+        guard validateAuthorization() else { return false }
 
         requiresSignIn = false
         inlineError = nil
-        conversationBeforeRequest = activeConversation
         activeConversation.messages.append(ChatMessage(role: .user, content: prompt))
         let assistantID = UUID()
         pendingAssistantID = assistantID
         activeConversation.messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
         activeConversation.updatedAt = Date()
         isStreaming = true
+        debugLogSubmissionLifecycle(
+            localAppend: true,
+            requestStarted: true,
+            requestFailed: false,
+            sendingStateCleared: false
+        )
 
         let context = forcedContext ?? contextProvider()
         let request = ChatRequest(
@@ -108,12 +113,13 @@ final class StylistChatService: ObservableObject {
             }
             finishStreaming()
         }
+        return true
     }
 
     func sendPreseededQuestion(_ text: String, context: ChatContext) {
         guard validateAuthorization() else { return }
         newChat()
-        send(text, forcedContext: context)
+        _ = send(text, forcedContext: context)
     }
 
     func stopStreaming() {
@@ -135,13 +141,20 @@ final class StylistChatService: ObservableObject {
             !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         } ?? false
 
-        if !hasAssistantResponse, let previousConversation = conversationBeforeRequest {
-            activeConversation = previousConversation
+        if !hasAssistantResponse {
+            activeConversation = Self.removingEmptyAssistantMessages(activeConversation)
+            activeConversation.updatedAt = Date()
+            store.save(activeConversation)
             inlineError = (chatError ?? StylistChatError.providerError).localizedDescription
             requiresSignIn = chatError == .unauthorized
-            conversationBeforeRequest = nil
             pendingAssistantID = nil
             conversations = store.conversations
+            debugLogSubmissionLifecycle(
+                localAppend: true,
+                requestStarted: true,
+                requestFailed: true,
+                sendingStateCleared: true
+            )
             return
         }
 
@@ -149,8 +162,13 @@ final class StylistChatService: ObservableObject {
         activeConversation.updatedAt = Date()
         store.save(activeConversation)
         conversations = store.conversations
-        conversationBeforeRequest = nil
         pendingAssistantID = nil
+        debugLogSubmissionLifecycle(
+            localAppend: true,
+            requestStarted: true,
+            requestFailed: false,
+            sendingStateCleared: true
+        )
     }
 
     private func append(_ token: String, to messageID: UUID) {
@@ -172,6 +190,21 @@ final class StylistChatService: ObservableObject {
         return true
     }
 
+    private func debugLogSubmissionLifecycle(
+        localAppend: Bool,
+        requestStarted: Bool,
+        requestFailed: Bool,
+        sendingStateCleared: Bool
+    ) {
+        #if DEBUG
+        print(
+            "[Stylist Submit] local_append=\(localAppend) request_started=\(requestStarted) " +
+            "request_failed=\(requestFailed) draft_restored=false " +
+            "sending_state_cleared=\(sendingStateCleared)"
+        )
+        #endif
+    }
+
     private func requestMessages(from messages: [ChatMessage]) -> [ChatRequest.RequestMessage] {
         messages
             .compactMap { message -> ChatRequest.RequestMessage? in
@@ -191,9 +224,6 @@ final class StylistChatService: ObservableObject {
         sanitized.messages.removeAll {
             $0.role == .assistant
                 && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        while sanitized.messages.last?.role == .user {
-            sanitized.messages.removeLast()
         }
         return sanitized
     }
