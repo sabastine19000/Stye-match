@@ -10,10 +10,12 @@ struct StylistChatView: View {
     @State private var showingHistory = false
     @State private var activeConversationContext: ChatContext?
     @State private var lastAnnouncedAssistantID: UUID?
+    @State private var composerFrame: CGRect = .null
 
     private let initialQuestion: String?
     private let initialContext: ChatContext?
     private let voiceInputEnabled: Bool
+    private let bottomNavigationClearance: CGFloat
     private let onSignInRequested: () -> Void
 
     init(
@@ -22,6 +24,7 @@ struct StylistChatView: View {
         voiceInputEnabled: Bool = true,
         initialQuestion: String? = nil,
         initialContext: ChatContext? = nil,
+        bottomNavigationClearance: CGFloat = 0,
         onSignInRequested: @escaping () -> Void = {}
     ) {
         _service = StateObject(
@@ -33,6 +36,7 @@ struct StylistChatView: View {
         self.voiceInputEnabled = voiceInputEnabled
         self.initialQuestion = initialQuestion
         self.initialContext = initialContext
+        self.bottomNavigationClearance = max(0, bottomNavigationClearance)
         self.onSignInRequested = onSignInRequested
     }
 
@@ -49,6 +53,7 @@ struct StylistChatView: View {
             messageList
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     anchoredInputBar
+                        .padding(.bottom, bottomNavigationClearance)
                 }
                 .scrollDismissesKeyboard(.interactively)
             .navigationTitle("AI Stylist Chat")
@@ -82,6 +87,11 @@ struct StylistChatView: View {
             }
             .styleMatchOnChange(of: speechInput.transcript) { transcript in
                 draft = transcript
+            }
+            .onPreferenceChange(StyleMatchComposerFramePreferenceKey.self) { frame in
+                guard !frame.isNull, !frame.isEmpty, frame != composerFrame else { return }
+                composerFrame = frame
+                debugLogComposerLayout()
             }
         }
         .appScreenBackground(.ai)
@@ -274,6 +284,31 @@ struct StylistChatView: View {
             .overlay(alignment: .top) {
                 Divider()
             }
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: StyleMatchComposerFramePreferenceKey.self,
+                        value: proxy.frame(in: .global)
+                    )
+                }
+            }
+    }
+
+    private func debugLogComposerLayout() {
+#if DEBUG
+        let frame = composerFrame
+        guard !frame.isNull, !frame.isEmpty else { return }
+        print(
+            String(
+                format: "[StyleMatch Layout Debug] composerFrame={x=%.1f y=%.1f width=%.1f height=%.1f} bottomNavigationClearance=%.1f",
+                frame.minX,
+                frame.minY,
+                frame.width,
+                frame.height,
+                bottomNavigationClearance
+            )
+        )
+#endif
     }
 
     private var voiceInputButton: some View {
@@ -460,6 +495,17 @@ struct StylistChatView: View {
         guard UIAccessibility.isVoiceOverRunning else { return }
         UIAccessibility.post(notification: .announcement, argument: "Stylist response ready.")
         #endif
+    }
+}
+
+private struct StyleMatchComposerFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isNull, !next.isEmpty {
+            value = next
+        }
     }
 }
 

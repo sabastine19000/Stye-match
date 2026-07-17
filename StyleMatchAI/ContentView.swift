@@ -17,6 +17,25 @@ enum StyleMatchKeyboardFrameVisibility {
     }
 }
 
+private struct StyleMatchBottomNavigationFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .null
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isNull, !next.isEmpty {
+            value = next
+        }
+    }
+}
+
+private struct StyleMatchRootSafeAreaBottomPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 enum AppTab: Hashable {
     case home
     case scan
@@ -248,6 +267,8 @@ struct ContentView: View {
     @State private var hasShownFeedbackPromptThisSession = false
     @State private var shoppingSaleUnreadCount = 0
     @State private var isSoftwareKeyboardVisible = false
+    @State private var bottomNavigationFrame: CGRect = .null
+    @State private var rootSafeAreaBottomInset: CGFloat = 0
     @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
 
     private var activeTheme: StyleMatchAppTheme {
@@ -262,6 +283,24 @@ struct ContentView: View {
                 if !isSoftwareKeyboardVisible {
                     bottomNavigation
                 }
+            }
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: StyleMatchRootSafeAreaBottomPreferenceKey.self,
+                        value: proxy.safeAreaInsets.bottom
+                    )
+                }
+            }
+            .onPreferenceChange(StyleMatchBottomNavigationFramePreferenceKey.self) { frame in
+                guard !frame.isNull, !frame.isEmpty, frame != bottomNavigationFrame else { return }
+                bottomNavigationFrame = frame
+                debugLogRootBottomLayout()
+            }
+            .onPreferenceChange(StyleMatchRootSafeAreaBottomPreferenceKey.self) { inset in
+                guard inset != rootSafeAreaBottomInset else { return }
+                rootSafeAreaBottomInset = inset
+                debugLogRootBottomLayout()
             }
 #if canImport(UIKit)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
@@ -384,6 +423,7 @@ struct ContentView: View {
                 preservedTab(.ai) {
                     if FeatureFlags.conversationalStylist {
                         StylistChatView(
+                            bottomNavigationClearance: chatBottomNavigationClearance,
                             onSignInRequested: { selectedTab = .profile }
                         )
                     } else {
@@ -493,6 +533,45 @@ struct ContentView: View {
         )
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: StyleMatchBottomNavigationFramePreferenceKey.self,
+                    value: proxy.frame(in: .global)
+                )
+            }
+        }
+    }
+
+    private var chatBottomNavigationClearance: CGFloat {
+        guard !isSoftwareKeyboardVisible,
+              !bottomNavigationFrame.isNull,
+              !bottomNavigationFrame.isEmpty else {
+            return 0
+        }
+        return bottomNavigationFrame.height
+    }
+
+    private func debugLogRootBottomLayout() {
+#if DEBUG
+        let frame = bottomNavigationFrame
+        let frameText = frame.isNull
+            ? "null"
+            : String(
+                format: "x=%.1f y=%.1f width=%.1f height=%.1f",
+                frame.minX,
+                frame.minY,
+                frame.width,
+                frame.height
+            )
+        let safeAreaText = String(format: "%.1f", rootSafeAreaBottomInset)
+        let clearanceText = String(format: "%.1f", chatBottomNavigationClearance)
+        print(
+            "[StyleMatch Layout Debug] bottomNavigationFrame={\(frameText)} " +
+            "hitTestFrame={\(frameText)} safeAreaBottom=\(safeAreaText) " +
+            "keyboardVisible=\(isSoftwareKeyboardVisible) chatClearance=\(clearanceText)"
+        )
+#endif
     }
 
     private func bottomTab(_ tab: AppTab, title: String, icon: String, badgeCount: Int = 0) -> some View {

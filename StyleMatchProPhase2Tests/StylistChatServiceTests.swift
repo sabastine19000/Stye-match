@@ -718,6 +718,34 @@ final class StylistChatServiceTests: XCTestCase {
         XCTAssertTrue(contentSource.contains("#selector(UIResponder.resignFirstResponder)"))
     }
 
+    func testStylistChatComposerUsesMeasuredFloatingNavigationClearance() throws {
+        let chatSource = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+        let contentSource = try projectSource("StyleMatchAI/ContentView.swift")
+
+        XCTAssertTrue(contentSource.contains("StyleMatchBottomNavigationFramePreferenceKey"))
+        XCTAssertTrue(contentSource.contains("value: proxy.frame(in: .global)"))
+        XCTAssertTrue(contentSource.contains("return bottomNavigationFrame.height"))
+        XCTAssertTrue(contentSource.contains("bottomNavigationClearance: chatBottomNavigationClearance"))
+        XCTAssertTrue(chatSource.contains("bottomNavigationClearance: CGFloat = 0"))
+        XCTAssertTrue(chatSource.contains(".padding(.bottom, bottomNavigationClearance)"))
+        XCTAssertTrue(chatSource.contains("StyleMatchComposerFramePreferenceKey"))
+        XCTAssertFalse(chatSource.contains("ignoresSafeArea(.keyboard"))
+        XCTAssertFalse(chatSource.contains("keyboardHeight"))
+        XCTAssertFalse(chatSource.contains("keyboardOffset"))
+    }
+
+    func testStylistChatMeasuredClearancePreservesComposerInteractionContract() throws {
+        let source = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+
+        XCTAssertTrue(source.contains("TextField(\"Ask your stylist...\", text: $draft, axis: .vertical)"))
+        XCTAssertTrue(source.contains(".lineLimit(1...4)"))
+        XCTAssertTrue(source.contains("sendDraft()"))
+        XCTAssertTrue(source.contains("voiceInputButton"))
+        XCTAssertTrue(source.contains("Text(\"\\(draftUTF16Length) / 2,000\")"))
+        XCTAssertTrue(source.contains("Text(StylistChatMessageLimit.limitMessage)"))
+        XCTAssertTrue(source.contains(".scrollDismissesKeyboard(.interactively)"))
+    }
+
     func testStylistChatTabEntryDoesNotAutomaticallyFocusComposerOrPresentKeyboard() throws {
         let source = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
 
