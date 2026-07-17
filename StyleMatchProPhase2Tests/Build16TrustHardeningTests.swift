@@ -199,7 +199,7 @@ final class Build16TrustHardeningTests: XCTestCase {
         let shareSource = String(source[shareStart.lowerBound..<shareEnd.lowerBound])
         XCTAssertTrue(shareSource.contains("let renderer = ImageRenderer(content: card)"))
         XCTAssertTrue(shareSource.contains("completionWithItemsHandler = { _, completed, _, error in"))
-        XCTAssertTrue(shareSource.contains("does not upload it, track which app you choose, or keep an extra copy unless you choose Save Image"))
+        XCTAssertTrue(shareSource.contains("Share Image is created on this device and nothing is uploaded."))
         XCTAssertGreaterThanOrEqual(
             shareSource.components(separatedBy: "renderedShareCard = nil").count - 1,
             4
@@ -211,6 +211,16 @@ final class Build16TrustHardeningTests: XCTestCase {
         XCTAssertFalse(shareSource.contains("jpegData("))
         XCTAssertFalse(shareSource.contains("trackEvent"))
         XCTAssertFalse(shareSource.contains("selectedActivityType"))
+    }
+
+    func testSharePreviewDisclosureDistinguishesImageAndPrivateLinkModes() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertTrue(source.contains("Share Image is created on this device and nothing is uploaded."))
+        XCTAssertTrue(source.contains("Share as Link securely stores your selected sections and photo, if included, for 30 days."))
+        XCTAssertTrue(source.contains("Revoke links anytime in Profile."))
+        XCTAssertTrue(source.contains("Toggle(\"Branding on exported image\", isOn: $includeBranding)"))
+        XCTAssertFalse(source.contains("StyleMatch Pro does not upload it"))
     }
 
     func testScanAIUpgradeRequiresExactSessionAndFingerprint() throws {

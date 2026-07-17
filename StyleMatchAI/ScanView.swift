@@ -10641,7 +10641,7 @@ private struct OutfitSharePreviewScreen: View {
                     .foregroundStyle(.secondary)
 
                     Label(
-                        "Your card is created on this device. StyleMatch Pro does not upload it, track which app you choose, or keep an extra copy unless you choose Save Image.",
+                        "Share Image is created on this device and nothing is uploaded. Share as Link securely stores your selected sections and photo, if included, for 30 days. Revoke links anytime in Profile.",
                         systemImage: "iphone"
                     )
                     .font(.footnote)
@@ -10819,8 +10819,8 @@ private struct OutfitSharePreviewScreen: View {
                 .accessibilityLabel("Include outfit description")
             Toggle("Improvement suggestions", isOn: $includeSuggestions)
                 .accessibilityLabel("Include improvement suggestions")
-            Toggle("StyleMatch Pro branding", isOn: $includeBranding)
-                .accessibilityLabel("Include StyleMatch Pro branding")
+            Toggle("Branding on exported image", isOn: $includeBranding)
+                .accessibilityLabel("Include StyleMatch Pro branding on exported image")
         }
         .tint(accentColor)
         .padding(18)
