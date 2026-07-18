@@ -409,14 +409,21 @@ struct AIStyleInsightCard: View {
 
         let structuredRequest: AIInsightStructuredRequest
         do {
-            structuredRequest = try AIInsightStructuredHistoryBuilder.build(
+            structuredRequest = try AIInsightChatPromptBuilder.build(
                 displayedMessages: displayedHistory,
-                latestPrompt: text
+                latestQuestion: text,
+                cardFacts: AIInsightChatCardFacts(
+                    screen: screen,
+                    title: title,
+                    featurePrompt: prompt,
+                    extraContext: extraContext
+                )
             )
         } catch {
             #if DEBUG
             print("[AI Insight Chat] \(error.localizedDescription)")
             #endif
+            statusText = AIInsightChatErrorPresentation.message(for: error)
             return
         }
 
@@ -445,7 +452,7 @@ struct AIStyleInsightCard: View {
                 messages.append(
                     AIInsightChatMessage(
                             role: .stylist,
-                            text: "AI Stylist is having trouble connecting right now. Please try again."
+                            text: AIInsightChatErrorPresentation.message(for: error)
                         )
                     )
                     statusText = nil
@@ -454,14 +461,6 @@ struct AIStyleInsightCard: View {
                 }
             }
         }
-    }
-
-    private var chatContext: String {
-        return """
-        Current card context: \(title)
-        Current feature prompt: \(prompt)
-        Extra app context: \(extraContext)
-        """
     }
 
     private func liveStylistReply(_ request: AIInsightStructuredRequest) async throws -> String {
@@ -476,8 +475,8 @@ struct AIStyleInsightCard: View {
                 try await AIStyleAdvisor.ask(
                     screen: screen,
                     messages: history,
-                    prompt: request.latestPrompt,
-                    extraContext: chatContext
+                    prompt: request.primaryMessage,
+                    extraContext: ""
                 )
             }
             group.addTask {

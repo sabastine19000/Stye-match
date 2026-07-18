@@ -124,44 +124,138 @@ struct AIInsightConversationEntry: Equatable {
 
 struct AIInsightStructuredRequest: Equatable {
     let history: [AIInsightConversationEntry]
-    let latestPrompt: String
+    let primaryMessage: String
 }
 
-enum AIInsightStructuredHistoryBuilder {
-    private static let genericLocalFailureReplies: Set<String> = [
+struct AIInsightChatCardFacts: Equatable {
+    let screen: String
+    let title: String
+    let featurePrompt: String
+    let extraContext: String
+}
+
+enum AIInsightChatPromptBuilder {
+    static let maximumMessageUTF16Length = 1_800
+    static let maximumPayloadMessages = 20
+
+    private static let localFailureReplies: Set<String> = [
         "AI Stylist is having trouble connecting right now. Please try again.",
-        "The stylist is having trouble replying right now."
+        "The stylist is having trouble replying right now.",
+        StylistChatMessageLimit.limitMessage
     ]
 
     static func build(
         displayedMessages: [AIInsightConversationEntry],
-        latestPrompt: String
+        latestQuestion: String,
+        cardFacts: AIInsightChatCardFacts
     ) throws -> AIInsightStructuredRequest {
-        let preparedPrompt = StylistChatMessageLimit.trimmedForSending(latestPrompt)
-        guard !preparedPrompt.isEmpty else {
+        let preparedQuestion = StylistChatMessageLimit.trimmedForSending(latestQuestion)
+        guard !preparedQuestion.isEmpty else {
             throw StylistChatError.invalidRequest
         }
-        guard StylistChatMessageLimit.isWithinLimit(preparedPrompt) else {
+
+        let primaryMessage = makePrimaryMessage(
+            latestQuestion: preparedQuestion,
+            cardFacts: cardFacts
+        )
+        guard utf16Length(primaryMessage) <= maximumMessageUTF16Length else {
             throw StylistChatError.payloadTooLarge
         }
 
         let eligibleHistory = displayedMessages.compactMap { entry -> AIInsightConversationEntry? in
             let content = StylistChatMessageLimit.trimmedForSending(entry.content)
-            guard !content.isEmpty,
-                  StylistChatMessageLimit.isWithinLimit(content) else {
+            guard !content.isEmpty else {
                 return nil
             }
-            if entry.role == .assistant, genericLocalFailureReplies.contains(content) {
+            if entry.role == .assistant, isLocalFailureReply(content) {
                 return nil
             }
-            return AIInsightConversationEntry(role: entry.role, content: content)
+            return AIInsightConversationEntry(
+                role: entry.role,
+                content: truncatedToUTF16Limit(content, limit: maximumMessageUTF16Length)
+            )
         }
 
-        let maximumHistoryMessages = StylistChatMessageLimit.maximumPayloadMessages - 1
+        let maximumHistoryMessages = maximumPayloadMessages - 1
         return AIInsightStructuredRequest(
             history: Array(eligibleHistory.suffix(maximumHistoryMessages)),
-            latestPrompt: preparedPrompt
+            primaryMessage: primaryMessage
         )
+    }
+
+    private static func makePrimaryMessage(
+        latestQuestion: String,
+        cardFacts: AIInsightChatCardFacts
+    ) -> String {
+        var factLines = [
+            factLine(label: "Screen", value: cardFacts.screen),
+            factLine(label: "Card", value: cardFacts.title),
+            factLine(label: "Feature", value: cardFacts.featurePrompt),
+            factLine(label: "Context", value: cardFacts.extraContext)
+        ].compactMap { $0 }
+        if factLines.isEmpty {
+            factLines = ["- No additional card facts were supplied."]
+        }
+
+        return """
+        Newest customer question:
+        \(latestQuestion)
+
+        Essential card facts:
+        \(factLines.joined(separator: "\n"))
+
+        Guardrails:
+        1. \(StyleMatchAIGuardrails.scoreIntegrityInstruction)
+        2. Use only supplied facts; never invent closet ownership, scan facts, profile details, or weather.
+        """
+    }
+
+    private static func factLine(label: String, value: String) -> String? {
+        let prepared = StylistChatMessageLimit.trimmedForSending(value)
+        return prepared.isEmpty ? nil : "- \(label): \(prepared)"
+    }
+
+    private static func isLocalFailureReply(_ content: String) -> Bool {
+        if localFailureReplies.contains(content) {
+            return true
+        }
+        let normalized = content.lowercased()
+        return normalized.contains("stylist is having trouble connecting")
+            || normalized.contains("stylist is having trouble replying")
+    }
+
+    private static func utf16Length(_ text: String) -> Int {
+        text.utf16.count
+    }
+
+    private static func truncatedToUTF16Limit(_ text: String, limit: Int) -> String {
+        guard utf16Length(text) > limit else { return text }
+
+        var result = ""
+        var usedUnits = 0
+        for character in text {
+            let units = String(character).utf16.count
+            guard usedUnits + units <= limit else { break }
+            result.append(character)
+            usedUnits += units
+        }
+        return result
+    }
+}
+
+enum AIInsightChatErrorPresentation {
+    static let connectivityMessage = "AI Stylist is having trouble connecting right now. Please try again."
+
+    static func message(for error: Error) -> String {
+        if let diagnostic = error as? StylistChatDiagnosticError,
+           diagnostic.category == .payloadTooLarge {
+            return StylistChatMessageLimit.limitMessage
+        }
+        if let chatError = error as? StylistChatError,
+           chatError == .payloadTooLarge {
+            return StylistChatMessageLimit.limitMessage
+        }
+        return connectivityMessage
     }
 }
 
