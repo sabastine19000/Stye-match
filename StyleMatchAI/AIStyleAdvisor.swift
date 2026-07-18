@@ -41,7 +41,12 @@ enum AIStyleAdvisor {
         )
     }
 
-    static func ask(screen: String, prompt: String, extraContext: String = "") async throws -> String {
+    static func ask(
+        screen: String,
+        messages: [AIChatMessage] = [],
+        prompt: String,
+        extraContext: String = ""
+    ) async throws -> String {
         guard let session = StyleMatchAccountSessionStore.load(), session.expiresAt > Date() else {
             throw AIStyleAdvisorError.missingAPIKey
         }
@@ -51,6 +56,7 @@ enum AIStyleAdvisor {
         let client = OpenAIStylistClient(apiKey: "", model: model)
         return try await client.askStylist(
             profile: profile(screen: screen, extraContext: extraContext),
+            messages: messages,
             question: prompt
         )
     }
@@ -394,6 +400,26 @@ struct AIStyleInsightCard: View {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
+        let displayedHistory = messages.map { message in
+            AIInsightConversationEntry(
+                role: message.role == .client ? .user : .assistant,
+                content: message.text
+            )
+        }
+
+        let structuredRequest: AIInsightStructuredRequest
+        do {
+            structuredRequest = try AIInsightStructuredHistoryBuilder.build(
+                displayedMessages: displayedHistory,
+                latestPrompt: text
+            )
+        } catch {
+            #if DEBUG
+            print("[AI Insight Chat] \(error.localizedDescription)")
+            #endif
+            return
+        }
+
         chatInput = ""
         messages.append(AIInsightChatMessage(role: .client, text: text))
         isSendingMessage = true
@@ -402,8 +428,7 @@ struct AIStyleInsightCard: View {
 
         Task {
             do {
-                let promptText = chatPrompt(for: text)
-                let response = try await liveStylistReply(promptText)
+                let response = try await liveStylistReply(structuredRequest)
                 await MainActor.run {
                     if !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         messages.append(AIInsightChatMessage(role: .stylist, text: response))
@@ -431,38 +456,29 @@ struct AIStyleInsightCard: View {
         }
     }
 
-    private func chatPrompt(for customerMessage: String) -> String {
-        let recentConversation = messages.suffix(8).map { message in
-            "\(message.role == .client ? "Customer" : "Stylist"): \(message.text)"
-        }.joined(separator: "\n")
-
+    private var chatContext: String {
         return """
-        You are StyleMatch Pro AI Stylist, powered by ChatGPT.
-        Answer the customer's exact latest message. Do not repeat a preset outfit suggestion unless the customer asks for outfit advice.
-        If the customer says hello, greet them naturally and invite a style question.
-        If the customer asks what you know about them, explain only what StyleMatch Pro can infer from saved style preferences, closet items, weather, and outfit scans. Be honest about anything unknown.
-        If the customer asks you to read or explain their score, use the latest saved scan score from StyleMatch Pro context. Say the score, the match rating if available, why it received that score, and what would improve it. Do not create a new score.
-        Use saved scan context when relevant: score, detected clothing, colors, occasion, lighting/image quality, and style notes.
-        Do not claim to know race, ethnicity, identity, private life, or personal details that are not in the app.
-        Keep the reply conversational, premium, respectful, and under 140 words.
-        Use plain text only. Do not use markdown symbols.
-
         Current card context: \(title)
         Current feature prompt: \(prompt)
         Extra app context: \(extraContext)
-
-        Recent conversation:
-        \(recentConversation)
-
-        Latest customer message:
-        \(customerMessage)
         """
     }
 
-    private func liveStylistReply(_ promptText: String) async throws -> String {
-        try await withThrowingTaskGroup(of: String.self) { group in
+    private func liveStylistReply(_ request: AIInsightStructuredRequest) async throws -> String {
+        let history = request.history.map { entry in
+            AIChatMessage(
+                role: entry.role == .user ? .customer : .assistant,
+                text: entry.content
+            )
+        }
+        return try await withThrowingTaskGroup(of: String.self) { group in
             group.addTask {
-                try await AIStyleAdvisor.ask(screen: screen, prompt: promptText, extraContext: extraContext)
+                try await AIStyleAdvisor.ask(
+                    screen: screen,
+                    messages: history,
+                    prompt: request.latestPrompt,
+                    extraContext: chatContext
+                )
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: 20_000_000_000)

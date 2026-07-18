@@ -112,6 +112,59 @@ enum StylistChatMessageLimit {
     }
 }
 
+enum AIInsightConversationRole: Equatable {
+    case user
+    case assistant
+}
+
+struct AIInsightConversationEntry: Equatable {
+    let role: AIInsightConversationRole
+    let content: String
+}
+
+struct AIInsightStructuredRequest: Equatable {
+    let history: [AIInsightConversationEntry]
+    let latestPrompt: String
+}
+
+enum AIInsightStructuredHistoryBuilder {
+    private static let genericLocalFailureReplies: Set<String> = [
+        "AI Stylist is having trouble connecting right now. Please try again.",
+        "The stylist is having trouble replying right now."
+    ]
+
+    static func build(
+        displayedMessages: [AIInsightConversationEntry],
+        latestPrompt: String
+    ) throws -> AIInsightStructuredRequest {
+        let preparedPrompt = StylistChatMessageLimit.trimmedForSending(latestPrompt)
+        guard !preparedPrompt.isEmpty else {
+            throw StylistChatError.invalidRequest
+        }
+        guard StylistChatMessageLimit.isWithinLimit(preparedPrompt) else {
+            throw StylistChatError.payloadTooLarge
+        }
+
+        let eligibleHistory = displayedMessages.compactMap { entry -> AIInsightConversationEntry? in
+            let content = StylistChatMessageLimit.trimmedForSending(entry.content)
+            guard !content.isEmpty,
+                  StylistChatMessageLimit.isWithinLimit(content) else {
+                return nil
+            }
+            if entry.role == .assistant, genericLocalFailureReplies.contains(content) {
+                return nil
+            }
+            return AIInsightConversationEntry(role: entry.role, content: content)
+        }
+
+        let maximumHistoryMessages = StylistChatMessageLimit.maximumPayloadMessages - 1
+        return AIInsightStructuredRequest(
+            history: Array(eligibleHistory.suffix(maximumHistoryMessages)),
+            latestPrompt: preparedPrompt
+        )
+    }
+}
+
 enum StylistChatError: LocalizedError, Equatable {
     case missingConfiguration
     case unauthorized
