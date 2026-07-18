@@ -282,6 +282,7 @@ struct BundledCatalogProvider: ProductCatalogProvider {
                         occasionTags: decoded.occasionTags,
                         brand: decoded.brand,
                         imageURL: decoded.imageURL,
+                        retailerID: decoded.retailerID,
                         retailer: configuredRetailer,
                         affiliateURL: decoded.affiliateURL,
                         price: decoded.price,
@@ -407,6 +408,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
                 occasionTags: remote.tags,
                 brand: remote.brand,
                 imageURL: imageURL,
+                retailerID: remote.storeID,
                 retailer: Retailer(
                     name: remote.storeName,
                     trackingID: AffiliateLinkBuilder.pendingApprovalTrackingID,

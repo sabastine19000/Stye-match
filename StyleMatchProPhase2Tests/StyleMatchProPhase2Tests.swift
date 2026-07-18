@@ -4498,6 +4498,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertEqual(products.map(\.id), ["macys-white-oxford"])
         XCTAssertEqual(products.first?.affiliateURL.absoluteString, "https://proxy.example.com/v1/go/macys-white-oxford")
+        XCTAssertEqual(products.first?.retailerID, "macys")
         XCTAssertEqual(products.first?.retailer.trackingID, AffiliateLinkBuilder.pendingApprovalTrackingID)
         XCTAssertEqual(products.first?.currencyCode, "USD")
         XCTAssertEqual(products.first?.availableCountries, ["US", "CA"])
@@ -4512,6 +4513,141 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(url.absoluteString.contains("outfit"))
         XCTAssertFalse(url.absoluteString.contains("user"))
         XCTAssertFalse(url.absoluteString.contains("wardrobe"))
+    }
+
+
+    func testRemoteCatalogDecodePreservesCanonicalStoreIDWithoutNameInference() throws {
+        let data = Data("""
+        {
+          "products": [
+            {
+              "id": "unknown-store-shirt",
+              "store_id": "unknown-approved-source",
+              "store_name": "Macy's",
+              "name": "White Oxford Shirt",
+              "image_url": null,
+              "category": "tops",
+              "brand": "Macy's",
+              "price_cents": 7950,
+              "sale_price_cents": null,
+              "sale_ends_at": null,
+              "currency": "USD",
+              "country_code": "US",
+              "available_countries": ["US"],
+              "availability": "in_stock",
+              "tags": ["business", "white", "shirt"],
+              "buy_url": "https://proxy.example.com/v1/go/unknown-store-shirt"
+            }
+          ]
+        }
+        """.utf8)
+
+        let products = try RemoteCatalogProvider.decodeRemoteProducts(
+            data,
+            baseURL: URL(string: "https://proxy.example.com")!,
+            regionCode: "US"
+        )
+
+        let product = try XCTUnwrap(products.first)
+        XCTAssertEqual(product.retailerID, "unknown-approved-source")
+        XCTAssertEqual(product.retailer.name, "Macy's")
+    }
+
+    func testBundledCatalogDecodePreservesRetailerIDAndLegacyMissingID() throws {
+        let catalogData = Data("""
+        [
+          {
+            "id": "macys-local-shirt",
+            "name": "Local White Shirt",
+            "category": "clothing",
+            "subcategory": "shirt",
+            "colors": ["white"],
+            "retailer_id": "macys",
+            "retailer": {
+              "name": "Macy's",
+              "trackingID": "PENDING-APPROVAL",
+              "trackingParamName": "aff",
+              "disclosureName": "Macy's"
+            },
+            "affiliateURL": "https://www.macys.com/local-shirt",
+            "tags": ["shirt", "white"]
+          },
+          {
+            "id": "legacy-local-shirt",
+            "name": "Legacy Shirt",
+            "category": "clothing",
+            "subcategory": "shirt",
+            "colors": ["blue"],
+            "retailer": {
+              "name": "Macy's",
+              "trackingID": "PENDING-APPROVAL",
+              "trackingParamName": "aff",
+              "disclosureName": "Macy's"
+            },
+            "affiliateURL": "https://www.macys.com/legacy-shirt",
+            "tags": ["shirt", "blue"]
+          }
+        ]
+        """.utf8)
+
+        let products = try BundledCatalogProvider.decodeProducts(catalogData: catalogData)
+
+        XCTAssertEqual(products.first(where: { $0.id == "macys-local-shirt" })?.retailerID, "macys")
+        XCTAssertNil(products.first(where: { $0.id == "legacy-local-shirt" })?.retailerID)
+    }
+
+    func testBundledCatalogUnknownRetailerIDDoesNotSilentlyMapFromDisplayName() throws {
+        let catalogData = Data("""
+        [
+          {
+            "id": "unknown-local-shirt",
+            "name": "Unknown Local Shirt",
+            "category": "clothing",
+            "subcategory": "shirt",
+            "colors": ["white"],
+            "retailer_id": "unknown-retailer",
+            "retailer": {
+              "name": "Macy's",
+              "trackingID": "PENDING-APPROVAL",
+              "trackingParamName": "aff",
+              "disclosureName": "Macy's"
+            },
+            "affiliateURL": "https://www.macys.com/unknown-local-shirt",
+            "tags": ["shirt", "white"]
+          }
+        ]
+        """.utf8)
+        let retailerConfigData = Data("""
+        {
+          "retailers": [
+            {
+              "name": "Macy's",
+              "trackingID": "APPROVED-ID",
+              "trackingParamName": "aff",
+              "disclosureName": "Macy's"
+            }
+          ]
+        }
+        """.utf8)
+
+        let products = try BundledCatalogProvider.decodeProducts(
+            catalogData: catalogData,
+            retailerConfigData: retailerConfigData
+        )
+
+        let product = try XCTUnwrap(products.first)
+        XCTAssertEqual(product.retailerID, "unknown-retailer")
+        XCTAssertEqual(product.retailer.trackingID, "APPROVED-ID")
+    }
+
+    func testAffiliateProductEqualityRemainsStableWhenRetailerIDIsBackfilled() {
+        let legacy = makeAffiliateProduct(id: "stable-product", retailerID: nil)
+        let backfilled = makeAffiliateProduct(id: "stable-product", retailerID: "macys")
+
+        XCTAssertEqual(legacy, backfilled)
+        XCTAssertEqual(legacy.id, backfilled.id)
+        XCTAssertNil(legacy.retailerID)
+        XCTAssertEqual(backfilled.retailerID, "macys")
     }
 
     func testRemoteCatalogProviderFiltersByCountryAndFormatsGBPPrices() throws {
@@ -5430,7 +5566,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         sizes: [String]? = nil,
         priceRange: ClosedRange<Decimal>? = nil,
         occasionTags: [String]? = nil,
-        brand: String? = nil
+        brand: String? = nil,
+        retailerID: String? = nil
     ) -> AffiliateProduct {
         AffiliateProduct(
             id: id,
@@ -5443,6 +5580,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             occasionTags: occasionTags,
             brand: brand,
             imageURL: URL(string: "https://www.example.com/image.jpg")!,
+            retailerID: retailerID,
             retailer: retailer,
             affiliateURL: affiliateURL,
             price: price,

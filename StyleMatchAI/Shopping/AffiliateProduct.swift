@@ -66,6 +66,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
     let occasionTags: [String]?
     let brand: String?
     let imageURL: URL?
+    let retailerID: String?
     let retailer: Retailer
     let affiliateURL: URL
     let countryCode: String?
@@ -99,6 +100,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         occasionTags: [String]? = nil,
         brand: String? = nil,
         imageURL: URL? = nil,
+        retailerID: String? = nil,
         retailer: Retailer,
         affiliateURL: URL,
         countryCode: String? = nil,
@@ -131,6 +133,7 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         self.occasionTags = occasionTags
         self.brand = brand
         self.imageURL = ProductImageURLValidator.validated(imageURL)
+        self.retailerID = Self.normalizedRetailerID(retailerID)
         self.retailer = retailer
         self.affiliateURL = affiliateURL
         self.countryCode = countryCode
@@ -152,6 +155,156 @@ struct AffiliateProduct: Codable, Identifiable, Equatable {
         self.estimatedShippingText = estimatedShippingText
         self.tags = tags
         self.genderPresentation = genderPresentation
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case category
+        case subcategory
+        case colors
+        case sizes
+        case priceRange
+        case occasionTags
+        case brand
+        case imageURL
+        case retailerID
+        case retailerIDSnake = "retailer_id"
+        case retailer
+        case affiliateURL
+        case countryCode
+        case merchant
+        case merchantRegion
+        case affiliateProvider
+        case isAffiliateEligible
+        case productURL
+        case fallbackURL
+        case price
+        case salePrice
+        case saleEndsAt
+        case currencyCode
+        case availableCountries
+        case availability
+        case availableColors
+        case customerRating
+        case reviewCount
+        case estimatedShippingText
+        case tags
+        case genderPresentation
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try container.decode(String.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            category: try container.decode(ProductCategory.self, forKey: .category),
+            subcategory: try container.decode(String.self, forKey: .subcategory),
+            colors: try container.decode([String].self, forKey: .colors),
+            sizes: try container.decodeIfPresent([String].self, forKey: .sizes),
+            priceRange: try container.decodeIfPresent(ClosedRange<Decimal>.self, forKey: .priceRange),
+            occasionTags: try container.decodeIfPresent([String].self, forKey: .occasionTags),
+            brand: try container.decodeIfPresent(String.self, forKey: .brand),
+            imageURL: try container.decodeIfPresent(URL.self, forKey: .imageURL),
+            retailerID: try container.decodeIfPresent(String.self, forKey: .retailerID)
+                ?? container.decodeIfPresent(String.self, forKey: .retailerIDSnake),
+            retailer: try container.decode(Retailer.self, forKey: .retailer),
+            affiliateURL: try container.decode(URL.self, forKey: .affiliateURL),
+            countryCode: try container.decodeIfPresent(String.self, forKey: .countryCode),
+            merchant: try container.decodeIfPresent(String.self, forKey: .merchant),
+            merchantRegion: try container.decodeIfPresent(String.self, forKey: .merchantRegion),
+            affiliateProvider: try container.decodeIfPresent(AffiliateProvider.self, forKey: .affiliateProvider),
+            isAffiliateEligible: try container.decodeIfPresent(Bool.self, forKey: .isAffiliateEligible),
+            productURL: try container.decodeIfPresent(URL.self, forKey: .productURL),
+            fallbackURL: try container.decodeIfPresent(URL.self, forKey: .fallbackURL),
+            price: try container.decodeIfPresent(Decimal.self, forKey: .price),
+            salePrice: try container.decodeIfPresent(Decimal.self, forKey: .salePrice),
+            saleEndsAt: try container.decodeIfPresent(Date.self, forKey: .saleEndsAt),
+            currencyCode: try container.decodeIfPresent(String.self, forKey: .currencyCode),
+            availableCountries: try container.decodeIfPresent([String].self, forKey: .availableCountries),
+            availability: try container.decodeIfPresent(String.self, forKey: .availability),
+            availableColors: try container.decodeIfPresent([String].self, forKey: .availableColors),
+            customerRating: try container.decodeIfPresent(Double.self, forKey: .customerRating),
+            reviewCount: try container.decodeIfPresent(Int.self, forKey: .reviewCount),
+            estimatedShippingText: try container.decodeIfPresent(String.self, forKey: .estimatedShippingText),
+            tags: try container.decode([String].self, forKey: .tags),
+            genderPresentation: try container.decodeIfPresent(String.self, forKey: .genderPresentation)
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(category, forKey: .category)
+        try container.encode(subcategory, forKey: .subcategory)
+        try container.encode(colors, forKey: .colors)
+        try container.encodeIfPresent(sizes, forKey: .sizes)
+        try container.encodeIfPresent(priceRange, forKey: .priceRange)
+        try container.encodeIfPresent(occasionTags, forKey: .occasionTags)
+        try container.encodeIfPresent(brand, forKey: .brand)
+        try container.encodeIfPresent(imageURL, forKey: .imageURL)
+        try container.encodeIfPresent(retailerID, forKey: .retailerIDSnake)
+        try container.encode(retailer, forKey: .retailer)
+        try container.encode(affiliateURL, forKey: .affiliateURL)
+        try container.encodeIfPresent(countryCode, forKey: .countryCode)
+        try container.encodeIfPresent(merchant, forKey: .merchant)
+        try container.encodeIfPresent(merchantRegion, forKey: .merchantRegion)
+        try container.encodeIfPresent(affiliateProvider, forKey: .affiliateProvider)
+        try container.encodeIfPresent(isAffiliateEligible, forKey: .isAffiliateEligible)
+        try container.encodeIfPresent(productURL, forKey: .productURL)
+        try container.encodeIfPresent(fallbackURL, forKey: .fallbackURL)
+        try container.encodeIfPresent(price, forKey: .price)
+        try container.encodeIfPresent(salePrice, forKey: .salePrice)
+        try container.encodeIfPresent(saleEndsAt, forKey: .saleEndsAt)
+        try container.encodeIfPresent(currencyCode, forKey: .currencyCode)
+        try container.encodeIfPresent(availableCountries, forKey: .availableCountries)
+        try container.encodeIfPresent(availability, forKey: .availability)
+        try container.encodeIfPresent(availableColors, forKey: .availableColors)
+        try container.encodeIfPresent(customerRating, forKey: .customerRating)
+        try container.encodeIfPresent(reviewCount, forKey: .reviewCount)
+        try container.encodeIfPresent(estimatedShippingText, forKey: .estimatedShippingText)
+        try container.encode(tags, forKey: .tags)
+        try container.encodeIfPresent(genderPresentation, forKey: .genderPresentation)
+    }
+
+    static func == (lhs: AffiliateProduct, rhs: AffiliateProduct) -> Bool {
+        lhs.id == rhs.id
+            && lhs.name == rhs.name
+            && lhs.category == rhs.category
+            && lhs.subcategory == rhs.subcategory
+            && lhs.colors == rhs.colors
+            && lhs.sizes == rhs.sizes
+            && lhs.priceRange == rhs.priceRange
+            && lhs.occasionTags == rhs.occasionTags
+            && lhs.brand == rhs.brand
+            && lhs.imageURL == rhs.imageURL
+            && lhs.retailer == rhs.retailer
+            && lhs.affiliateURL == rhs.affiliateURL
+            && lhs.countryCode == rhs.countryCode
+            && lhs.merchant == rhs.merchant
+            && lhs.merchantRegion == rhs.merchantRegion
+            && lhs.affiliateProvider == rhs.affiliateProvider
+            && lhs.isAffiliateEligible == rhs.isAffiliateEligible
+            && lhs.productURL == rhs.productURL
+            && lhs.fallbackURL == rhs.fallbackURL
+            && lhs.price == rhs.price
+            && lhs.salePrice == rhs.salePrice
+            && lhs.saleEndsAt == rhs.saleEndsAt
+            && lhs.currencyCode == rhs.currencyCode
+            && lhs.availableCountries == rhs.availableCountries
+            && lhs.availability == rhs.availability
+            && lhs.availableColors == rhs.availableColors
+            && lhs.customerRating == rhs.customerRating
+            && lhs.reviewCount == rhs.reviewCount
+            && lhs.estimatedShippingText == rhs.estimatedShippingText
+            && lhs.tags == rhs.tags
+            && lhs.genderPresentation == rhs.genderPresentation
+    }
+
+    static func normalizedRetailerID(_ value: String?) -> String? {
+        let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned?.isEmpty == false ? cleaned : nil
     }
 
     /// The only URL shopping views may pass to an image loader. Invalid, blank,
