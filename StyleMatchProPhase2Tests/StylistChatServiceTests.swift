@@ -2,6 +2,122 @@ import XCTest
 @testable import StyleMatchPro
 
 final class StylistChatServiceTests: XCTestCase {
+    func testInsightHistoryKeepsEightDisplayedMessagesStructured() throws {
+        let displayed = (0..<8).map { index in
+            AIInsightConversationEntry(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: String(repeating: "message-\(index) ", count: 30)
+            )
+        }
+
+        let request = try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: displayed,
+            latestPrompt: "What should I wear today?"
+        )
+
+        XCTAssertEqual(request.history.map(\.role), displayed.map(\.role))
+        XCTAssertEqual(
+            request.history.map(\.content),
+            displayed.map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
+        )
+        XCTAssertEqual(request.latestPrompt, "What should I wear today?")
+        XCTAssertTrue(request.history.allSatisfy { StylistChatMessageLimit.isWithinLimit($0.content) })
+    }
+
+    func testInsightHistoryPreservesStructuredRoles() throws {
+        let request = try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: [
+                AIInsightConversationEntry(role: .user, content: "I have olive pants."),
+                AIInsightConversationEntry(role: .assistant, content: "Try a white or light-blue shirt.")
+            ],
+            latestPrompt: "Make it more formal."
+        )
+
+        XCTAssertEqual(request.history.map(\.role), [.user, .assistant])
+        XCTAssertEqual(request.history.map(\.content), [
+            "I have olive pants.",
+            "Try a white or light-blue shirt."
+        ])
+    }
+
+    func testInsightHistoryExcludesGenericLocalFailureReplies() throws {
+        let request = try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: [
+                AIInsightConversationEntry(role: .user, content: "What should I wear today?"),
+                AIInsightConversationEntry(
+                    role: .assistant,
+                    content: "AI Stylist is having trouble connecting right now. Please try again."
+                ),
+                AIInsightConversationEntry(role: .assistant, content: "A navy overshirt works well.")
+            ],
+            latestPrompt: "What shoes should I add?"
+        )
+
+        XCTAssertEqual(request.history.count, 2)
+        XCTAssertFalse(request.history.contains { $0.content.contains("trouble connecting") })
+    }
+
+    func testInsightHistoryDropsOldestMessagesFirstAtPayloadLimit() throws {
+        let displayed = (0..<25).map { index in
+            AIInsightConversationEntry(role: .user, content: "message-\(index)")
+        }
+
+        let request = try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: displayed,
+            latestPrompt: "latest"
+        )
+
+        XCTAssertEqual(request.history.count, 19)
+        XCTAssertEqual(request.history.first?.content, "message-6")
+        XCTAssertEqual(request.history.last?.content, "message-24")
+    }
+
+    func testInsightHistoryPreservesValidLatestPrompt() throws {
+        let latest = String(repeating: "a", count: 2_000)
+        let request = try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: [],
+            latestPrompt: latest
+        )
+
+        XCTAssertEqual(request.latestPrompt, latest)
+        XCTAssertEqual(request.latestPrompt.utf16.count, 2_000)
+    }
+
+    func testInsightHistoryUsesUTF16AccountingForEmoji() throws {
+        let valid = String(repeating: "😀", count: 1_000)
+        let invalid = valid + "a"
+
+        XCTAssertNoThrow(try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: [],
+            latestPrompt: valid
+        ))
+        XCTAssertThrowsError(try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: [],
+            latestPrompt: invalid
+        )) { error in
+            XCTAssertEqual(error as? StylistChatError, .payloadTooLarge)
+        }
+    }
+
+    func testInsightOutboundPayloadNeverExceedsTwentyMessages() throws {
+        let displayed = (0..<40).map { index in
+            AIInsightConversationEntry(
+                role: index.isMultiple(of: 2) ? .user : .assistant,
+                content: "message-\(index)"
+            )
+        }
+
+        let request = try AIInsightStructuredHistoryBuilder.build(
+            displayedMessages: displayed,
+            latestPrompt: "latest"
+        )
+
+        XCTAssertLessThanOrEqual(
+            request.history.count + 1,
+            StylistChatMessageLimit.maximumPayloadMessages
+        )
+    }
+
     func testMessageLimitAcceptsExactlyTwoThousandUTF16CodeUnits() {
         let text = String(repeating: "a", count: 2_000)
 
