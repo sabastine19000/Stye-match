@@ -2606,6 +2606,7 @@ struct ShoppingView: View {
                 isCatalogLoadInFlight = false
                 isLoading = false
                 #if DEBUG
+                logCatalogDisplayInvariant(providerCount: loaded.count, eligibleCount: eligibleCatalog.count)
                 ShoppingPerformanceLog.mark("Shop final ready state", startedAt: loadStartedAt)
                 #endif
             }
@@ -2618,6 +2619,19 @@ struct ShoppingView: View {
             }
         }
     }
+
+    #if DEBUG
+    private func logCatalogDisplayInvariant(providerCount: Int, eligibleCount: Int) {
+        let filteredCount = searchCatalogProducts.count
+        let displayedCount = searchResults.count
+        let allSelected = selectedCategory == nil && searchCriteria.isEmpty
+        let summary = "remote_count=\(providerCount) provider_count=\(providerCount) shopping_state_count=\(products.count) eligible_count=\(eligibleCount) filtered_count=\(filteredCount) displayed_count=\(displayedCount) all_selected=\(allSelected) in_flight=\(isCatalogLoadInFlight)"
+        print("[StyleMatch Shopping Display] \(summary)")
+        if providerCount > 0, displayedCount == 0, allSelected {
+            print("[StyleMatch Shopping Display Invariant Failure] remote products loaded but displayed zero with All selected: \(summary)")
+        }
+    }
+    #endif
 
     private func runLiveSearch() async {
         guard FeatureFlags.liveSearchEnabled else {

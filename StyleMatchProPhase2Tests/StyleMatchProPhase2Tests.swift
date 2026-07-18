@@ -2493,6 +2493,78 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(restored.usesCalendarEvents)
     }
 
+
+    func testUnsetShoppingBudgetDoesNotHideLoadedCatalogProducts() {
+        let catalog = [
+            makeAffiliateProduct(id: "shirt", name: "White Shirt", price: Decimal(89)),
+            makeAffiliateProduct(id: "sneaker", name: "White Sneaker", category: .shoes, subcategory: "sneaker", price: Decimal(110))
+        ]
+        var neutralProfile = makeStylistProfile(userId: userA)
+        neutralProfile.budgetRange = .neutral
+        var defaultProfile = makeStylistProfile(userId: userA)
+        defaultProfile.budgetRange = BudgetRange(minPrice: 50, maxPrice: 200, preferredTier: "Mid")
+
+        let neutralFiltered = RecommendationRationaleBuilder.budgetFiltered(
+            catalog,
+            profile: neutralProfile,
+            preferences: .default
+        )
+        let defaultFiltered = RecommendationRationaleBuilder.budgetFiltered(
+            catalog,
+            profile: defaultProfile,
+            preferences: .default
+        )
+
+        XCTAssertEqual(neutralFiltered.map(\.id), catalog.map(\.id))
+        XCTAssertEqual(defaultFiltered.map(\.id), catalog.map(\.id))
+        XCTAssertFalse(ShoppingRecommendationEngine.popularFallbackRecommendations(catalog: neutralFiltered).isEmpty)
+    }
+
+    func testConfirmedShoppingBudgetStillFiltersCatalogProducts() {
+        let catalog = [
+            makeAffiliateProduct(id: "under-budget", price: Decimal(60)),
+            makeAffiliateProduct(id: "over-budget", price: Decimal(180))
+        ]
+        var profile = makeStylistProfile(userId: userA)
+        profile.budgetRange = BudgetRange(minPrice: 25, maxPrice: 75, preferredTier: "Value")
+
+        let filtered = RecommendationRationaleBuilder.budgetFiltered(
+            catalog,
+            profile: profile,
+            preferences: .default
+        )
+
+        XCTAssertEqual(filtered.map(\.id), ["under-budget"])
+    }
+
+    func testProfileBudgetFailsOpenWhenItWouldHideEveryLoadedCatalogProduct() {
+        let catalog = [
+            makeAffiliateProduct(id: "shirt", price: Decimal(89)),
+            makeAffiliateProduct(id: "sneaker", category: .shoes, subcategory: "sneaker", price: Decimal(110))
+        ]
+        var profile = makeStylistProfile(userId: userA)
+        profile.budgetRange = BudgetRange(minPrice: 1, maxPrice: 5, preferredTier: "Value")
+
+        let filtered = RecommendationRationaleBuilder.budgetFiltered(
+            catalog,
+            profile: profile,
+            preferences: .default
+        )
+
+        XCTAssertEqual(filtered.map(\.id), catalog.map(\.id))
+        XCTAssertFalse(ShoppingRecommendationEngine.popularFallbackRecommendations(catalog: filtered).isEmpty)
+    }
+
+    func testShoppingDisplayInvariantLogsLoadedRemoteButZeroDisplayedState() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+
+        XCTAssertTrue(source.contains("logCatalogDisplayInvariant"))
+        XCTAssertTrue(source.contains("[StyleMatch Shopping Display Invariant Failure]"))
+        XCTAssertTrue(source.contains("displayed zero with All selected"))
+        XCTAssertTrue(source.contains("remote_count="))
+        XCTAssertTrue(source.contains("displayed_count="))
+    }
+
     func testShoppingDisclosureDoesNotExposeTrackingIds() throws {
         let shopView = try projectSource("StyleMatchAI/ShopView.swift")
         let shoppingView = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")

@@ -82,8 +82,9 @@ enum RecommendationRationaleBuilder {
 
     static func budgetFiltered(_ products: [AffiliateProduct], profile: StylistProfile?, preferences: ShoppingRecommendationPreferences) -> [AffiliateProduct] {
         guard preferences.usesBudgetRange, let profile else { return products }
+        guard profile.budgetRange.isUserConfirmed else { return products }
         let range = Decimal(profile.budgetRange.minPrice)...Decimal(profile.budgetRange.maxPrice)
-        return products.filter { product in
+        let filtered = products.filter { product in
             if let priceRange = product.priceRange {
                 return priceRange.overlaps(range)
             }
@@ -91,6 +92,7 @@ enum RecommendationRationaleBuilder {
             guard let effectivePrice else { return true }
             return range.contains(effectivePrice)
         }
+        return filtered.isEmpty && !products.isEmpty ? products : filtered
     }
 
     private static func shouldUseTrendingFallback(
