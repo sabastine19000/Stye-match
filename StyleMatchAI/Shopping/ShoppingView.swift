@@ -132,10 +132,12 @@ struct ShoppingView: View {
     @State private var showExpandedDisclosure = false
     @State private var selectedRationaleSheet: RecommendationRationaleSheet?
     @State private var showRecommendationPreferences = false
+    @State private var showMyStores = false
     @State private var showBrowseFilters = false
     @State private var engagementPath: [ShoppingEngagementDestination] = []
     @State private var browseMode: ShoppingBrowseMode = .browse
     @State private var deckIndex = 0
+    @State private var storeScope: ShoppingStoreScope = .myStores
     @State private var recommendationBasis: Set<ShoppingRecommendationBasis> = Set(ShoppingRecommendationBasis.defaultEnabled)
     @State private var derivedCatalogContent = ShoppingDerivedCatalogContent.empty
     @State private var isLoading = true
@@ -195,6 +197,9 @@ struct ShoppingView: View {
                         styleProgressCard
                         feedbackRecommendedSection
                         browseHeader
+                        if retailerPreferenceResult.usedFallback, storeScope == .myStores {
+                            retailerPreferenceFallbackNotice
+                        }
                         if showBrowseFilters, browseMode == .browse {
                             searchControls
                             recommendationBasisControls
@@ -244,10 +249,19 @@ struct ShoppingView: View {
                     .accessibilityLabel("Back to Home")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showRecommendationPreferences = true
+                    Menu {
+                        Button {
+                            showMyStores = true
+                        } label: {
+                            Label("My Stores", systemImage: "storefront")
+                        }
+                        Button {
+                            showRecommendationPreferences = true
+                        } label: {
+                            Label("Recommendation preferences", systemImage: "gearshape")
+                        }
                     } label: {
-                        Label("Recommendation preferences", systemImage: "gearshape")
+                        Label("Shopping settings", systemImage: "gearshape")
                     }
                 }
             }
@@ -265,6 +279,9 @@ struct ShoppingView: View {
             }
             .sheet(isPresented: $showRecommendationPreferences) {
                 recommendationPreferencesSheet
+            }
+            .sheet(isPresented: $showMyStores) {
+                MyStoresManagementView(supportedStores: supportedStores, store: store)
             }
             .sheet(isPresented: $showExpandedDisclosure) {
                 NavigationStack {
@@ -297,6 +314,7 @@ struct ShoppingView: View {
                 #endif
                 showExpandedDisclosure = store.affiliateDisclosureExpanded
                 recommendationBasis = Set(basis(from: RecommendationRationaleBuilder.preferences(from: profileStore.currentProfile)))
+                _ = store.normalizePreferredRetailerIDs(supportedStores: supportedStores)
             }
         }
     }
@@ -646,7 +664,40 @@ struct ShoppingView: View {
             .styleMatchOnChange(of: browseMode) { _ in
                 normalizeDeckIndex()
             }
+
+            Picker("Store scope", selection: $storeScope) {
+                ForEach(ShoppingStoreScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .styleMatchOnChange(of: storeScope) { _ in
+                normalizeDeckIndex()
+                reloadRecommendations()
+            }
+
+            Button {
+                showMyStores = true
+            } label: {
+                Label("Manage My Stores", systemImage: "storefront")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
         }
+    }
+
+    private var retailerPreferenceFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "storefront")
+                .foregroundStyle(Color.orange)
+            Text(RetailerPreferencePolicy.fallbackCopy)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .appCard(.shop, radius: 10)
     }
 
     private var filteredDiscoveryState: some View {
@@ -1507,6 +1558,17 @@ struct ShoppingView: View {
             ))
             .textFieldStyle(.roundedBorder)
 
+            Picker("Store scope", selection: $storeScope) {
+                ForEach(ShoppingStoreScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .styleMatchOnChange(of: storeScope) { _ in
+                normalizeDeckIndex()
+                reloadRecommendations()
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     storeButton(nil, title: "All Stores")
@@ -1550,12 +1612,31 @@ struct ShoppingView: View {
         relaxedSearchResult.displayedResults
     }
 
-    private var baseSearchProducts: [AffiliateProduct] {
+    private var rawBaseSearchProducts: [AffiliateProduct] {
         liveSearchProducts ?? products
+    }
+
+    private var baseSearchProducts: [AffiliateProduct] {
+        retailerPreferenceResult.products
     }
 
     private var searchCatalogProducts: [AffiliateProduct] {
         budgetFiltered(baseSearchProducts)
+    }
+
+    private var retailerPreferenceResult: RetailerPreferenceResult {
+        RetailerPreferencePolicy.apply(
+            products: rawBaseSearchProducts,
+            preferredRetailerIDs: activePreferredRetailerIDs,
+            supportedStores: supportedStores
+        )
+    }
+
+    private var activePreferredRetailerIDs: [String] {
+        guard storeScope == .myStores, searchCriteria.storeName == nil else {
+            return []
+        }
+        return store.preferredRetailerIDs(supportedStores: supportedStores)
     }
 
     private var relaxedSearchResult: ShoppingSearchEngine.RelaxedFilterResult {
@@ -1565,7 +1646,7 @@ struct ShoppingView: View {
     }
 
     private var availableStoreNames: Set<String> {
-        Set(baseSearchProducts.map { $0.retailer.name.lowercased() })
+        Set(rawBaseSearchProducts.map { $0.retailer.name.lowercased() })
     }
 
     private var primarySupportedStores: [SupportedStore] {
@@ -1771,14 +1852,14 @@ struct ShoppingView: View {
     }
 
     private var deckProductIDs: [String] {
-        products.map(\.id)
+        searchCatalogProducts.map(\.id)
     }
 
     private var currentDeckProduct: AffiliateProduct? {
-        guard deckIndex < products.count else {
+        guard deckIndex < searchCatalogProducts.count else {
             return nil
         }
-        return products[deckIndex]
+        return searchCatalogProducts[deckIndex]
     }
 
     private var styleLevel: Int {
@@ -1878,7 +1959,7 @@ struct ShoppingView: View {
     private func categoryCountText(for category: ProductCategory?) -> String {
         var criteria = searchCriteria
         criteria.category = category
-        let count = ShoppingSearchEngine.filter(products: budgetFiltered(liveSearchProducts ?? products), criteria: criteria).count
+        let count = ShoppingSearchEngine.filter(products: searchCatalogProducts, criteria: criteria).count
         return "\(count) \(count == 1 ? "item" : "items")"
     }
 
@@ -1905,7 +1986,7 @@ struct ShoppingView: View {
     }
 
     private func normalizeDeckIndex() {
-        deckIndex = min(max(0, deckIndex), products.count)
+        deckIndex = min(max(0, deckIndex), searchCatalogProducts.count)
     }
 
     private func deckPriceText(for product: AffiliateProduct) -> String {
@@ -2248,7 +2329,7 @@ struct ShoppingView: View {
     }
 
     private func completeTheLookSection(for product: AffiliateProduct) -> some View {
-        let suggestions = companionRecommender.companions(for: product, catalog: budgetFiltered(products), limit: 6)
+        let suggestions = companionRecommender.companions(for: product, catalog: searchCatalogProducts, limit: 6)
         return Group {
             if suggestions.count >= 2 {
                 VStack(alignment: .leading, spacing: 6) {
@@ -2482,7 +2563,8 @@ struct ShoppingView: View {
 
     private func reloadRecommendations() {
         let startedAt = CFAbsoluteTimeGetCurrent()
-        let eligibleCatalog = budgetFiltered(products)
+        let policyCatalog = baseSearchProducts
+        let eligibleCatalog = budgetFiltered(policyCatalog)
         let ranked = ShoppingRecommendationEngine.recommendations(
             currentGarments: [],
             currentColors: [],
@@ -2497,7 +2579,7 @@ struct ShoppingView: View {
             : ranked
         recommendations = visibleRecommendations
         derivedCatalogContent = Self.makeDerivedCatalogContent(
-            catalog: products,
+            catalog: policyCatalog,
             eligibleCatalog: eligibleCatalog,
             recommendations: visibleRecommendations,
             memories: outfitMemoryStore.memories
@@ -2554,8 +2636,18 @@ struct ShoppingView: View {
             let preferences = currentRecommendationPreferences()
             let profile = profileStore.currentProfile
             let memories = outfitMemoryStore.memories
+            let normalizedPreferredRetailerIDs = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
+                store.preferredRetailerIDs,
+                supportedStores: stores
+            )
+            let retailerPolicyResult = RetailerPreferencePolicy.apply(
+                products: loaded,
+                preferredRetailerIDs: storeScope == .myStores ? normalizedPreferredRetailerIDs : [],
+                supportedStores: stores
+            )
+            let scopedCatalog = retailerPolicyResult.products
             let eligibleCatalog = RecommendationRationaleBuilder.budgetFiltered(
-                loaded,
+                scopedCatalog,
                 profile: profile,
                 preferences: preferences
             )
@@ -2577,7 +2669,7 @@ struct ShoppingView: View {
             #endif
             let derivedStartedAt = CFAbsoluteTimeGetCurrent()
             let derivedContent = Self.makeDerivedCatalogContent(
-                catalog: loaded,
+                catalog: scopedCatalog,
                 eligibleCatalog: eligibleCatalog,
                 recommendations: visibleRecommendations,
                 memories: memories
@@ -2596,6 +2688,7 @@ struct ShoppingView: View {
                 products = loaded
                 catalogDisclosure = disclosure
                 supportedStores = stores
+                store.setPreferredRetailerIDs(normalizedPreferredRetailerIDs, supportedStores: stores)
                 recommendations = visibleRecommendations
                 derivedCatalogContent = derivedContent
                 alertsEnabled = store.saleNotificationsEnabled
@@ -2654,6 +2747,8 @@ struct ShoppingView: View {
             await MainActor.run {
                 liveSearchProducts = results
                 isSearchingLive = false
+                normalizeDeckIndex()
+                reloadRecommendations()
             }
         } catch {
             await MainActor.run {
@@ -2727,6 +2822,91 @@ struct ShoppingView: View {
         formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
+    }
+}
+
+struct MyStoresManagementView: View {
+    let supportedStores: [SupportedStore]
+    @ObservedObject var store: ShoppingLocalStore
+    @Environment(\.dismiss) private var dismiss
+
+    private var enabledStores: [SupportedStore] {
+        supportedStores.filter(\.isEnabled)
+    }
+
+    private var selectedIDs: Set<String> {
+        Set(store.preferredRetailerIDs(supportedStores: enabledStores))
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        store.setPreferredRetailerIDs([], supportedStores: enabledStores)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("All approved stores")
+                                    .fontWeight(.semibold)
+                                Text("Use the full approved catalog unless you choose specific stores.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selectedIDs.isEmpty {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.orange)
+                            }
+                        }
+                    }
+                }
+
+                Section("My Stores") {
+                    ForEach(enabledStores) { supportedStore in
+                        Button {
+                            toggle(supportedStore)
+                        } label: {
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(supportedStore.name)
+                                        .fontWeight(.semibold)
+                                    Text(supportedStore.primaryDomain ?? supportedStore.id)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: selectedIDs.contains(supportedStore.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selectedIDs.contains(supportedStore.id) ? Color.orange : Color.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(supportedStore.name), \(selectedIDs.contains(supportedStore.id) ? "selected" : "not selected")")
+                    }
+                }
+            }
+            .navigationTitle("My Stores")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Clear") {
+                        store.setPreferredRetailerIDs([], supportedStores: enabledStores)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func toggle(_ supportedStore: SupportedStore) {
+        var next = selectedIDs
+        if next.contains(supportedStore.id) {
+            next.remove(supportedStore.id)
+        } else {
+            next.insert(supportedStore.id)
+        }
+        store.setPreferredRetailerIDs(Array(next), supportedStores: enabledStores)
     }
 }
 

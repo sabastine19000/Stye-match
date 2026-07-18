@@ -8,6 +8,7 @@ final class ShoppingLocalStore: ObservableObject {
     static let wishlistBaseKey = "shoppingWishlistProductIDs"
     static let cartBaseKey = "shoppingCartProductIDs"
     static let shoppingCardsBaseKey = "shoppingCardProductIDs"
+    static let preferredRetailerIDsBaseKey = "shoppingPreferredRetailerIDs"
     static let saleAlertProductIDsBaseKey = "shoppingSaleAlertProductIDs"
     static let latestKnownPricesBaseKey = "shoppingLatestKnownPrices"
     static let saleNotificationsEnabledBaseKey = "shoppingSaleNotificationsEnabled"
@@ -29,6 +30,7 @@ final class ShoppingLocalStore: ObservableObject {
     @Published private var wishlistStorage: [String]
     @Published private var cartStorage: [String]
     @Published private var shoppingCardStorage: [String]
+    @Published private var preferredRetailerIDStorage: [String]
     @Published private var saleAlertProductIDStorage: Set<String>
     @Published private var latestKnownPricesStorage: [String: Decimal]
     @Published private var saleNotificationsEnabledStorage: Bool
@@ -40,7 +42,7 @@ final class ShoppingLocalStore: ObservableObject {
     @Published private var recentSaleEventsStorage: [SaleEvent]
     @Published private var viewedSaleEventIDStorage: Set<String>
 
-    init(defaults: UserDefaults = .standard, userID: String? = nil) {
+    init(defaults: UserDefaults = .standard, userID: String? = nil, supportedStores: [SupportedStore]? = nil) {
         self.defaults = defaults
         let normalizedUserID = PersonalStylistStorage.normalizedUserID(userID ?? PersonalStylistStorage.activeUserID(defaults: defaults))
         self.userID = normalizedUserID
@@ -55,6 +57,15 @@ final class ShoppingLocalStore: ObservableObject {
         self.wishlistStorage = Array((defaults.stringArray(forKey: scoped(Self.wishlistBaseKey)) ?? []).prefix(200))
         self.cartStorage = Array((defaults.stringArray(forKey: scoped(Self.cartBaseKey)) ?? []).prefix(100))
         self.shoppingCardStorage = Array((defaults.stringArray(forKey: scoped(Self.shoppingCardsBaseKey)) ?? []).prefix(200))
+        let storedPreferredRetailerIDs = defaults.stringArray(forKey: scoped(Self.preferredRetailerIDsBaseKey)) ?? []
+        if let supportedStores {
+            self.preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
+                storedPreferredRetailerIDs,
+                supportedStores: supportedStores
+            )
+        } else {
+            self.preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedCandidateRetailerIDs(storedPreferredRetailerIDs)
+        }
         self.saleAlertProductIDStorage = Set(defaults.stringArray(forKey: scoped(Self.saleAlertProductIDsBaseKey)) ?? [])
         self.latestKnownPricesStorage = Self.decoded([String: Decimal].self, defaults: defaults, key: scoped(Self.latestKnownPricesBaseKey)) ?? [:]
         if defaults.object(forKey: scoped(Self.saleNotificationsEnabledBaseKey)) == nil {
@@ -70,6 +81,9 @@ final class ShoppingLocalStore: ObservableObject {
         self.saleNotificationHistoryStorage = Self.decoded([Date].self, defaults: defaults, key: scoped(Self.saleNotificationHistoryBaseKey)) ?? []
         self.recentSaleEventsStorage = Array((Self.decoded([SaleEvent].self, defaults: defaults, key: scoped(Self.recentSaleEventsBaseKey)) ?? []).prefix(50))
         self.viewedSaleEventIDStorage = Set(defaults.stringArray(forKey: scoped(Self.viewedSaleEventIDsBaseKey)) ?? [])
+        if supportedStores != nil {
+            defaults.set(preferredRetailerIDStorage, forKey: scoped(Self.preferredRetailerIDsBaseKey))
+        }
     }
 
     var recentlyViewedProductIDs: [String] {
@@ -118,6 +132,36 @@ final class ShoppingLocalStore: ObservableObject {
             shoppingCardStorage = Array(newValue.prefix(200))
             defaults.set(shoppingCardStorage, forKey: key(Self.shoppingCardsBaseKey))
         }
+    }
+
+    var preferredRetailerIDs: [String] {
+        get { preferredRetailerIDStorage }
+        set {
+            preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedCandidateRetailerIDs(newValue)
+            defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
+        }
+    }
+
+    func setPreferredRetailerIDs(_ ids: [String], supportedStores: [SupportedStore]) {
+        preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(ids, supportedStores: supportedStores)
+        defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
+    }
+
+    @discardableResult
+    func normalizePreferredRetailerIDs(supportedStores: [SupportedStore]) -> [String] {
+        let normalized = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
+            preferredRetailerIDStorage,
+            supportedStores: supportedStores
+        )
+        if normalized != preferredRetailerIDStorage {
+            preferredRetailerIDStorage = normalized
+            defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
+        }
+        return normalized
+    }
+
+    func preferredRetailerIDs(supportedStores: [SupportedStore]) -> [String] {
+        normalizePreferredRetailerIDs(supportedStores: supportedStores)
     }
 
     var saleAlertProductIDs: Set<String> {
@@ -287,6 +331,7 @@ final class ShoppingLocalStore: ObservableObject {
         wishlistStorage = []
         cartStorage = []
         shoppingCardStorage = []
+        preferredRetailerIDStorage = []
         saleAlertProductIDStorage = []
         latestKnownPricesStorage = [:]
         saleNotificationsEnabledStorage = FeatureFlags.saleNotificationsEnabled
@@ -311,6 +356,7 @@ final class ShoppingLocalStore: ObservableObject {
             wishlistBaseKey,
             cartBaseKey,
             shoppingCardsBaseKey,
+            preferredRetailerIDsBaseKey,
             saleAlertProductIDsBaseKey,
             latestKnownPricesBaseKey,
             saleNotificationsEnabledBaseKey,
@@ -352,6 +398,91 @@ final class ShoppingLocalStore: ObservableObject {
 
     private func clean(_ productID: String) -> String {
         productID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+enum ShoppingStoreScope: String, CaseIterable, Identifiable {
+    case myStores
+    case allStores
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .myStores: return "My Stores"
+        case .allStores: return "All Stores"
+        }
+    }
+}
+
+struct RetailerPreferenceResult: Equatable {
+    let products: [AffiliateProduct]
+    let usedFallback: Bool
+    let requestedRetailerIDs: [String]
+}
+
+enum RetailerPreferencePolicy {
+    static let maximumPreferredRetailerIDs = 32
+    static let fallbackCopy = "No products from your selected stores yet, so we’re showing all approved stores."
+
+    static func normalizedCandidateRetailerIDs(_ ids: [String], limit: Int = maximumPreferredRetailerIDs) -> [String] {
+        Array(Set(ids.compactMap { canonicalID($0) }).sorted().prefix(limit))
+    }
+
+    static func normalizedPreferredRetailerIDs(
+        _ ids: [String],
+        supportedStores: [SupportedStore],
+        limit: Int = maximumPreferredRetailerIDs
+    ) -> [String] {
+        let requested = Set(ids.compactMap(canonicalID(_:)))
+        guard !requested.isEmpty else { return [] }
+        return Array(
+            supportedStores
+                .filter(\.isEnabled)
+                .compactMap { canonicalID($0.id) }
+                .filter { requested.contains($0) }
+                .removingDuplicates()
+                .prefix(limit)
+        )
+    }
+
+    static func apply(
+        products: [AffiliateProduct],
+        preferredRetailerIDs: [String],
+        supportedStores: [SupportedStore]
+    ) -> RetailerPreferenceResult {
+        let requestedIDs = normalizedPreferredRetailerIDs(
+            preferredRetailerIDs,
+            supportedStores: supportedStores
+        )
+        guard !requestedIDs.isEmpty else {
+            return RetailerPreferenceResult(products: products, usedFallback: false, requestedRetailerIDs: [])
+        }
+
+        let requestedSet = Set(requestedIDs)
+        let matched = products.filter { product in
+            guard let retailerID = canonicalID(product.retailerID) else { return false }
+            return requestedSet.contains(retailerID)
+        }
+
+        if matched.isEmpty {
+            return RetailerPreferenceResult(products: products, usedFallback: !products.isEmpty, requestedRetailerIDs: requestedIDs)
+        }
+
+        return RetailerPreferenceResult(products: matched, usedFallback: false, requestedRetailerIDs: requestedIDs)
+    }
+
+    private static func canonicalID(_ id: String?) -> String? {
+        guard let id else { return nil }
+        let cleaned = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return cleaned.isEmpty ? nil : cleaned
+    }
+}
+
+private extension Sequence where Element: Hashable {
+    func removingDuplicates() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }
 

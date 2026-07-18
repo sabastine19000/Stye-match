@@ -3818,6 +3818,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         store.wishlistProductIDs = (0..<250).map { "wishlist-\($0)" }
         store.cartProductIDs = (0..<150).map { "cart-\($0)" }
         store.shoppingCardProductIDs = (0..<250).map { "card-\($0)" }
+        store.setPreferredRetailerIDs(["macys"], supportedStores: makeSupportedStores())
         store.saleNotificationsEnabled = true
         store.saleStateSnapshots = [
             "old": ShoppingSaleStateSnapshot(productID: "old", salePrice: Decimal(10), saleEndsAt: nil, isActiveSale: true)
@@ -3836,6 +3837,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(cleared.wishlistProductIDs.isEmpty)
         XCTAssertTrue(cleared.cartProductIDs.isEmpty)
         XCTAssertTrue(cleared.shoppingCardProductIDs.isEmpty)
+        XCTAssertTrue(cleared.preferredRetailerIDs.isEmpty)
         XCTAssertTrue(cleared.saleStateSnapshots.isEmpty)
         XCTAssertFalse(cleared.saleNotificationsEnabled)
     }
@@ -3891,6 +3893,86 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(store.wishlistProductIDs, ["old-wishlist"])
         XCTAssertEqual(store.saleAlertProductIDs, Set(["old-alert"]))
         XCTAssertEqual(store.shoppingCardProductIDs, ["old-card"])
+    }
+
+    func testPreferredRetailerIDsPersistAcrossStoreRecreation() {
+        let supportedStores = makeSupportedStores()
+        let store = ShoppingLocalStore(defaults: defaults, userID: userA)
+
+        store.setPreferredRetailerIDs(["amazon", "macys"], supportedStores: supportedStores)
+
+        let reloaded = ShoppingLocalStore(defaults: defaults, userID: userA, supportedStores: supportedStores)
+        XCTAssertEqual(reloaded.preferredRetailerIDs, ["amazon", "macys"])
+    }
+
+    func testPreferredRetailerIDsNormalizeDuplicatesAndRemoveUnknownIDs() {
+        let supportedStores = makeSupportedStores()
+        let key = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: userA)
+        defaults.set(["macys", "unknown", "MACYS", " amazon ", "disabled"], forKey: key)
+
+        let store = ShoppingLocalStore(defaults: defaults, userID: userA, supportedStores: supportedStores)
+
+        XCTAssertEqual(store.preferredRetailerIDs, ["amazon", "macys"])
+        XCTAssertEqual(defaults.stringArray(forKey: key), ["amazon", "macys"])
+    }
+
+    func testRetailerPreferencePolicyEmptyPreferencesShowAllApprovedProducts() {
+        let products = [
+            makeAffiliateProduct(id: "amazon", retailerID: "amazon"),
+            makeAffiliateProduct(id: "macys", retailerID: "macys")
+        ]
+
+        let result = RetailerPreferencePolicy.apply(
+            products: products,
+            preferredRetailerIDs: [],
+            supportedStores: makeSupportedStores()
+        )
+
+        XCTAssertEqual(result.products.map(\.id), ["amazon", "macys"])
+        XCTAssertFalse(result.usedFallback)
+        XCTAssertTrue(result.requestedRetailerIDs.isEmpty)
+    }
+
+    func testRetailerPreferencePolicyFiltersByCanonicalRetailerIDOnly() {
+        let products = [
+            makeAffiliateProduct(
+                id: "canonical-match",
+                retailer: Retailer(name: "Amazon", trackingID: "PENDING-APPROVAL", trackingParamName: "tag", disclosureName: "Amazon"),
+                retailerID: "macys"
+            ),
+            makeAffiliateProduct(
+                id: "display-name-only",
+                retailer: Retailer(name: "Macy's", trackingID: "PENDING-APPROVAL", trackingParamName: "aff", disclosureName: "Macy's"),
+                retailerID: nil
+            ),
+            makeAffiliateProduct(id: "other", retailerID: "amazon")
+        ]
+
+        let result = RetailerPreferencePolicy.apply(
+            products: products,
+            preferredRetailerIDs: ["macys"],
+            supportedStores: makeSupportedStores()
+        )
+
+        XCTAssertEqual(result.products.map(\.id), ["canonical-match"])
+        XCTAssertFalse(result.usedFallback)
+    }
+
+    func testRetailerPreferencePolicyZeroMatchesFailsOpen() {
+        let products = [
+            makeAffiliateProduct(id: "amazon", retailerID: "amazon"),
+            makeAffiliateProduct(id: "legacy-without-id", retailerID: nil)
+        ]
+
+        let result = RetailerPreferencePolicy.apply(
+            products: products,
+            preferredRetailerIDs: ["macys"],
+            supportedStores: makeSupportedStores()
+        )
+
+        XCTAssertEqual(result.products.map(\.id), ["amazon", "legacy-without-id"])
+        XCTAssertTrue(result.usedFallback)
+        XCTAssertEqual(result.requestedRetailerIDs, ["macys"])
     }
 
     func testShoppingObservableStoreIgnoresMalformedEncodedValuesWithoutClearingValidState() {
@@ -4368,8 +4450,35 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let source = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
 
         XCTAssertTrue(source.contains("SharedProductCatalogLoader.shared.products()"))
-        XCTAssertTrue(source.contains("ShoppingSearchEngine.relaxedFilter(products: safeProducts, query: currentQuery())"))
+        XCTAssertTrue(source.contains("ShoppingSearchEngine.relaxedFilter(products: policyResult.products, query: currentQuery())"))
         XCTAssertTrue(source.contains("[StyleMatch Store Search] Search failed:"))
+    }
+
+    func testShoppingSurfacesConsumeSharedRetailerPreferencePolicy() throws {
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let storeSearchSource = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+
+        XCTAssertTrue(shoppingSource.contains("retailerPreferenceResult.products"))
+        XCTAssertTrue(shoppingSource.contains("RetailerPreferencePolicy.apply("))
+        XCTAssertTrue(shoppingSource.contains("let scopedCatalog = retailerPolicyResult.products"))
+        XCTAssertTrue(shoppingSource.contains("catalog: policyCatalog"))
+        XCTAssertTrue(shoppingSource.contains("searchCatalogProducts.map(\\.id)"))
+        XCTAssertTrue(shoppingSource.contains("companionRecommender.companions(for: product, catalog: searchCatalogProducts"))
+        XCTAssertTrue(storeSearchSource.contains("RetailerPreferencePolicy.apply("))
+        XCTAssertTrue(storeSearchSource.contains("preferredRetailerIDs: activePreferredRetailerIDs"))
+        XCTAssertTrue(storeSearchSource.contains("retailerPreferenceFallbackUsed = policyResult.usedFallback"))
+        XCTAssertTrue(shoppingSource.contains("RetailerPreferencePolicy.fallbackCopy"))
+        XCTAssertTrue(storeSearchSource.contains("RetailerPreferencePolicy.fallbackCopy"))
+    }
+
+    func testMyStoresKeepsAffiliateRoutingUntouched() throws {
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let storeSearchSource = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+
+        XCTAssertTrue(shoppingSource.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])"))
+        XCTAssertTrue(storeSearchSource.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])"))
+        XCTAssertFalse(shoppingSource.contains("retailerID") && shoppingSource.contains("trackingParamName ="))
+        XCTAssertFalse(storeSearchSource.contains("retailerID") && storeSearchSource.contains("trackingParamName ="))
     }
 
     func testLiveSearchFlagDefaultsOffAndResolverStaysDormant() throws {
@@ -5665,6 +5774,14 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             tags: tags,
             genderPresentation: nil
         )
+    }
+
+    private func makeSupportedStores() -> [SupportedStore] {
+        [
+            SupportedStore(id: "amazon", name: "Amazon", domains: ["amazon.com"], categories: ProductCategory.allCases, affiliateNetwork: "Amazon Associates", apiStatus: "approved", isEnabled: true),
+            SupportedStore(id: "macys", name: "Macy's", domains: ["macys.com"], categories: [.clothing, .shoes, .accessories], affiliateNetwork: "Impact", apiStatus: "approved", isEnabled: true),
+            SupportedStore(id: "disabled", name: "Disabled", domains: ["disabled.example"], categories: [.clothing], affiliateNetwork: nil, apiStatus: "disabled", isEnabled: false)
+        ]
     }
 
     private func makeResilientCatalogProvider(

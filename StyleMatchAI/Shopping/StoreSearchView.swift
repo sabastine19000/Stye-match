@@ -15,16 +15,19 @@ struct StoreSearchView: View {
     @State private var maxPrice = 250.0
     @State private var onSaleOnly = false
     @State private var sort: SearchSort = .relevance
+    @State private var storeScope: ShoppingStoreScope = .myStores
     @State private var catalogProducts: [AffiliateProduct] = []
     @State private var products: [AffiliateProduct] = []
     @State private var rankedProducts: [RankedProduct] = []
     @State private var relaxedSearchResult: ShoppingSearchEngine.RelaxedFilterResult?
+    @State private var retailerPreferenceFallbackUsed = false
     @State private var retailers: [SupportedStore] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var partialFailureNote: String?
     @State private var showFilters = false
     @State private var showDisclosure = false
+    @State private var showMyStores = false
     @State private var searchTask: Task<Void, Never>?
     @StateObject private var localStore = ShoppingLocalStore()
 
@@ -33,6 +36,7 @@ struct StoreSearchView: View {
             VStack(alignment: .leading, spacing: 16) {
                 disclosureLine
                 searchBar
+                storeScopeControls
                 storePicker
 
                 if isLoading {
@@ -44,6 +48,9 @@ struct StoreSearchView: View {
                         Text(partialFailureNote)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    if retailerPreferenceFallbackUsed, storeScope == .myStores, selectedRetailers.isEmpty {
+                        retailerPreferenceFallbackNotice
                     }
 
                     if isSelectedRetailerUnavailable {
@@ -87,10 +94,19 @@ struct StoreSearchView: View {
         .appScreenBackground(.shop)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showFilters = true
+                Menu {
+                    Button {
+                        showFilters = true
+                    } label: {
+                        Label("Filters", systemImage: "slider.horizontal.3")
+                    }
+                    Button {
+                        showMyStores = true
+                    } label: {
+                        Label("My Stores", systemImage: "storefront")
+                    }
                 } label: {
-                    Label("Filters", systemImage: "slider.horizontal.3")
+                    Label("Search settings", systemImage: "slider.horizontal.3")
                 }
             }
         }
@@ -100,6 +116,9 @@ struct StoreSearchView: View {
         .onChange(of: text) { _ in debouncedSearch() }
         .sheet(isPresented: $showFilters) {
             filterSheet
+        }
+        .sheet(isPresented: $showMyStores) {
+            MyStoresManagementView(supportedStores: retailers, store: localStore)
         }
         .sheet(isPresented: $showDisclosure) {
             NavigationStack {
@@ -148,6 +167,40 @@ struct StoreSearchView: View {
         #if canImport(UIKit)
         UIApplication.shared.open(url, options: [:])
         #endif
+    }
+
+    private var storeScopeControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Store scope", selection: $storeScope) {
+                ForEach(ShoppingStoreScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .styleMatchOnChange(of: storeScope) { _ in debouncedSearch() }
+
+            Button {
+                showMyStores = true
+            } label: {
+                Label("Manage My Stores", systemImage: "storefront")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var retailerPreferenceFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "storefront")
+                .foregroundStyle(Color.orange)
+            Text(RetailerPreferencePolicy.fallbackCopy)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .appCard(.shop, radius: 10)
     }
 
     private var searchBar: some View {
@@ -356,6 +409,7 @@ struct StoreSearchView: View {
     private func loadRetailersAndSearch() async {
         let stores = (try? await BundledStoreDirectoryProvider().stores()) ?? []
         retailers = stores.filter(\.isEnabled)
+        _ = localStore.normalizePreferredRetailerIDs(supportedStores: retailers)
         await runSearch()
     }
 
@@ -377,11 +431,17 @@ struct StoreSearchView: View {
 
         do {
             let safeProducts = try await SharedProductCatalogLoader.shared.products()
-            let results = ShoppingSearchEngine.relaxedFilter(products: safeProducts, query: currentQuery())
+            let policyResult = RetailerPreferencePolicy.apply(
+                products: safeProducts,
+                preferredRetailerIDs: activePreferredRetailerIDs,
+                supportedStores: retailers
+            )
+            let results = ShoppingSearchEngine.relaxedFilter(products: policyResult.products, query: currentQuery())
             await MainActor.run {
                 catalogProducts = safeProducts
                 products = results.displayedResults
                 relaxedSearchResult = results
+                retailerPreferenceFallbackUsed = policyResult.usedFallback
                 rerank()
                 isLoading = false
             }
@@ -424,6 +484,13 @@ struct StoreSearchView: View {
             onSaleOnly: onSaleOnly,
             sort: sort
         )
+    }
+
+    private var activePreferredRetailerIDs: [String] {
+        guard storeScope == .myStores, selectedRetailers.isEmpty else {
+            return []
+        }
+        return localStore.preferredRetailerIDs(supportedStores: retailers)
     }
 }
 
