@@ -14,6 +14,7 @@ struct StylistChatView: View {
 
     private let initialQuestion: String?
     private let initialContext: ChatContext?
+    private let screenContext: StylistScreenContext
     private let voiceInputEnabled: Bool
     private let bottomNavigationClearance: CGFloat
     private let onSignInRequested: () -> Void
@@ -24,18 +25,24 @@ struct StylistChatView: View {
         voiceInputEnabled: Bool = true,
         initialQuestion: String? = nil,
         initialContext: ChatContext? = nil,
+        screenContext: StylistScreenContext = .aiTab(),
         bottomNavigationClearance: CGFloat = 0,
         onSignInRequested: @escaping () -> Void = {}
     ) {
         _service = StateObject(
             wrappedValue: service ?? StylistChatService(
-                contextProvider: { PersonalizationContextBuilder.conversationalStylistContext() }
+                contextProvider: {
+                    PersonalizationContextBuilder.conversationalStylistContext(
+                        screenContext: screenContext
+                    )
+                }
             )
         )
         _speechInput = StateObject(wrappedValue: speechInput ?? StylistSpeechInputService())
         self.voiceInputEnabled = voiceInputEnabled
         self.initialQuestion = initialQuestion
         self.initialContext = initialContext
+        self.screenContext = screenContext
         self.bottomNavigationClearance = max(0, bottomNavigationClearance)
         self.onSignInRequested = onSignInRequested
     }
@@ -481,7 +488,13 @@ struct StylistChatView: View {
     }
 
     private var currentConversationContext: ChatContext {
-        activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext()
+        let currentScreenContext = screenContext.resolvingSavedScanAvailability(
+            StylistSavedScanAvailability.savedScanIDs()
+        )
+        let context = activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext(
+            screenContext: currentScreenContext
+        )
+        return context.applyingCurrentScreenContext(currentScreenContext)
     }
 
     private var selectedScanContextNote: some View {

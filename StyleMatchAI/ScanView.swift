@@ -1473,7 +1473,11 @@ struct ScanView: View {
                 NavigationLink {
                     StylistChatView(
                         initialQuestion: "Why did this outfit score \(result.score)?",
-                        initialContext: PersonalizationContextBuilder.scanStylistContext(for: result)
+                        initialContext: PersonalizationContextBuilder.scanStylistContext(
+                            for: result,
+                            screenContext: currentScreenContext
+                        ),
+                        screenContext: currentScreenContext
                     )
                 } label: {
                     Label("Ask the stylist about this score", systemImage: "sparkles")
@@ -4097,6 +4101,32 @@ struct ScanView: View {
         return "\(items.count)"
     }
 
+    private var currentScreenContext: StylistScreenContext {
+        let scans = recentStoredScans
+        let state = StylistActiveScanStateResolver.resolve(
+            hasResult: result != nil,
+            hasSelectedImage: selectedUIImage != nil,
+            activeScanID: activeScanFingerprint,
+            savedScanIDs: Set(loadScanHistory().keys)
+        )
+        let aggregate = StylistVisibleAggregateStatistics(
+            averageScore: Int(averageScoreText(from: scans)),
+            highestScore: Int(highestScoreText(from: scans)),
+            totalScans: Int(outfitsScannedText(from: scans))
+        )
+        return StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: state,
+            activeScanID: state == .none ? nil : activeScanFingerprint,
+            selectedOccasion: selectedScanOccasion.rawValue,
+            selectedAnalysisSection: selectedScannerInsight.lowercased(),
+            visibleOverallScore: state == .none ? nil : result?.score,
+            entryPoint: result == nil ? .scanTab : .scanResult,
+            visibleAggregates: aggregate,
+            closetState: StylistClosetState.fromSerializedClosetData(closetItemsData)
+        )
+    }
+
     private var scanHistoryFilterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -4624,11 +4654,17 @@ struct ScanView: View {
 
     private func deleteSelectedScans() {
         var history = loadScanHistory()
+        let deletedActiveScan = activeScanFingerprint.map(selectedScanIDs.contains) ?? false
         selectedScanIDs.forEach { history.removeValue(forKey: $0) }
         saveScanHistory(history)
         let deletedCount = selectedScanIDs.count
         selectedScanIDs.removeAll()
         isEditingScanHistory = false
+        if deletedActiveScan {
+            invalidateActiveScanSession()
+            result = nil
+            preparedAnalysis = nil
+        }
         scanMessage = ScanMessage(
             title: "Selected scans deleted",
             description: "\(deletedCount) scan\(deletedCount == 1 ? "" : "s") were removed permanently from this phone.",

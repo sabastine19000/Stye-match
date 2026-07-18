@@ -245,6 +245,83 @@ final class AIInsightChatPromptBuilderTests: XCTestCase {
             AIInsightChatErrorPresentation.connectivityMessage
         )
     }
+
+    func testShortPromptCompactsOversizedGeneratedContextWithoutTransportRejection() throws {
+        let oversizedCloset = (0..<100).map {
+            "item-\($0) | Shirt | blue | M | brand | Work | notes"
+        }.joined(separator: " ; ")
+        let request = try AIInsightChatPromptBuilder.build(
+            displayedMessages: [],
+            latestQuestion: "What should I wear today?",
+            cardFacts: AIInsightChatCardFacts(
+                screen: "Closet",
+                title: "AI Closet Designer",
+                featurePrompt: "Build from my closet.",
+                extraContext: "Saved items: \(oversizedCloset)"
+            )
+        )
+
+        XCTAssertTrue(request.primaryMessage.contains("What should I wear today?"))
+        XCTAssertTrue(request.primaryMessage.contains("Saved closet item"))
+        XCTAssertLessThanOrEqual(request.primaryMessage.utf16.count, 1_800)
+        XCTAssertEqual(request.history.count + 1, 1)
+    }
+
+    func testCompactionRetainsGroundedContextSourcesNearLimit() throws {
+        let request = try AIInsightChatPromptBuilder.build(
+            displayedMessages: [],
+            latestQuestion: "Build an outfit.",
+            cardFacts: AIInsightChatCardFacts(
+                screen: "Closet",
+                title: "AI Closet Designer",
+                featurePrompt: "Use supplied evidence only.",
+                extraContext: """
+                Saved items: white shirt | Shirt | white | M | unknown brand | Work | saved
+                Latest saved score: 80/100
+                Recent scan palette: white, navy
+                Weather: cloudy, 79°F
+                Size profile: medium
+                \(String(repeating: "low priority context ", count: 300))
+                """
+            )
+        )
+
+        XCTAssertTrue(request.primaryMessage.contains("white shirt"))
+        XCTAssertTrue(request.primaryMessage.contains("80/100"))
+        XCTAssertTrue(request.primaryMessage.contains("white, navy"))
+        XCTAssertTrue(request.primaryMessage.contains("cloudy, 79°F"))
+        XCTAssertTrue(request.primaryMessage.contains("Size profile: medium"))
+        XCTAssertTrue(request.debugMessageSources.last?.contains("closet_context") == true)
+        XCTAssertTrue(request.debugMessageSources.last?.contains("score_context") == true)
+        XCTAssertTrue(request.debugMessageSources.last?.contains("scan_context") == true)
+        XCTAssertTrue(request.debugMessageSources.last?.contains("weather_context") == true)
+        XCTAssertTrue(request.debugMessageSources.last?.contains("profile_context") == true)
+        XCTAssertLessThanOrEqual(request.primaryMessage.utf16.count, 1_800)
+    }
+
+    func testOversizedEmojiGeneratedContextUsesUTF16BudgetAndPreservesQuestion() throws {
+        let request = try AIInsightChatPromptBuilder.build(
+            displayedMessages: [],
+            latestQuestion: "Keep this visible question.",
+            cardFacts: AIInsightChatCardFacts(
+                screen: "Home",
+                title: "Morning Brief",
+                featurePrompt: "General guidance",
+                extraContext: "Profile notes: \(String(repeating: "😀", count: 1_000))"
+            )
+        )
+
+        XCTAssertTrue(request.primaryMessage.contains("Keep this visible question."))
+        XCTAssertLessThanOrEqual(request.primaryMessage.utf16.count, 1_800)
+    }
+
+    func testConsecutiveIdenticalFailureReplyIsNotAppendedTwice() {
+        let failure = AIInsightChatErrorPresentation.connectivityMessage
+
+        XCTAssertTrue(AIInsightChatErrorPresentation.shouldAppendFailureReply(failure, after: nil))
+        XCTAssertFalse(AIInsightChatErrorPresentation.shouldAppendFailureReply(failure, after: failure))
+        XCTAssertTrue(AIInsightChatErrorPresentation.shouldAppendFailureReply(failure, after: "A useful reply."))
+    }
 }
 
 final class StylistChatServiceTests: XCTestCase {
@@ -478,7 +555,7 @@ final class StylistChatServiceTests: XCTestCase {
 
     func testConversationalStylistDefaultContextExcludesAppearanceAndProfileFields() {
         let context = PersonalizationContextBuilder.conversationalStylistContext()
-        let payload = [context.profileSummary, context.recentOutfits, context.scoreBreakdown ?? ""].joined(separator: "\n")
+        let payload = [context.profileSummary, context.recentOutfits, context.activeScan, context.scoreBreakdown ?? ""].joined(separator: "\n")
 
         XCTAssertTrue(payload.contains("Conversational Personal Stylist Phase 3C"))
         XCTAssertFalse(payload.contains("declaredUndertone"))
@@ -491,7 +568,7 @@ final class StylistChatServiceTests: XCTestCase {
 
     func testOutfitCombinationContextSupportsRequestedModesAndColorPairingWithoutProfileLeakage() {
         let context = PersonalizationContextBuilder.conversationalStylistContext()
-        let payload = [context.profileSummary, context.recentOutfits, context.scoreBreakdown ?? ""].joined(separator: "\n")
+        let payload = [context.profileSummary, context.recentOutfits, context.activeScan, context.scoreBreakdown ?? ""].joined(separator: "\n")
 
         XCTAssertTrue(payload.contains("top, bottom, shoes"))
         XCTAssertTrue(payload.contains("Keep any user-provided anchor item fixed"))
@@ -539,7 +616,7 @@ final class StylistChatServiceTests: XCTestCase {
         )
 
         let context = PersonalizationContextBuilder.scanStylistContext(for: analysis)
-        let payload = [context.profileSummary, context.recentOutfits, context.scoreBreakdown ?? ""].joined(separator: "\n")
+        let payload = [context.profileSummary, context.recentOutfits, context.activeScan, context.scoreBreakdown ?? ""].joined(separator: "\n")
 
         XCTAssertTrue(payload.contains("score 84/100"))
         XCTAssertTrue(payload.contains("shirt"))
@@ -668,7 +745,11 @@ final class StylistChatServiceTests: XCTestCase {
         service.send("Build a business-casual outfit around this shirt.", forcedContext: scanContext)
         try await waitUntil { !service.isStreaming }
 
-        let payload = [transport.requests.last?.context.profileSummary, transport.requests.last?.context.recentOutfits].compactMap { $0 }.joined(separator: "\n")
+        let payload = [
+            transport.requests.last?.context.profileSummary,
+            transport.requests.last?.context.recentOutfits,
+            transport.requests.last?.context.activeScan
+        ].compactMap { $0 }.joined(separator: "\n")
         XCTAssertTrue(payload.contains("striped shirt"))
         XCTAssertTrue(payload.contains("light blue"))
         XCTAssertTrue(payload.contains("Slightly blurry"))
@@ -1179,6 +1260,381 @@ final class StylistChatServiceTests: XCTestCase {
         recovered.deleteAll()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertTrue(ChatConversationStore(fileURL: url).conversations.isEmpty)
+    }
+
+    func testWarmWeatherWithholdsHistoricalJacketRecommendationEvidence() {
+        let analysis = contextSelectionAnalysis(
+            garments: ["jacket"],
+            confidences: [DetectedItemConfidence(item: "jacket", confidence: 96)]
+        )
+
+        let context = AIStylistContextSelection.historicalScanContext(
+            score: 80,
+            analysis: analysis,
+            weatherConstraint: AIStylistContextSelection.weatherConstraint(fahrenheit: 79, condition: "cloudy")
+        )
+
+        XCTAssertTrue(context.contains("Historical outerwear was withheld"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("jacket"))
+        XCTAssertTrue(AIStylistContextSelection.weatherConstraint(fahrenheit: 79).contains("warm"))
+    }
+
+    func testActiveScanAndHistoricalScanRemainSeparateWithActiveAuthority() {
+        let active = contextSelectionAnalysis(
+            garments: ["shirt"],
+            confidences: [DetectedItemConfidence(item: "shirt", confidence: 95)]
+        )
+        let historical = contextSelectionAnalysis(
+            garments: ["pants"],
+            confidences: [DetectedItemConfidence(item: "pants", confidence: 95)]
+        )
+        let context = ChatContext(
+            activeScan: AIStylistContextSelection.activeScanContext(active),
+            historicalOutfits: AIStylistContextSelection.historicalScanContext(score: 75, analysis: historical)
+        )
+
+        XCTAssertTrue(context.activeScan.contains("authoritative for the current outfit"))
+        XCTAssertTrue(context.activeScan.contains("shirt"))
+        XCTAssertFalse(context.activeScan.contains("pants"))
+        XCTAssertTrue(context.historicalOutfits.contains("not the current outfit"))
+    }
+
+    func testHistoricalScanNeverMakesPresentTenseCurrentOutfitClaim() {
+        let context = AIStylistContextSelection.historicalScanContext(
+            score: 77,
+            analysis: contextSelectionAnalysis(
+                garments: ["pants"],
+                confidences: [DetectedItemConfidence(item: "pants", confidence: 94)]
+            )
+        )
+
+        XCTAssertTrue(context.contains("optional reference"))
+        XCTAssertTrue(context.contains("not the current outfit"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("you are wearing"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("currently wearing"))
+    }
+
+    func testGarmentBelowNinetyPercentIsNotExposedAsFactual() {
+        let analysis = contextSelectionAnalysis(
+            garments: ["jacket"],
+            confidences: [DetectedItemConfidence(item: "jacket", confidence: 89)]
+        )
+
+        XCTAssertTrue(AIStylistContextSelection.authoritativeGarments(in: analysis).isEmpty)
+        XCTAssertFalse(
+            AIStylistContextSelection.historicalScanContext(score: 80, analysis: analysis)
+                .localizedCaseInsensitiveContains("jacket")
+        )
+    }
+
+    func testHistoricalItemsAreLabeledOptionalAndNeverClosetOwned() {
+        let context = AIStylistContextSelection.historicalScanContext(
+            score: 81,
+            analysis: contextSelectionAnalysis(
+                garments: ["shirt"],
+                confidences: [DetectedItemConfidence(item: "shirt", confidence: 96)]
+            )
+        )
+
+        XCTAssertTrue(context.contains("optional reference"))
+        XCTAssertTrue(context.contains("optional reference, never"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("from your closet"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("you already own"))
+    }
+
+    func testScanPaletteIsNotBoundToLowConfidenceGarmentLabel() {
+        let context = AIStylistContextSelection.historicalScanContext(
+            score: 80,
+            analysis: contextSelectionAnalysis(
+                garments: ["jacket"],
+                confidences: [DetectedItemConfidence(item: "jacket", confidence: 72)],
+                palette: ["gray", "brown"]
+            )
+        )
+
+        XCTAssertTrue(context.contains("Scan-level palette (not garment-specific): gray, brown"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("gray jacket"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("brown jacket"))
+    }
+
+    func testMissingSavedScanBreakdownIsExplicitlyUnavailable() {
+        let context = AIStylistContextSelection.scoreContext(
+            score: 80,
+            analysis: contextSelectionAnalysis(garments: [], confidences: []),
+            source: "saved scan"
+        )
+
+        XCTAssertTrue(context.contains("Overall score from saved scan: 80/100"))
+        XCTAssertTrue(context.contains("Category breakdown unavailable for this saved scan"))
+    }
+
+    func testMissingBreakdownDoesNotInventWeakestCategory() {
+        let context = AIStylistContextSelection.scoreContext(
+            score: 80,
+            analysis: contextSelectionAnalysis(garments: [], confidences: []),
+            source: "saved scan"
+        )
+
+        XCTAssertFalse(context.contains("Weakest persisted category:"))
+        XCTAssertTrue(context.contains("Do not identify a weakest category"))
+        XCTAssertFalse(context.localizedCaseInsensitiveContains("fit is weakest"))
+    }
+
+    func testScanTabWithoutActiveScanKeepsVisibleAggregatesSeparateFromCurrentScore() {
+        let context = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .none,
+            activeScanID: "must-not-survive",
+            selectedOccasion: "general",
+            selectedAnalysisSection: "colors",
+            visibleOverallScore: nil,
+            entryPoint: .scanTab,
+            visibleAggregates: StylistVisibleAggregateStatistics(
+                averageScore: 88,
+                highestScore: 96,
+                totalScans: 347
+            ),
+            closetState: .loadedEmpty
+        )
+
+        XCTAssertEqual(context.currentTab, .scan)
+        XCTAssertEqual(context.activeScanState, .none)
+        XCTAssertNil(context.activeScanID)
+        XCTAssertNil(context.visibleOverallScore)
+        XCTAssertEqual(context.visibleAggregates?.averageScore, 88)
+        XCTAssertEqual(context.visibleAggregates?.highestScore, 96)
+        XCTAssertEqual(context.visibleAggregates?.totalScans, 347)
+    }
+
+    func testSavedScanScreenContextCarriesOnlyItsVisibleScoreAndIdentity() {
+        let context = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .saved,
+            activeScanID: "saved-123",
+            selectedOccasion: "work",
+            selectedAnalysisSection: "fit",
+            visibleOverallScore: 80,
+            entryPoint: .scanResult,
+            closetState: .unavailable
+        )
+
+        XCTAssertEqual(context.activeScanState, .saved)
+        XCTAssertEqual(context.activeScanID, "saved-123")
+        XCTAssertEqual(context.visibleOverallScore, 80)
+    }
+
+    func testLiveScanScreenContextIsDistinctFromSavedScan() {
+        let context = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .live,
+            activeScanID: "live-456",
+            visibleOverallScore: 91,
+            entryPoint: .scanResult,
+            closetState: .loadedWithItems
+        )
+
+        XCTAssertEqual(context.activeScanState, .live)
+        XCTAssertEqual(context.activeScanID, "live-456")
+        XCTAssertEqual(context.visibleOverallScore, 91)
+    }
+
+    func testActiveScanStateResolverRequiresACompletedResultAndCurrentSavedIdentity() {
+        let savedIDs: Set<String> = ["saved-123"]
+
+        XCTAssertEqual(
+            StylistActiveScanStateResolver.resolve(
+                hasResult: true,
+                hasSelectedImage: false,
+                activeScanID: "saved-123",
+                savedScanIDs: savedIDs
+            ),
+            .saved
+        )
+        XCTAssertEqual(
+            StylistActiveScanStateResolver.resolve(
+                hasResult: true,
+                hasSelectedImage: true,
+                activeScanID: "live-456",
+                savedScanIDs: savedIDs
+            ),
+            .live
+        )
+        XCTAssertEqual(
+            StylistActiveScanStateResolver.resolve(
+                hasResult: false,
+                hasSelectedImage: true,
+                activeScanID: "partial-live-scan",
+                savedScanIDs: savedIDs
+            ),
+            .none
+        )
+        XCTAssertEqual(
+            StylistActiveScanStateResolver.resolve(
+                hasResult: true,
+                hasSelectedImage: false,
+                activeScanID: "deleted-scan",
+                savedScanIDs: savedIDs
+            ),
+            .none
+        )
+    }
+
+    func testDeletedSavedScanIsInvalidatedAtSendTimeAndClearsCurrentScoreEvidence() {
+        let selectedScan = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .saved,
+            activeScanID: "deleted-scan",
+            visibleOverallScore: 80,
+            entryPoint: .scanResult,
+            closetState: .unavailable
+        )
+        let invalidated = selectedScan.resolvingSavedScanAvailability(["different-scan"])
+        let context = ChatContext(
+            activeScan: "Selected scan: score 80/100; jacket.",
+            scoreBreakdown: "Existing score only: 80/100.",
+            screenContext: selectedScan
+        ).applyingCurrentScreenContext(invalidated)
+
+        XCTAssertEqual(invalidated.activeScanState, .none)
+        XCTAssertNil(invalidated.activeScanID)
+        XCTAssertNil(invalidated.visibleOverallScore)
+        XCTAssertEqual(invalidated.entryPoint, .scanTab)
+        XCTAssertTrue(context.activeScan.isEmpty)
+        XCTAssertNil(context.scoreBreakdown)
+    }
+
+    func testSavedScanRemainsAuthoritativeWhileItsIdentityStillExists() {
+        let selectedScan = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .saved,
+            activeScanID: "saved-123",
+            visibleOverallScore: 80,
+            entryPoint: .scanResult,
+            closetState: .unavailable
+        )
+        let resolved = selectedScan.resolvingSavedScanAvailability(["saved-123"])
+        let context = ChatContext(
+            activeScan: "Selected scan: score 80/100.",
+            scoreBreakdown: "Existing score only: 80/100.",
+            screenContext: selectedScan
+        ).applyingCurrentScreenContext(resolved)
+
+        XCTAssertEqual(resolved, selectedScan)
+        XCTAssertFalse(context.activeScan.isEmpty)
+        XCTAssertNotNil(context.scoreBreakdown)
+    }
+
+    func testAITabEntryPointsNeverCarryCurrentOutfitAuthority() {
+        for entryPoint in [
+            StylistEntryPoint.homeMorningBrief,
+            .closetDesigner,
+            .profile,
+            .scanTab,
+            .aiTab
+        ] {
+            let context = StylistScreenContext.aiTab(entryPoint: entryPoint)
+            XCTAssertEqual(context.currentTab, .ai)
+            XCTAssertEqual(context.activeScanState, .none)
+            XCTAssertNil(context.activeScanID)
+            XCTAssertNil(context.visibleOverallScore)
+            XCTAssertEqual(context.entryPoint, entryPoint)
+        }
+    }
+
+    func testClosetStateDistinguishesLoadedEmptyFromUnavailable() {
+        XCTAssertEqual(StylistClosetState.fromSerializedClosetData(Data()), .loadedEmpty)
+        XCTAssertEqual(StylistClosetState.fromSerializedClosetData(Data("not-json".utf8)), .unavailable)
+        XCTAssertEqual(StylistClosetState.fromSerializedClosetData(Data("[]".utf8)), .loadedEmpty)
+        XCTAssertEqual(StylistClosetState.fromSerializedClosetData(Data("[{}]".utf8)), .loadedWithItems)
+    }
+
+    func testChatRequestEncodesTypedScreenContextWithoutPromotingAggregates() throws {
+        let screenContext = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .none,
+            selectedOccasion: "general",
+            selectedAnalysisSection: "colors",
+            visibleOverallScore: nil,
+            entryPoint: .scanTab,
+            visibleAggregates: StylistVisibleAggregateStatistics(
+                averageScore: 88,
+                highestScore: 96,
+                totalScans: 347
+            ),
+            closetState: .loadedEmpty
+        )
+        let request = ChatRequest(
+            messages: [.init(role: "user", content: "Improve this score.")],
+            context: ChatContext(screenContext: screenContext),
+            stream: true
+        )
+        let decoded = try JSONDecoder().decode(ChatRequest.self, from: JSONEncoder().encode(request))
+
+        XCTAssertEqual(decoded.context.screenContext, screenContext)
+        XCTAssertNil(decoded.context.screenContext?.visibleOverallScore)
+        XCTAssertEqual(decoded.context.screenContext?.visibleAggregates?.averageScore, 88)
+    }
+
+    func testMorningBriefUsesConservativeNoActiveScanScreenContext() {
+        let context = StylistScreenContext.morningBrief()
+
+        XCTAssertEqual(context.currentTab, .home)
+        XCTAssertEqual(context.activeScanState, .none)
+        XCTAssertNil(context.activeScanID)
+        XCTAssertEqual(context.entryPoint, .homeMorningBrief)
+        XCTAssertEqual(context.closetState, .unavailable)
+    }
+
+    @MainActor
+    func testStylistServiceTransmitsScreenContextWithLatestPrompt() async throws {
+        let transport = MockChatTransport(chunks: ["No active outfit is available."])
+        let context = ChatContext(
+            screenContext: StylistScreenContext(
+                currentTab: .scan,
+                activeScanState: .none,
+                entryPoint: .scanTab,
+                closetState: .loadedEmpty
+            )
+        )
+        let service = StylistChatService(
+            store: ChatConversationStore(fileURL: temporaryStoreURL()),
+            transport: transport,
+            contextProvider: { context }
+        )
+
+        XCTAssertTrue(service.send("Improve this score."))
+        try await waitUntil { !service.isStreaming }
+
+        XCTAssertEqual(transport.requests.last?.context.screenContext, context.screenContext)
+        XCTAssertEqual(transport.requests.last?.messages.last?.content, "Improve this score.")
+    }
+
+    private func contextSelectionAnalysis(
+        garments: [String],
+        confidences: [DetectedItemConfidence],
+        palette: [String] = ["navy"],
+        breakdown: OutfitScoreBreakdown? = nil
+    ) -> OutfitAnalysisResult {
+        OutfitAnalysisResult(
+            score: 80,
+            scoreBreakdown: breakdown,
+            colorMatch: "",
+            occasionFit: "",
+            styleBalance: "",
+            colorHarmony: "",
+            styleCoordination: "",
+            formality: "",
+            seasonalMatch: "",
+            summary: "",
+            outfitDescription: "",
+            detectedClothingItems: garments,
+            colorPalette: palette,
+            environment: "",
+            imageQuality: "",
+            detectedItemConfidences: confidences,
+            suggestions: [],
+            recommendations: []
+        )
     }
 
     private func temporaryStoreURL() -> URL {

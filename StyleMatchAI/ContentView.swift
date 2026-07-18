@@ -259,6 +259,7 @@ extension View {
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedTab: AppTab = .home
+    @State private var previousSelectedTab: AppTab = .home
     @State private var mountedTabs: Set<AppTab> = [.home]
     @State private var homeNavigationResetID = 0
     @StateObject private var liveWeather = StyleMatchLiveWeatherManager()
@@ -269,6 +270,7 @@ struct ContentView: View {
     @State private var isSoftwareKeyboardVisible = false
     @State private var bottomNavigationFrame: CGRect = .null
     @State private var rootSafeAreaBottomInset: CGFloat = 0
+    @State private var stylistEntryPoint = StylistEntryPoint.aiTab
     @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
 
     private var activeTheme: StyleMatchAppTheme {
@@ -332,6 +334,10 @@ struct ContentView: View {
             }
         }
         .styleMatchOnChange(of: selectedTab) { tab in
+            if tab == .ai {
+                stylistEntryPoint = stylistEntryPointForAI(from: previousSelectedTab)
+            }
+            previousSelectedTab = tab
             dismissSoftwareKeyboard()
             mountedTabs.insert(tab)
             if tab == .home {
@@ -423,6 +429,7 @@ struct ContentView: View {
                 preservedTab(.ai) {
                     if FeatureFlags.conversationalStylist {
                         StylistChatView(
+                            screenContext: .aiTab(entryPoint: stylistEntryPoint),
                             bottomNavigationClearance: chatBottomNavigationClearance,
                             onSignInRequested: { selectedTab = .profile }
                         )
@@ -455,11 +462,31 @@ struct ContentView: View {
             dismissSoftwareKeyboard()
             return
         }
+        if tab == .ai {
+            stylistEntryPoint = stylistEntryPointForAI(from: selectedTab)
+        }
         mountedTabs.insert(tab)
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             selectedTab = tab
+        }
+    }
+
+    private func stylistEntryPointForAI(from sourceTab: AppTab) -> StylistEntryPoint {
+        switch sourceTab {
+        case .home:
+            return .homeMorningBrief
+        case .closet:
+            return .closetDesigner
+        case .shop:
+            return .other
+        case .profile:
+            return .profile
+        case .scan:
+            return .scanTab
+        case .ai:
+            return .aiTab
         }
     }
 

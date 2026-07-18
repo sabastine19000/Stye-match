@@ -9,13 +9,15 @@ struct OpenAIStylistClient {
     func askStylist(
         profile: StyleMatchStylistProfile,
         question: String,
-        debugRequestLabel: String? = nil
+        debugRequestLabel: String? = nil,
+        debugMessageSources: [String] = []
     ) async throws -> String {
         try await askStylist(
             profile: profile,
             messages: [],
             question: question,
-            debugRequestLabel: debugRequestLabel
+            debugRequestLabel: debugRequestLabel,
+            debugMessageSources: debugMessageSources
         )
     }
 
@@ -23,7 +25,8 @@ struct OpenAIStylistClient {
         profile: StyleMatchStylistProfile,
         messages: [AIChatMessage],
         question: String,
-        debugRequestLabel: String? = nil
+        debugRequestLabel: String? = nil,
+        debugMessageSources: [String] = []
     ) async throws -> String {
         guard let configuration = StylistChatConfiguration.production else {
             throw OpenAIStylistError.invalidResponse
@@ -42,20 +45,39 @@ struct OpenAIStylistClient {
                 content: content
             )
         }
-        let requestMessages = Array(recentMessages.suffix(11))
+        let requestMessages = Array(recentMessages.suffix(19))
             + [ChatRequest.RequestMessage(role: "user", content: preparedQuestion)]
+        #if DEBUG
+        for (index, message) in requestMessages.enumerated() {
+            let sourceOffset = max(0, debugMessageSources.count - requestMessages.count)
+            let sourceIndex = index + sourceOffset
+            let source = debugMessageSources.indices.contains(sourceIndex)
+                ? debugMessageSources[sourceIndex]
+                : (index == requestMessages.count - 1 ? "latest_user_or_generated_context" : "history")
+            print("[AI Insight Outbound] index=\(index) role=\(message.role) utf16_count=\(message.content.utf16.count) source=\(source)")
+        }
+        #endif
         if let validationError = StylistChatMessageLimit.validationError(for: requestMessages) {
             throw validationError
         }
         let context = ChatContext(
             profileSummary: profileContextBlock(profile: profile, question: preparedQuestion),
-            recentOutfits: conversationText(from: messages),
-            scoreBreakdown: [profile.pastOutfitRatings, profile.appContext]
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .joined(separator: "\n")
+            recentOutfits: "",
+            activeScan: profile.activeScanContext,
+            historicalOutfits: profile.historicalScanContext,
+            weatherConstraint: profile.weatherConstraint,
+            scoreBreakdown: profile.savedScoreContext.isEmpty ? nil : profile.savedScoreContext,
+            screenContext: profile.screenContext
         )
         let request = ChatRequest(messages: requestMessages, context: context, stream: true)
         #if DEBUG
+        print(
+            "[AI Insight Context] active_scan_utf16=\(context.activeScan.utf16.count) "
+            + "historical_scan_utf16=\(context.historicalOutfits.utf16.count) "
+            + "score_utf16=\(context.scoreBreakdown?.utf16.count ?? 0) "
+            + "weather_constraint_utf16=\(context.weatherConstraint.utf16.count) "
+            + "screen_context=\(context.screenContext?.currentTab.rawValue ?? "none")/\(context.screenContext?.activeScanState.rawValue ?? "none")"
+        )
         if let debugRequestLabel {
             let bodyBytes = (try? JSONEncoder().encode(request).count) ?? -1
             let maximumMessageUTF16 = requestMessages.map { $0.content.utf16.count }.max() ?? 0
@@ -136,8 +158,6 @@ struct OpenAIStylistClient {
         appendContextLine("Weather preferences", profile.weatherPreferences, to: &lines)
         appendContextLine("Dress code", profile.dressCode, to: &lines)
         appendContextLine("Shopping habits", profile.shoppingHabits, to: &lines)
-        appendContextLine("Past outfit ratings", profile.pastOutfitRatings, to: &lines)
-        appendContextLine("Frequently worn outfits", profile.frequentlyWornOutfits, to: &lines)
         appendContextLine("Past purchases", profile.pastPurchases, to: &lines)
         appendContextLine("Favorite outfits", profile.favoriteOutfits, to: &lines)
         appendContextLine("Closet inventory", profile.closetInventory, to: &lines)
@@ -197,16 +217,6 @@ struct OpenAIStylistClient {
         return "[StyleMatch AI Prompt Debug] model=\(model)\n\(prompt)"
     }
     #endif
-
-    private func conversationText(from messages: [AIChatMessage]) -> String {
-        guard !messages.isEmpty else {
-            return "No previous messages."
-        }
-
-        return messages.suffix(4).map { message in
-            "\(message.role.label): \(message.text)"
-        }.joined(separator: "\n")
-    }
 
     private func resolvedModelName(from rawModel: String) -> String {
         let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -288,6 +298,11 @@ struct StyleMatchStylistProfile {
     var closetInventory: String
     var appContextSharingEnabled: Bool
     var appContext: String
+    var activeScanContext: String = ""
+    var historicalScanContext: String = ""
+    var savedScoreContext: String = ""
+    var weatherConstraint: String = ""
+    var screenContext: StylistScreenContext?
 }
 
 struct AIChatMessage: Identifiable, Codable, Equatable {

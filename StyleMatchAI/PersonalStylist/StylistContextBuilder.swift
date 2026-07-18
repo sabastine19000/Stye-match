@@ -31,6 +31,7 @@ struct PersonalizationContextBuilder {
     static func chatContext(
         defaults: UserDefaults = .standard,
         scoreBreakdown: String? = nil,
+        screenContext: StylistScreenContext? = nil,
         memoryLimit: Int = 10
     ) -> ChatContext {
         let profile = ProfileStore(defaults: defaults).currentProfile
@@ -39,6 +40,7 @@ struct PersonalizationContextBuilder {
             profile: profile,
             outfitMemories: memories,
             scoreBreakdown: scoreBreakdown,
+            screenContext: screenContext,
             memoryLimit: memoryLimit
         )
     }
@@ -47,6 +49,7 @@ struct PersonalizationContextBuilder {
         profile: StylistProfile,
         outfitMemories: [OutfitMemory],
         scoreBreakdown: String? = nil,
+        screenContext: StylistScreenContext? = nil,
         memoryLimit: Int = 10
     ) -> ChatContext {
         let boundedMemoryLimit = max(0, min(memoryLimit, 10))
@@ -84,11 +87,14 @@ struct PersonalizationContextBuilder {
         return ChatContext(
             profileSummary: profileSummary,
             recentOutfits: recentOutfits,
-            scoreBreakdown: scoreBreakdown
+            scoreBreakdown: scoreBreakdown,
+            screenContext: screenContext
         )
     }
 
-    static func conversationalStylistContext() -> ChatContext {
+    static func conversationalStylistContext(
+        screenContext: StylistScreenContext = .aiTab()
+    ) -> ChatContext {
         ChatContext(
             profileSummary: """
             Conversational Personal Stylist Phase 3C context.
@@ -100,11 +106,15 @@ struct PersonalizationContextBuilder {
             Do not use appearance, complexion, undertone, body-shape, weight, BMI, race, ethnicity, attractiveness, hidden profile, or deleted profile data.
             """,
             recentOutfits: outfitCombinationGuidance,
-            scoreBreakdown: nil
+            scoreBreakdown: nil,
+            screenContext: screenContext
         )
     }
 
-    static func scanStylistContext(for analysis: OutfitAnalysisResult) -> ChatContext {
+    static func scanStylistContext(
+        for analysis: OutfitAnalysisResult,
+        screenContext: StylistScreenContext? = nil
+    ) -> ChatContext {
         let garments = compactList(analysis.safeDetectedClothingItems, fallback: "outfit")
         let colors = compactList(analysis.colorPalette, fallback: "")
         let colorText = colors.isEmpty ? "not confidently available" : colors
@@ -120,11 +130,12 @@ struct PersonalizationContextBuilder {
             Do not change, recalculate, or reinterpret StyleMatch Pro scores.
             Do not use appearance, complexion, undertone, body-shape, weight, BMI, race, ethnicity, attractiveness, hidden profile, or deleted profile data.
             """,
-            recentOutfits: """
+            activeScan: """
             Selected scan: score \(analysis.score)/100; detected garments: \(garments); garment colors: \(colorText); detected style: \(analysis.outfitDescription); occasion/formality: \(analysis.occasionFit), \(analysis.formality); image quality: \(analysis.imageQuality).
             \(outfitCombinationGuidance)
             """,
-            scoreBreakdown: breakdown.map { "Existing score only: \($0)" }
+            scoreBreakdown: breakdown.map { "Existing score only: \($0)" },
+            screenContext: screenContext
         )
     }
 

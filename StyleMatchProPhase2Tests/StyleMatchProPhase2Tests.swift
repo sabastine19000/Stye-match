@@ -7708,9 +7708,31 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertFalse(chatView.contains("OpenAIStylistClient"))
         XCTAssertFalse(chatView.contains("askStylist(profile:"))
 
-        XCTAssertTrue(context.contains("conversationalStylistContext()"))
+        XCTAssertTrue(context.contains("static func conversationalStylistContext("))
+        XCTAssertTrue(context.contains("screenContext: StylistScreenContext"))
         XCTAssertFalse(context.contains("declaredUndertone:"))
         XCTAssertFalse(context.contains("skinToneStyleNote:"))
+    }
+
+    func testScreenContextLifecycleUsesSendTimeStateAndInvalidatesCancelledOrDeletedScans() throws {
+        let content = try projectSource("StyleMatchAI/ContentView.swift")
+        let scan = try projectSource("StyleMatchAI/ScanView.swift")
+        let chat = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
+
+        XCTAssertTrue(content.contains("screenContext: .aiTab(entryPoint: stylistEntryPoint)"))
+        XCTAssertTrue(content.contains("stylistEntryPointForAI(from:"))
+        XCTAssertFalse(content.contains("latestScanScreenContext"))
+        XCTAssertFalse(content.contains("stylistEntryScreenContext"))
+
+        XCTAssertTrue(scan.contains("StylistActiveScanStateResolver.resolve("))
+        XCTAssertTrue(scan.contains("savedScanIDs: Set(loadScanHistory().keys)"))
+        XCTAssertTrue(scan.contains("let deletedActiveScan = activeScanFingerprint.map(selectedScanIDs.contains) ?? false"))
+        XCTAssertTrue(scan.contains("if deletedActiveScan {\n            invalidateActiveScanSession()\n            result = nil\n            preparedAnalysis = nil"))
+        XCTAssertTrue(scan.contains("private func prepareNewCameraSession() {\n        invalidateActiveScanSession()\n        isAnalyzing = false\n        selectedItem = nil\n        result = nil"))
+        XCTAssertTrue(scan.contains("private func loadImage(from item: PhotosPickerItem?) async {\n        invalidateActiveScanSession()\n        result = nil"))
+
+        XCTAssertTrue(chat.contains("resolvingSavedScanAvailability("))
+        XCTAssertTrue(chat.contains("applyingCurrentScreenContext(currentScreenContext)"))
     }
 
     func testConversationalStylistVoiceInputHasPermissionCopyAndAccessibilityLabels() throws {
@@ -7746,7 +7768,8 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(chatView.contains("@State private var activeConversationContext: ChatContext?"))
         XCTAssertTrue(chatView.contains("activeConversationContext = initialContext"))
         XCTAssertTrue(chatView.contains("private var currentConversationContext: ChatContext"))
-        XCTAssertTrue(chatView.contains("activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext()"))
+        XCTAssertTrue(chatView.contains("activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext("))
+        XCTAssertTrue(chatView.contains("screenContext: screenContext"))
         XCTAssertTrue(chatView.contains("_ = submitQuestion(prompt)"))
         XCTAssertTrue(chatView.contains("service.send(question, forcedContext: currentConversationContext)"))
         XCTAssertTrue(chatView.contains("activeConversationContext = nil"))

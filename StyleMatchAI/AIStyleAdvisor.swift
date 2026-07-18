@@ -2,16 +2,38 @@ import Foundation
 import SwiftUI
 
 enum AIStyleAdvisor {
-    static func profile(screen: String, extraContext: String = "") -> StyleMatchStylistProfile {
+    static func profile(
+        screen: String,
+        extraContext: String = "",
+        activeScan: OutfitAnalysisResult? = nil,
+        screenContext suppliedScreenContext: StylistScreenContext? = nil
+    ) -> StyleMatchStylistProfile {
         let defaults = UserDefaults.standard
-        let closetItems = decodedClosetItems(from: defaults.data(forKey: "closetItemsData") ?? Data())
+        let closetItemsData = defaults.data(forKey: "closetItemsData") ?? Data()
+        let closetItems = decodedClosetItems(from: closetItemsData)
         let recentScans = decodedRecentScans(from: defaults.data(forKey: "outfitScanHistoryData") ?? Data())
+        let screenContext = suppliedScreenContext ?? defaultScreenContext(
+            screen: screen,
+            activeScan: activeScan,
+            closetItemsData: closetItemsData
+        )
         let closetSummary = closetItems.isEmpty
             ? stringValue("closetInventory", fallback: "No closet items saved yet.", defaults: defaults)
             : closetItems.prefix(12).map { "\($0.color) \($0.category) size \($0.size)" }.joined(separator: ", ")
-        let scanSummary = recentScans.isEmpty
-            ? "No recent scans saved yet."
-            : recentScans.prefix(5).map(scanContextSummary).joined(separator: "\n")
+        let weatherConstraint = AIStylistContextSelection.weatherConstraint(defaults: defaults)
+        let activeScanContext = activeScan.map(AIStylistContextSelection.activeScanContext) ?? ""
+        let historicalScanContext = recentScans.prefix(5).map { scan in
+            AIStylistContextSelection.historicalScanContext(
+                score: scan.score,
+                analysis: scan.analysis,
+                weatherConstraint: weatherConstraint
+            )
+        }.joined(separator: "\n")
+        let scoreSource = activeScan.map { ($0.score, Optional($0), "active scan") }
+            ?? recentScans.first.map { ($0.score, $0.analysis, "saved scan") }
+        let savedScoreContext = scoreSource.map { score, analysis, source in
+            AIStylistContextSelection.scoreContext(score: score, analysis: analysis, source: source)
+        } ?? ""
 
         return StyleMatchStylistProfile(
             name: "",
@@ -34,10 +56,14 @@ enum AIStyleAdvisor {
             appContextSharingEnabled: boolValue("shareAppContextWithChatGPT", fallback: true, defaults: defaults),
             appContext: """
             Current Style Match Pro screen: \(screen).
-            Recent outfit scans: \(scanSummary)
             Closet count: \(closetItems.count)
             \(extraContext)
-            """
+            """,
+            activeScanContext: activeScanContext,
+            historicalScanContext: historicalScanContext,
+            savedScoreContext: savedScoreContext,
+            weatherConstraint: weatherConstraint,
+            screenContext: screenContext
         )
     }
 
@@ -45,7 +71,10 @@ enum AIStyleAdvisor {
         screen: String,
         messages: [AIChatMessage] = [],
         prompt: String,
-        extraContext: String = ""
+        extraContext: String = "",
+        activeScan: OutfitAnalysisResult? = nil,
+        screenContext: StylistScreenContext? = nil,
+        debugMessageSources: [String] = []
     ) async throws -> String {
         guard let session = StyleMatchAccountSessionStore.load(), session.expiresAt > Date() else {
             throw AIStyleAdvisorError.missingAPIKey
@@ -55,9 +84,15 @@ enum AIStyleAdvisor {
         let model = savedModel == "gpt-5.5" ? "gpt-4o-mini" : savedModel
         let client = OpenAIStylistClient(apiKey: "", model: model)
         return try await client.askStylist(
-            profile: profile(screen: screen, extraContext: extraContext),
+            profile: profile(
+                screen: screen,
+                extraContext: extraContext,
+                activeScan: activeScan,
+                screenContext: screenContext
+            ),
             messages: messages,
-            question: prompt
+            question: prompt,
+            debugMessageSources: debugMessageSources
         )
     }
 
@@ -72,6 +107,37 @@ enum AIStyleAdvisor {
         }
 
         return defaults.bool(forKey: key)
+    }
+
+    static func defaultScreenContext(
+        screen: String,
+        activeScan: OutfitAnalysisResult? = nil,
+        closetItemsData: Data = UserDefaults.standard.data(forKey: "closetItemsData") ?? Data()
+    ) -> StylistScreenContext {
+        let normalized = screen.lowercased()
+        let tab: StylistScreenTab = normalized.contains("closet") ? .closet
+            : normalized.contains("scan") ? .scan
+            : normalized.contains("profile") ? .profile
+            : normalized.contains("home") || normalized.contains("morning") ? .home
+            : .ai
+        let entryPoint: StylistEntryPoint = normalized.contains("closet") ? .closetDesigner
+            : normalized.contains("scan") ? .scanResult
+            : normalized.contains("morning") || normalized.contains("home") ? .homeMorningBrief
+            : tab == .profile ? .profile
+            : .aiTab
+        let closetState: StylistClosetState = normalized.contains("closet") || normalized.contains("scan")
+            ? StylistClosetState.fromSerializedClosetData(closetItemsData)
+            : .unavailable
+        if entryPoint == .homeMorningBrief, activeScan == nil {
+            return .morningBrief()
+        }
+        return StylistScreenContext(
+            currentTab: tab,
+            activeScanState: activeScan == nil ? .none : .live,
+            visibleOverallScore: activeScan?.score,
+            entryPoint: entryPoint,
+            closetState: closetState
+        )
     }
 
     private static func weatherSummary(defaults: UserDefaults) -> String {
@@ -147,29 +213,6 @@ enum AIStyleAdvisor {
         return scans.values.sorted { $0.firstScannedAt > $1.firstScannedAt }
     }
 
-    private static func scanContextSummary(_ scan: AIAdvisorStoredScan) -> String {
-        guard let analysis = scan.analysis else {
-            return "- Saved scan: \(scan.score)/100, analysis details unavailable."
-        }
-
-        let confidences = analysis.detectedItemConfidences.isEmpty
-            ? "No item confidence details saved."
-            : analysis.detectedItemConfidences.prefix(6).compactMap { item in
-                GarmentLabelMapper.humanReadableTerm(for: item.item).map { "\($0) \(item.confidence)%" }
-            }.joined(separator: ", ")
-
-        return """
-        - Saved scan: \(scan.score)/100.
-          Outfit: \(analysis.outfitDescription)
-          Detected clothing: \(analysis.safeDetectedClothingItems.joined(separator: ", "))
-          Colors: \(analysis.colorPalette.joined(separator: ", "))
-          Occasion/Formality: \(analysis.occasionFit); \(analysis.formality)
-          Environment: \(analysis.environment)
-          Lighting/Image quality: \(analysis.imageQuality)
-          Style notes: \(analysis.summary)
-          Confidence: \(confidences)
-        """
-    }
 }
 
 enum AIStyleAdvisorError: LocalizedError {
@@ -193,6 +236,7 @@ struct AIStyleInsightCard: View {
     let prompt: String
     let fallbackAdvice: String
     var extraContext = ""
+    var screenContext: StylistScreenContext? = nil
 
     @State private var advice: String?
     @State private var isLoading = false
@@ -449,15 +493,17 @@ struct AIStyleInsightCard: View {
             print("[AI Insight Chat] \(error.localizedDescription)")
             #endif
             await MainActor.run {
-                messages.append(
-                    AIInsightChatMessage(
-                            role: .stylist,
-                            text: AIInsightChatErrorPresentation.message(for: error)
-                        )
-                    )
-                    statusText = nil
-                    isSendingMessage = false
-                    saveMessages()
+                let failureMessage = AIInsightChatErrorPresentation.message(for: error)
+                let lastStylistReply = messages.last?.role == .stylist ? messages.last?.text : nil
+                if AIInsightChatErrorPresentation.shouldAppendFailureReply(failureMessage, after: lastStylistReply) {
+                    messages.append(AIInsightChatMessage(
+                        role: .stylist,
+                        text: failureMessage
+                    ))
+                }
+                statusText = nil
+                isSendingMessage = false
+                saveMessages()
                 }
             }
         }
@@ -476,7 +522,9 @@ struct AIStyleInsightCard: View {
                     screen: screen,
                     messages: history,
                     prompt: request.primaryMessage,
-                    extraContext: ""
+                    extraContext: "",
+                    screenContext: screenContext,
+                    debugMessageSources: request.debugMessageSources
                 )
             }
             group.addTask {
@@ -541,7 +589,8 @@ struct AIStyleInsightCard: View {
                 let response = try await AIStyleAdvisor.ask(
                     screen: screen,
                     prompt: prompt,
-                    extraContext: extraContext
+                    extraContext: extraContext,
+                    screenContext: screenContext
                 )
                 await MainActor.run {
                     advice = response
