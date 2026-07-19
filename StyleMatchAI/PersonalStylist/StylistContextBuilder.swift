@@ -188,8 +188,15 @@ struct PersonalizationContextBuilder {
         appendLine("Favorite colors", list(profile.favoriteColors), to: &lines)
         appendLine("Avoid colors", list(profile.dislikedColors), to: &lines)
         appendLine("Favorite brands", list(profile.favoriteBrands), to: &lines)
-        if profile.preferredFit.isSet && profile.preferredFit != .regular {
-            lines.append("- Preferred fit: \(profile.preferredFit.rawValue)")
+        if profile.preferredFit.isSet {
+            lines.append("- Preferred overall fit: \(profile.preferredFit.rawValue)")
+        }
+        if profile.preferredPantFit.isSet {
+            lines.append("- Preferred pant fit: \(profile.preferredPantFit.displayName)")
+        }
+        let pantRise = PantRisePreference.normalized(profile.preferredPantRise)
+        if pantRise != "No Preference" {
+            lines.append("- Preferred pant rise: \(pantRise)")
         }
         if isMeaningfulBudget(profile.budgetRange) {
             lines.append("- Budget: \(currency(profile.budgetRange.minPrice))-\(currency(profile.budgetRange.maxPrice))")

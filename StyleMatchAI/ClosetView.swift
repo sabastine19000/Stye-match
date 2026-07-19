@@ -12,7 +12,8 @@ struct ClosetView: View {
     @AppStorage("neckSize") private var neckSize = ""
     @AppStorage("sleeveLength") private var sleeveLength = ""
     @AppStorage("shoeSize") private var shoeSize = ""
-    @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("preferredPantFit") private var preferredPantFit = PantFitPreference.unset.displayName
+    @AppStorage("preferredPantRise") private var preferredPantRise = "No Preference"
     @AppStorage("favoriteClosetItemIDs") private var favoriteClosetItemIDs = ""
     @AppStorage("favoriteOutfits") private var savedFavoriteOutfits = ""
     @AppStorage("favoriteColors") private var savedFavoriteColors = ""
@@ -50,7 +51,8 @@ struct ClosetView: View {
     private let shirtSizes = Self.allShirtSizes
     private let pantSizes = Self.allPantSizes
     private let shoeSizes = Self.allShoeSizes
-    private let fitPreferenceOptions = ["Slim", "Regular", "Relaxed", "Oversized", "Tailored"]
+    private let pantFitOptions = PantFitPreference.options
+    private let pantRiseOptions = PantRisePreference.options
     private var availableSizes: [String] {
         switch category {
         case "Pants", "Jeans":
@@ -128,6 +130,7 @@ struct ClosetView: View {
                 }
             }
             .onAppear {
+                PantFitPreference.migrateDefaultsIfNeeded()
                 loadItems()
                 updateSizeProfileSummary()
             }
@@ -1330,13 +1333,19 @@ struct ClosetView: View {
                     .pickerStyle(.menu)
                 }
 
-                labeledControl("Preferred fit") {
-                    Picker("Preferred fit", selection: $fitPreference) {
-                        Text("Clear").tag("")
-                        ForEach(optionsIncludingCurrent(fitPreferenceOptions, current: fitPreference), id: \.self) { Text($0).tag($0) }
+                labeledControl("Preferred Pant Fit") {
+                    Picker("Preferred Pant Fit", selection: $preferredPantFit) {
+                        ForEach(pantFitOptions, id: \.self) { Text($0).tag($0) }
                     }
                     .pickerStyle(.menu)
                 }
+            }
+
+            labeledControl("Preferred Pant Rise") {
+                Picker("Preferred Pant Rise", selection: $preferredPantRise) {
+                    ForEach(pantRiseOptions, id: \.self) { Text($0).tag($0) }
+                }
+                .pickerStyle(.menu)
             }
 
             Text(sizeProfile)
@@ -1369,7 +1378,8 @@ struct ClosetView: View {
         .styleMatchOnChange(of: neckSize) { _ in updateSizeProfileSummary() }
         .styleMatchOnChange(of: sleeveLength) { _ in updateSizeProfileSummary() }
         .styleMatchOnChange(of: shoeSize) { _ in updateSizeProfileSummary() }
-        .styleMatchOnChange(of: fitPreference) { _ in updateSizeProfileSummary() }
+        .styleMatchOnChange(of: preferredPantFit) { _ in updateSizeProfileSummary() }
+        .styleMatchOnChange(of: preferredPantRise) { _ in updateSizeProfileSummary() }
     }
 
     private var itemList: some View {
@@ -2534,8 +2544,12 @@ struct ClosetView: View {
         if !shoeSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             rows.append(("Shoes", shoeSize))
         }
-        if !fitPreference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            rows.append(("Fit", fitPreference))
+        let pantFit = PantFitPreference.fromProfileInput(preferredPantFit)
+        if pantFit.isSet {
+            rows.append(("Pant Fit", pantFit.displayName))
+        }
+        if preferredPantRise != "No Preference" {
+            rows.append(("Pant Rise", preferredPantRise))
         }
         return rows
     }
@@ -3296,7 +3310,8 @@ struct SizeProfileView: View {
     @AppStorage("neckSize") private var neckSize = ""
     @AppStorage("sleeveLength") private var sleeveLength = ""
     @AppStorage("shoeSize") private var shoeSize = ""
-    @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("preferredPantFit") private var preferredPantFit = PantFitPreference.unset.displayName
+    @AppStorage("preferredPantRise") private var preferredPantRise = "No Preference"
     @AppStorage("sizeCategory") private var sizeCategory = ""
 
     @State private var saveConfirmation = ""
@@ -3304,7 +3319,8 @@ struct SizeProfileView: View {
     private let shirtSizes = ClosetView.allShirtSizes
     private let pantSizes = ClosetView.allPantSizes
     private let shoeSizes = ClosetView.allShoeSizes
-    private let fitPreferenceOptions = ["Slim", "Regular", "Relaxed", "Oversized", "Tailored"]
+    private let pantFitOptions = PantFitPreference.options
+    private let pantRiseOptions = PantRisePreference.options
     private let sizeCategories = ["Men", "Women", "Unisex", "Kids/Youth"]
 
     var body: some View {
@@ -3339,13 +3355,17 @@ struct SizeProfileView: View {
                     .keyboardType(.numbersAndPunctuation)
             }
 
-            Section("Shoes and Fit") {
+            Section("Shoes and Pant Fit") {
                 Picker("Shoe size", selection: $shoeSize) {
                     ForEach(shoeSizes, id: \.self) { Text($0).tag($0) }
                 }
 
-                Picker("Preferred fit", selection: $fitPreference) {
-                    ForEach(fitPreferenceOptions, id: \.self) { Text($0).tag($0) }
+                Picker("Preferred Pant Fit", selection: $preferredPantFit) {
+                    ForEach(pantFitOptions, id: \.self) { Text($0).tag($0) }
+                }
+
+                Picker("Preferred Pant Rise", selection: $preferredPantRise) {
+                    ForEach(pantRiseOptions, id: \.self) { Text($0).tag($0) }
                 }
             }
 
@@ -3365,6 +3385,9 @@ struct SizeProfileView: View {
                 .fontWeight(.semibold)
             }
         }
+        .onAppear {
+            PantFitPreference.migrateDefaultsIfNeeded()
+        }
         .styleMatchOnChange(of: shirtSize) { _ in updateSizeProfileSummary() }
         .styleMatchOnChange(of: sizeCategory) { _ in updateSizeProfileSummary() }
         .styleMatchOnChange(of: waistSize) { _ in updateSizeProfileSummary() }
@@ -3372,7 +3395,8 @@ struct SizeProfileView: View {
         .styleMatchOnChange(of: neckSize) { _ in updateSizeProfileSummary() }
         .styleMatchOnChange(of: sleeveLength) { _ in updateSizeProfileSummary() }
         .styleMatchOnChange(of: shoeSize) { _ in updateSizeProfileSummary() }
-        .styleMatchOnChange(of: fitPreference) { _ in updateSizeProfileSummary() }
+        .styleMatchOnChange(of: preferredPantFit) { _ in updateSizeProfileSummary() }
+        .styleMatchOnChange(of: preferredPantRise) { _ in updateSizeProfileSummary() }
     }
 
     private var generatedPantsDisplay: String? {
@@ -3394,8 +3418,12 @@ struct SizeProfileView: View {
         if !shoeSize.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             rows.append(("Shoes", shoeSize))
         }
-        if !fitPreference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            rows.append(("Fit", fitPreference))
+        let pantFit = PantFitPreference.fromProfileInput(preferredPantFit)
+        if pantFit.isSet {
+            rows.append(("Pant Fit", pantFit.displayName))
+        }
+        if preferredPantRise != "No Preference" {
+            rows.append(("Pant Rise", preferredPantRise))
         }
         return rows
     }

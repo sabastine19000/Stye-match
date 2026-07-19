@@ -21,6 +21,7 @@ struct ProfileView: View {
     @AppStorage("preferredAccentColors") private var preferredAccentColors = ""
     @AppStorage("comfortPreferences") private var comfortPreferences = ""
     @AppStorage("preferredPantRise") private var preferredPantRise = ""
+    @AppStorage("preferredPantFit") private var preferredPantFit = PantFitPreference.unset.displayName
     @AppStorage("shoppingFocus") private var shoppingFocus = ""
     @AppStorage("preferredShoppingCategories") private var preferredShoppingCategories = ""
     @AppStorage("workSetting") private var workSetting = ""
@@ -90,6 +91,11 @@ struct ProfileView: View {
     @StateObject private var voiceAssistant = VoiceStylistService()
 
     init(selectedTab: Binding<AppTab>, voiceControlsEnabled: Bool = true) {
+        PantFitPreference.migrateDefaultsIfNeeded()
+        UserDefaults.standard.set(
+            PantRisePreference.normalized(UserDefaults.standard.string(forKey: "preferredPantRise")),
+            forKey: "preferredPantRise"
+        )
         self._selectedTab = selectedTab
         self.voiceControlsEnabled = voiceControlsEnabled
     }
@@ -138,13 +144,13 @@ struct ProfileView: View {
     private let shoeSizeOptions = (5...18).map { "\($0)" }
     private let womenShoeSizeOptions = ["4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "13"]
     private let youthShoeSizeOptions = ["Toddler 5", "Toddler 6", "Toddler 7", "Toddler 8", "Toddler 9", "Toddler 10", "Little Kid 11", "Little Kid 12", "Little Kid 13", "Big Kid 1", "Big Kid 2", "Big Kid 3", "Big Kid 4", "Big Kid 5", "Big Kid 6", "Big Kid 7"]
-    private let fitPreferenceOptions = ["Slim", "Regular", "Relaxed", "Oversized"]
+    private let pantFitOptions = PantFitPreference.options
     private let declaredUndertoneChoices = DeclaredUndertone.allCases
     private let styleIdentityOptions = ["Casual", "Business Casual", "Classic", "Minimalist", "Streetwear", "Athletic", "Luxury", "Trend-Focused", "Smart Casual"]
     private let styleGoalOptions = ["Dress more professionally", "Build confidence", "Improve color matching", "Create better everyday outfits", "Build a versatile wardrobe", "Spend more intentionally", "Prepare outfits faster", "Try new styles"]
     private let neutralColorOptions = ["Black", "White", "Gray", "Navy", "Cream", "Tan", "Brown", "Olive"]
     private let accentColorOptions = ["Blue", "Green", "Red", "Burgundy", "Gold", "Silver", "Pink", "Purple"]
-    private let pantRiseOptions = ["Low", "Mid", "High", "No preference"]
+    private let pantRiseOptions = PantRisePreference.options
     private let comfortPreferenceOptions = ["I avoid tight shirts", "I prefer lightweight fabrics", "I prefer longer tops", "I avoid short sleeves", "I avoid shorts", "I prefer stretch fabrics", "I prefer simple patterns", "I avoid bright colors", "I prioritize comfort", "I prefer easy-care clothing"]
     private let shoppingFocusOptions = ["Value-focused", "Balanced", "Luxury-focused"]
     private let shoppingCategoryOptions = ["Tops", "Bottoms", "Shoes", "Accessories", "Outerwear", "Dresses", "Workwear", "Athletic"]
@@ -274,11 +280,11 @@ struct ProfileView: View {
                     draft: $profileDraft,
                     styleIdentityOptions: styleIdentityOptions,
                     styleGoalOptions: styleGoalOptions,
-                    fitPreferenceOptions: fitPreferenceOptions,
+                    pantFitOptions: pantFitOptions,
+                    pantRiseOptions: pantRiseOptions,
                     declaredUndertoneChoices: declaredUndertoneChoices,
                     neutralColorOptions: neutralColorOptions,
                     accentColorOptions: accentColorOptions,
-                    pantRiseOptions: pantRiseOptions,
                     comfortPreferenceOptions: comfortPreferenceOptions,
                     shoppingFocusOptions: shoppingFocusOptions,
                     shoppingCategoryOptions: shoppingCategoryOptions,
@@ -511,10 +517,15 @@ struct ProfileView: View {
                         Label("How do I know?", systemImage: "info.circle")
                     }
 
-                    Picker("Preferred fit", selection: draftBinding(\.fitPreference)) {
-                        Text("Not provided").tag("")
-                        ForEach(optionsIncludingCurrent(fitPreferenceOptions, current: profileDraft.fitPreference), id: \.self) { fit in
+                    Picker("Preferred Pant Fit", selection: draftBinding(\.preferredPantFit)) {
+                        ForEach(pantFitOptions, id: \.self) { fit in
                             Text(fit).tag(fit)
+                        }
+                    }
+
+                    Picker("Preferred Pant Rise", selection: draftBinding(\.preferredPantRise)) {
+                        ForEach(pantRiseOptions, id: \.self) { rise in
+                            Text(rise).tag(rise)
                         }
                     }
 
@@ -523,7 +534,11 @@ struct ProfileView: View {
                     } label: {
                         Label("Clear Color & Fit", systemImage: "xmark.circle")
                     }
-                    .disabled(profileDraft.declaredUndertone.isEmpty && profileDraft.fitPreference.isEmpty)
+                    .disabled(
+                        profileDraft.declaredUndertone.isEmpty
+                            && !PantFitPreference.fromProfileInput(profileDraft.preferredPantFit).isSet
+                            && profileDraft.preferredPantRise == "No Preference"
+                    )
 
                     Label("Optional. Used only for fashion color and fit suggestions. If saved, these preferences may be included in AI styling requests; they are never used to identify race, ethnicity, or sensitive traits, and they never change your outfit score.", systemImage: "lock.shield")
                         .font(.caption)
@@ -910,7 +925,8 @@ struct ProfileView: View {
         profileDraft.neckSize = ""
         profileDraft.sleeveLength = ""
         profileDraft.shoeSize = ""
-        profileDraft.fitPreference = ""
+        profileDraft.preferredPantFit = PantFitPreference.unset.displayName
+        profileDraft.preferredPantRise = "No Preference"
         pantsSizeLastEditSource = .manual
         showsAdditionalMeasurements = false
     }
@@ -1039,6 +1055,7 @@ struct ProfileView: View {
             }
 
             fitPicker
+            pantRisePicker
         case .women:
             Picker("Women's top size", selection: draftBinding(\.shirtSize)) {
                 Text("Clear").tag("")
@@ -1069,6 +1086,7 @@ struct ProfileView: View {
             }
 
             fitPicker
+            pantRisePicker
         case .unisex:
             Picker("Unisex top size", selection: draftBinding(\.shirtSize)) {
                 Text("Clear").tag("")
@@ -1091,6 +1109,7 @@ struct ProfileView: View {
             }
 
             fitPicker
+            pantRisePicker
         case .kidsYouth:
             Picker("Kids / youth top size", selection: draftBinding(\.shirtSize)) {
                 Text("Clear").tag("")
@@ -1114,6 +1133,7 @@ struct ProfileView: View {
             }
 
             fitPicker
+            pantRisePicker
 
             Label("Kids/Youth sizing is ready for later family profile support. Keep this private and update only when needed.", systemImage: "person.2.fill")
                 .font(.caption)
@@ -1163,10 +1183,17 @@ struct ProfileView: View {
     }
 
     private var fitPicker: some View {
-        Picker("Preferred fit", selection: draftBinding(\.fitPreference)) {
-            Text("Clear").tag("")
-            ForEach(optionsIncludingCurrent(fitPreferenceOptions, current: profileDraft.fitPreference), id: \.self) { fit in
+        Picker("Preferred Pant Fit", selection: draftBinding(\.preferredPantFit)) {
+            ForEach(pantFitOptions, id: \.self) { fit in
                 Text(fit).tag(fit)
+            }
+        }
+    }
+
+    private var pantRisePicker: some View {
+        Picker("Preferred Pant Rise", selection: draftBinding(\.preferredPantRise)) {
+            ForEach(pantRiseOptions, id: \.self) { rise in
+                Text(rise).tag(rise)
             }
         }
     }
@@ -1629,6 +1656,7 @@ struct ProfileView: View {
             preferredAccentColors: preferredAccentColors,
             comfortPreferences: comfortPreferences,
             preferredPantRise: preferredPantRise,
+            preferredPantFit: preferredPantFit,
             shoppingFocus: shoppingFocus,
             preferredShoppingCategories: preferredShoppingCategories,
             workSetting: workSetting,
@@ -1689,6 +1717,7 @@ struct ProfileView: View {
         preferredAccentColors = draft.preferredAccentColors
         comfortPreferences = draft.comfortPreferences
         preferredPantRise = draft.preferredPantRise
+        preferredPantFit = draft.preferredPantFit
         shoppingFocus = draft.shoppingFocus
         preferredShoppingCategories = draft.preferredShoppingCategories
         workSetting = draft.workSetting
@@ -1752,11 +1781,12 @@ struct ProfileView: View {
         profile.favoriteBrands = splitProfileList(draft.favoriteBrands)
         profile.declaredUndertone = DeclaredUndertone.fromProfileInput(draft.declaredUndertone)
         profile.preferredFit = FitPreference.fromProfileInput(draft.fitPreference)
+        profile.preferredPantFit = PantFitPreference.fromProfileInput(draft.preferredPantFit)
         profile.styleGoals = splitProfileList(draft.styleGoals)
         profile.preferredNeutrals = splitProfileList(draft.preferredNeutrals)
         profile.preferredAccentColors = splitProfileList(draft.preferredAccentColors)
         profile.comfortPreferences = splitProfileList(draft.comfortPreferences)
-        profile.preferredPantRise = cleanOptional(draft.preferredPantRise) ?? ""
+        profile.preferredPantRise = draft.preferredPantRise == "No Preference" ? "" : draft.preferredPantRise
         profile.shoppingFocus = cleanOptional(draft.shoppingFocus) ?? ""
         profile.preferredShoppingCategories = splitProfileList(draft.preferredShoppingCategories)
         profile.workSetting = cleanOptional(draft.workSetting) ?? ""
@@ -1846,6 +1876,7 @@ struct ProfileView: View {
         preferredAccentColors = ""
         comfortPreferences = ""
         preferredPantRise = ""
+        preferredPantFit = PantFitPreference.unset.displayName
         shoppingFocus = ""
         preferredShoppingCategories = ""
         workSetting = ""
@@ -1887,6 +1918,7 @@ struct ProfileView: View {
         preferredAccentColors = ""
         comfortPreferences = ""
         preferredPantRise = ""
+        preferredPantFit = PantFitPreference.unset.displayName
         shoppingFocus = ""
         preferredShoppingCategories = ""
         workSetting = ""
@@ -1900,7 +1932,8 @@ struct ProfileView: View {
 
     private func clearColorAndFitProfile() {
         profileDraft.declaredUndertone = ""
-        profileDraft.fitPreference = ""
+        profileDraft.preferredPantFit = PantFitPreference.unset.displayName
+        profileDraft.preferredPantRise = "No Preference"
         updateProfileDirtyState()
     }
 
@@ -1916,7 +1949,8 @@ struct ProfileView: View {
         profileDraft.preferredNeutrals = ""
         profileDraft.preferredAccentColors = ""
         profileDraft.comfortPreferences = ""
-        profileDraft.preferredPantRise = ""
+        profileDraft.preferredPantRise = "No Preference"
+        profileDraft.preferredPantFit = PantFitPreference.unset.displayName
         profileDraft.shoppingFocus = ""
         profileDraft.preferredShoppingCategories = ""
         profileDraft.workSetting = ""
@@ -1936,11 +1970,11 @@ private struct StyleConsultationSheet: View {
     @Binding var draft: ProfileEditDraft
     let styleIdentityOptions: [String]
     let styleGoalOptions: [String]
-    let fitPreferenceOptions: [String]
+    let pantFitOptions: [String]
+    let pantRiseOptions: [String]
     let declaredUndertoneChoices: [DeclaredUndertone]
     let neutralColorOptions: [String]
     let accentColorOptions: [String]
-    let pantRiseOptions: [String]
     let comfortPreferenceOptions: [String]
     let shoppingFocusOptions: [String]
     let shoppingCategoryOptions: [String]
@@ -1953,6 +1987,9 @@ private struct StyleConsultationSheet: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AccessibilityFocusState private var focusedStep: StyleConsultationStep?
     @State private var step: StyleConsultationStep = .welcome
+
+    private let shirtSizeOptions = ["XXS", "XS", "S", "M", "L", "XL", "XXL", "2XL", "3XL", "4XL", "5XL", "6XL", "7XL", "8XL"]
+    private let shoeSizeOptions = ["4", "4.5", "5", "5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12", "13", "14", "15", "16", "17", "18"]
 
     private enum StyleConsultationStep: Int, CaseIterable, Identifiable {
         case welcome
@@ -2059,21 +2096,25 @@ private struct StyleConsultationSheet: View {
             }
         case .fitProfile:
             Section("Fit Profile") {
-                Picker("Preferred fit", selection: binding(\.fitPreference)) {
-                    Text("Not provided").tag("")
-                    ForEach(fitPreferenceOptions, id: \.self) { Text($0).tag($0) }
+                Picker("Preferred Pant Fit", selection: binding(\.preferredPantFit)) {
+                    ForEach(pantFitOptions, id: \.self) { Text($0).tag($0) }
                 }
-                profileValueRow("Shirt size", draft.shirtSize)
-                profileValueRow("Waist", draft.waistSize)
-                profileValueRow("Inseam", draft.inseamLength)
-                profileValueRow("Shoe size", draft.shoeSize)
-                profileValueRow("Sleeve length", draft.sleeveLength)
-                profileValueRow("Neck size", draft.neckSize)
-                Picker("Preferred pant rise", selection: binding(\.preferredPantRise)) {
-                    Text("Not provided").tag("")
+                Picker("Shirt Size", selection: binding(\.shirtSize)) {
+                    Text("Choose size").tag("")
+                    ForEach(optionsIncludingCurrent(shirtSizeOptions, current: draft.shirtSize), id: \.self) { Text($0).tag($0) }
+                }
+                measurementField("Waist", keyPath: \.waistSize, prompt: "Add measurement")
+                measurementField("Inseam", keyPath: \.inseamLength, prompt: "Add measurement")
+                Picker("Shoe Size", selection: binding(\.shoeSize)) {
+                    Text("Choose size").tag("")
+                    ForEach(optionsIncludingCurrent(shoeSizeOptions, current: draft.shoeSize), id: \.self) { Text($0).tag($0) }
+                }
+                measurementField("Sleeve Length", keyPath: \.sleeveLength, prompt: "Add measurement")
+                measurementField("Neck Size", keyPath: \.neckSize, prompt: "Add measurement")
+                Picker("Preferred Pant Rise", selection: binding(\.preferredPantRise)) {
                     ForEach(pantRiseOptions, id: \.self) { Text($0).tag($0) }
                 }
-                Text("Sizes come from your existing Size Profile so measurements stay in one place.")
+                Text("Waist and inseam determine pant sizing. You can update every measurement here or later from Profile.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -2225,13 +2266,24 @@ private struct StyleConsultationSheet: View {
         .padding(.vertical, 4)
     }
 
-    private func profileValueRow(_ title: String, _ value: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            Text(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Not set" : value)
-                .foregroundStyle(.secondary)
+    private func measurementField(
+        _ title: String,
+        keyPath: WritableKeyPath<ProfileEditDraft, String>,
+        prompt: String
+    ) -> some View {
+        LabeledContent(title) {
+            TextField(prompt, text: binding(keyPath))
+                .keyboardType(.numbersAndPunctuation)
+                .multilineTextAlignment(.trailing)
+                .accessibilityLabel(title)
+                .accessibilityHint("Enter this optional measurement.")
         }
+    }
+
+    private func optionsIncludingCurrent(_ options: [String], current: String) -> [String] {
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !options.contains(trimmed) else { return options }
+        return [trimmed] + options
     }
 
     private func multiSelectGrid(options: [String], keyPath: WritableKeyPath<ProfileEditDraft, String>, accessibilityGroup: String) -> some View {
@@ -2308,10 +2360,10 @@ private struct StyleDNAScreen: View {
             )
 
             styleDNASection(
-                title: "Preferred Fit",
+                title: "Fit Profile",
                 icon: "tshirt.fill",
                 rows: [
-                    ("Fit", draft.fitPreference),
+                    ("Pant fit", draft.preferredPantFit),
                     ("Pant rise", draft.preferredPantRise),
                     ("Shirt size", draft.shirtSize),
                     ("Waist", draft.waistSize),
@@ -2731,7 +2783,8 @@ private struct ProfileEditDraft: Equatable {
     var preferredNeutrals = ""
     var preferredAccentColors = ""
     var comfortPreferences = ""
-    var preferredPantRise = ""
+    var preferredPantRise = "No Preference"
+    var preferredPantFit = PantFitPreference.unset.displayName
     var shoppingFocus = ""
     var preferredShoppingCategories = ""
     var workSetting = ""
@@ -2767,7 +2820,11 @@ private struct ProfileEditDraft: Equatable {
         preferredNeutrals = normalized(preferredNeutrals, fallback: "")
         preferredAccentColors = normalized(preferredAccentColors, fallback: "")
         comfortPreferences = normalized(comfortPreferences, fallback: "")
-        preferredPantRise = normalized(preferredPantRise, fallback: "")
+        preferredPantRise = PantRisePreference.normalized(preferredPantRise)
+        preferredPantFit = PantFitPreference.migratedValue(
+            currentValue: preferredPantFit,
+            legacyOverallFit: fitPreference
+        )
         shoppingFocus = normalized(shoppingFocus, fallback: "")
         preferredShoppingCategories = normalized(preferredShoppingCategories, fallback: "")
         workSetting = normalized(workSetting, fallback: "")
@@ -2855,8 +2912,12 @@ private struct ProfileEditDraft: Equatable {
         if !shoeSize.isEmpty {
             rows.append(("Shoes", shoeSize))
         }
-        if !fitPreference.isEmpty {
-            rows.append(("Preferred Fit", fitPreference))
+        let pantFit = PantFitPreference.fromProfileInput(preferredPantFit)
+        if pantFit.isSet {
+            rows.append(("Preferred Pant Fit", pantFit.displayName))
+        }
+        if preferredPantRise != "No Preference" {
+            rows.append(("Preferred Pant Rise", preferredPantRise))
         }
         return rows
     }

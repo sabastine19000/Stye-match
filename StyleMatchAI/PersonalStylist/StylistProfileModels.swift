@@ -223,6 +223,7 @@ struct StylistProfile: Codable, Identifiable {
     var favoriteBrands: [String]
     var declaredUndertone: DeclaredUndertone?
     var preferredFit: FitPreference
+    var preferredPantFit: PantFitPreference
     var styleGoals: [String]
     var preferredNeutrals: [String]
     var preferredAccentColors: [String]
@@ -254,6 +255,7 @@ struct StylistProfile: Codable, Identifiable {
         favoriteBrands: [String],
         declaredUndertone: DeclaredUndertone? = nil,
         preferredFit: FitPreference,
+        preferredPantFit: PantFitPreference = .unset,
         styleGoals: [String] = [],
         preferredNeutrals: [String] = [],
         preferredAccentColors: [String] = [],
@@ -284,6 +286,7 @@ struct StylistProfile: Codable, Identifiable {
         self.favoriteBrands = favoriteBrands
         self.declaredUndertone = declaredUndertone
         self.preferredFit = preferredFit
+        self.preferredPantFit = preferredPantFit
         self.styleGoals = styleGoals
         self.preferredNeutrals = preferredNeutrals
         self.preferredAccentColors = preferredAccentColors
@@ -320,6 +323,7 @@ struct StylistProfile: Codable, Identifiable {
             try container.decodeIfPresent(String.self, forKey: .declaredUndertone)
         )
         preferredFit = try container.decodeIfPresent(FitPreference.self, forKey: .preferredFit) ?? .unset
+        preferredPantFit = try container.decodeIfPresent(PantFitPreference.self, forKey: .preferredPantFit) ?? .unset
         styleGoals = try container.decodeIfPresent([String].self, forKey: .styleGoals) ?? []
         preferredNeutrals = try container.decodeIfPresent([String].self, forKey: .preferredNeutrals) ?? []
         preferredAccentColors = try container.decodeIfPresent([String].self, forKey: .preferredAccentColors) ?? []
@@ -351,6 +355,7 @@ struct StyleProfilePersonalizationContext: Codable {
     var favoriteBrands: [String]
     var declaredUndertone: DeclaredUndertone?
     var preferredFit: FitPreference?
+    var preferredPantFit: PantFitPreference?
     var preferredNeutrals: [String]
     var preferredAccentColors: [String]
     var preferredPantRise: String?
@@ -371,6 +376,7 @@ struct StyleProfilePersonalizationContext: Codable {
             || !favoriteBrands.isEmpty
             || declaredUndertone != nil
             || preferredFit != nil
+            || preferredPantFit != nil
             || !preferredNeutrals.isEmpty
             || !preferredAccentColors.isEmpty
             || preferredPantRise != nil
@@ -395,6 +401,7 @@ extension StylistProfile {
             favoriteBrands: Self.confirmedList(favoriteBrands),
             declaredUndertone: declaredUndertone?.contextValue == nil ? nil : declaredUndertone,
             preferredFit: preferredFit.isSet ? preferredFit : nil,
+            preferredPantFit: preferredPantFit.isSet ? preferredPantFit : nil,
             preferredNeutrals: Self.confirmedList(preferredNeutrals),
             preferredAccentColors: Self.confirmedList(preferredAccentColors),
             preferredPantRise: Self.confirmedText(preferredPantRise),
@@ -481,6 +488,76 @@ enum FitPreference: String, Codable, CaseIterable {
 
     var isSet: Bool {
         self != .unset
+    }
+}
+
+enum PantFitPreference: String, Codable, CaseIterable {
+    case unset = ""
+    case slim
+    case regular
+    case relaxed
+    case athletic
+    case loose
+
+    static func fromProfileInput(_ value: String?) -> PantFitPreference {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch trimmed.lowercased() {
+        case "slim", "slim fit": return .slim
+        case "regular", "regular fit": return .regular
+        case "relaxed", "relaxed fit": return .relaxed
+        case "athletic", "athletic fit": return .athletic
+        case "loose", "loose fit": return .loose
+        default: return .unset
+        }
+    }
+
+    var isSet: Bool { self != .unset }
+
+    var displayName: String {
+        switch self {
+        case .slim: return "Slim Fit"
+        case .regular: return "Regular Fit"
+        case .relaxed: return "Relaxed Fit"
+        case .athletic: return "Athletic Fit"
+        case .loose: return "Loose Fit"
+        case .unset: return "No Preference"
+        }
+    }
+
+    static let options = allCases.map(\.displayName).filter { $0 != "No Preference" } + ["No Preference"]
+
+    static func migratedValue(currentValue: String?, legacyOverallFit: String?) -> String {
+        let current = fromProfileInput(currentValue)
+        if current.isSet { return current.displayName }
+        switch legacyOverallFit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "slim", "slim fit": return PantFitPreference.slim.displayName
+        case "regular", "regular fit": return PantFitPreference.regular.displayName
+        case "relaxed", "relaxed fit": return PantFitPreference.relaxed.displayName
+        default: return PantFitPreference.unset.displayName
+        }
+    }
+
+    static func migrateDefaultsIfNeeded(defaults: UserDefaults = .standard) {
+        let migrated = migratedValue(
+            currentValue: defaults.string(forKey: "preferredPantFit"),
+            legacyOverallFit: defaults.string(forKey: "fitPreference")
+        )
+        if defaults.string(forKey: "preferredPantFit") != migrated {
+            defaults.set(migrated, forKey: "preferredPantFit")
+        }
+    }
+}
+
+enum PantRisePreference {
+    static let options = ["Low Rise", "Mid Rise", "High Rise", "No Preference"]
+
+    static func normalized(_ value: String?) -> String {
+        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "low", "low rise": return "Low Rise"
+        case "mid", "mid rise": return "Mid Rise"
+        case "high", "high rise": return "High Rise"
+        default: return "No Preference"
+        }
     }
 }
 
@@ -798,6 +875,8 @@ enum FounderProfileDefaultsMigration {
         "sleeveLength",
         "shoeSize",
         "fitPreference",
+        "preferredPantFit",
+        "preferredPantRise",
         "stylePreferences",
         "occasions",
         "plannedOccasion",

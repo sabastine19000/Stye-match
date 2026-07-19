@@ -103,6 +103,38 @@ struct StylistVisibleAggregateStatistics: Codable, Equatable {
     }
 }
 
+struct ScanProgressSummary: Equatable {
+    let averageScore: Int?
+    let highestScore: Int?
+    let savedScanCount: Int
+
+    init(scores: [Int]) {
+        let boundedScores = scores.map { min(100, max(0, $0)) }
+        savedScanCount = boundedScores.count
+        guard !boundedScores.isEmpty else {
+            averageScore = nil
+            highestScore = nil
+            return
+        }
+
+        let total = boundedScores.reduce(0, +)
+        averageScore = Int((Double(total) / Double(boundedScores.count)).rounded())
+        highestScore = boundedScores.max()
+    }
+
+    var averageScoreText: String { averageScore.map(String.init) ?? "—" }
+    var highestScoreText: String { highestScore.map(String.init) ?? "—" }
+    var savedScanCountText: String { String(savedScanCount) }
+
+    var visibleAggregates: StylistVisibleAggregateStatistics {
+        StylistVisibleAggregateStatistics(
+            averageScore: averageScore,
+            highestScore: highestScore,
+            totalScans: savedScanCount
+        )
+    }
+}
+
 struct StylistScreenContext: Codable, Equatable {
     var currentTab: StylistScreenTab
     var activeScanState: StylistActiveScanState

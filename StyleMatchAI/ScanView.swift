@@ -18,6 +18,7 @@ struct ScanView: View {
     @AppStorage("sleeveLength") private var sleeveLength = ""
     @AppStorage("shoeSize") private var shoeSize = ""
     @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("preferredPantFit") private var preferredPantFit = PantFitPreference.unset.displayName
     @AppStorage("stylePreferences") private var stylePreferences = ""
     @AppStorage("occasions") private var occasions = ""
     @AppStorage("plannedOccasion") private var plannedOccasion = ""
@@ -296,7 +297,7 @@ struct ScanView: View {
                     category: "Fit",
                     title: "Tighten the cleanest part of the outfit",
                     reason: "A \(score) \(scoreRatingTitle(for: score)) look usually needs one sharper fit detail before changing the whole outfit.",
-                    personalization: "Use your saved fit: shirt \(shirtSize), pants \(pantsSize), shoes \(shoeSize), \(fitPreference.lowercased())."
+                    personalization: "Use your saved sizes: shirt \(shirtSize), pants \(pantsSize), shoes \(shoeSize); preferred pant fit \(PantFitPreference.fromProfileInput(preferredPantFit).displayName.lowercased())."
                 )
             )
         } else if needsOnlyFinish {
@@ -1262,7 +1263,8 @@ struct ScanView: View {
             waistSize,
             inseamLength,
             shoeSize,
-            fitPreference
+            fitPreference,
+            preferredPantFit
         ].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
@@ -1273,7 +1275,7 @@ struct ScanView: View {
             ("waist", waistSize),
             ("inseam", inseamLength),
             ("shoes", shoeSize),
-            ("fit", fitPreference)
+            ("preferred pant fit", PantFitPreference.fromProfileInput(preferredPantFit).displayName)
         ].compactMap { label, value -> String? in
             let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
             return clean.isEmpty ? nil : "\(label) \(clean)"
@@ -3102,7 +3104,7 @@ struct ScanView: View {
         Colors: \(colors.isEmpty ? "neutral" : colors)
         Fabric: comfortable seasonal fabric
         Pattern: \(inferredPatternFacts(for: analysis).first ?? "solid")
-        Fit: \(fitPreference)
+        Preferred pant fit: \(PantFitPreference.fromProfileInput(preferredPantFit).displayName)
         Estimated price: \(budget)
 
         Tailor/manufacturer notes: Keep the design aligned with \(style), the saved StyleMatch Pro score of \(analysis.score)/100, and the user's saved size profile. This fallback was generated because the AI design JSON could not be parsed safely.
@@ -3655,7 +3657,7 @@ struct ScanView: View {
                                     openCompleteLookProduct(product)
                                 } label: {
                                     VStack(alignment: .leading, spacing: 8) {
-                                        ShoppingProductImage(imageURL: product.remoteImageRequestURL)
+                                        ShoppingProductImage(product: product)
                                             .frame(width: 132, height: 104)
                                             .clipShape(RoundedRectangle(cornerRadius: 10))
 
@@ -4827,18 +4829,20 @@ struct ScanView: View {
 
     private var shirtPersonalization: String {
         var parts = ["Saved shirt size: \(shirtSize)"]
+        if FitPreference.fromProfileInput(fitPreference).isSet {
+            parts.append("preferred overall fit \(fitPreference)")
+        }
         if let neck = cleanOptionalSize(neckSize) {
             parts.append("neck \(neck)")
         }
         if let sleeve = cleanOptionalSize(sleeveLength) {
             parts.append("sleeve \(sleeve)")
         }
-        parts.append("preferred fit: \(fitPreference.lowercased())")
         return parts.joined(separator: "; ") + "."
     }
 
     private var pantsPersonalization: String {
-        "Saved pants size: \(pantsSize); waist \(waistSize); inseam \(inseamLength); preferred fit: \(fitPreference.lowercased())."
+        "Saved pants size: \(pantsSize); waist \(waistSize); inseam \(inseamLength); preferred pant fit: \(PantFitPreference.fromProfileInput(preferredPantFit).displayName.lowercased())."
     }
 
     private var weatherLocationText: String {

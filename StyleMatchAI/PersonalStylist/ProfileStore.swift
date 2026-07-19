@@ -205,6 +205,12 @@ final class ProfileStore: ObservableObject {
             favoriteBrands: splitList(defaults.string(forKey: "favoriteBrands") ?? ""),
             declaredUndertone: nil,
             preferredFit: FitPreference.fromProfileInput(defaults.string(forKey: "fitPreference")),
+            preferredPantFit: PantFitPreference.fromProfileInput(
+                PantFitPreference.migratedValue(
+                    currentValue: defaults.string(forKey: "preferredPantFit"),
+                    legacyOverallFit: defaults.string(forKey: "fitPreference")
+                )
+            ),
             styleGoals: splitList(defaults.string(forKey: "styleGoals") ?? ""),
             preferredNeutrals: splitList(defaults.string(forKey: "preferredNeutrals") ?? ""),
             preferredAccentColors: splitList(defaults.string(forKey: "preferredAccentColors") ?? ""),
@@ -246,6 +252,7 @@ final class ProfileStore: ObservableObject {
             favoriteBrands: [],
             declaredUndertone: nil,
             preferredFit: .unset,
+            preferredPantFit: .unset,
             styleGoals: [],
             preferredNeutrals: [],
             preferredAccentColors: [],

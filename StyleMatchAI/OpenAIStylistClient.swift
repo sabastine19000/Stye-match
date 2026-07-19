@@ -149,7 +149,11 @@ struct OpenAIStylistClient {
         var lines: [String] = []
         appendContextLine("Favorite colors", profile.favoriteColors, to: &lines)
         appendContextLine("Favorite brands", profile.favoriteBrands, to: &lines)
-        appendContextLine("Preferred fit", profile.preferredFit, to: &lines)
+        appendContextLine("Preferred overall fit", profile.preferredFit, to: &lines)
+        let pantFit = PantFitPreference.fromProfileInput(profile.preferredPantFit)
+        if pantFit.isSet {
+            appendContextLine("Preferred pant fit", pantFit.displayName, to: &lines)
+        }
         appendContextLine("Budget", profile.budget, to: &lines)
         appendContextLine("Size profile", profile.sizeProfile, to: &lines)
         appendContextLine("Style preferences", profile.stylePreferences, to: &lines)
@@ -283,6 +287,7 @@ struct StyleMatchStylistProfile {
     var favoriteColors: String
     var favoriteBrands: String
     var preferredFit: String
+    var preferredPantFit: String = ""
     var budget: String
     var sizeProfile: String
     var stylePreferences: String
@@ -303,6 +308,16 @@ struct StyleMatchStylistProfile {
     var savedScoreContext: String = ""
     var weatherConstraint: String = ""
     var screenContext: StylistScreenContext?
+
+    func applyingChatContext(_ context: ChatContext) -> Self {
+        var resolved = self
+        resolved.activeScanContext = context.activeScan
+        resolved.historicalScanContext = context.historicalOutfits
+        resolved.savedScoreContext = context.scoreBreakdown ?? ""
+        resolved.weatherConstraint = context.weatherConstraint
+        resolved.screenContext = context.screenContext ?? .aiTab()
+        return resolved
+    }
 }
 
 struct AIChatMessage: Identifiable, Codable, Equatable {
