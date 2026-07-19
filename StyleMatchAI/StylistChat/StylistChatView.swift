@@ -84,6 +84,7 @@ struct StylistChatView: View {
             }
             .onAppear {
                 service.refreshAuthorizationState()
+                applyCurrentScanHandoff()
                 if let initialQuestion, let initialContext, service.activeConversation.messages.isEmpty {
                     activeConversationContext = initialContext
                     service.sendPreseededQuestion(initialQuestion, context: initialContext)
@@ -94,6 +95,9 @@ struct StylistChatView: View {
             }
             .styleMatchOnChange(of: speechInput.transcript) { transcript in
                 draft = transcript
+            }
+            .styleMatchOnChange(of: screenContext) { _ in
+                applyCurrentScanHandoff()
             }
             .onPreferenceChange(StyleMatchComposerFramePreferenceKey.self) { frame in
                 guard !frame.isNull, !frame.isEmpty, frame != composerFrame else { return }
@@ -488,9 +492,18 @@ struct StylistChatView: View {
     }
 
     private var currentConversationContext: ChatContext {
-        let currentScreenContext = screenContext.resolvingSavedScanAvailability(
-            StylistSavedScanAvailability.savedScanIDs()
+        let currentScreenContext = StylistConversationScreenContextResolver.resolve(
+            screenContext,
+            hasAuthoritativeScanHandoff: activeConversationContext != nil,
+            savedScanIDs: StylistSavedScanAvailability.savedScanIDs()
         )
+#if DEBUG
+        print(
+            "[Stylist Screen Context] supplied_state=\(screenContext.activeScanState.rawValue) "
+                + "resolved_state=\(currentScreenContext.activeScanState.rawValue) "
+                + "authoritative_handoff=\(activeConversationContext != nil)"
+        )
+#endif
         let context = activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext(
             screenContext: currentScreenContext
         )
@@ -510,8 +523,16 @@ struct StylistChatView: View {
             .accessibilityHint("This conversation can use facts from the scan you opened.")
     }
 
+    private func applyCurrentScanHandoff() {
+        if screenContext.activeScanState != .none {
+            activeConversationContext = initialContext
+        } else if activeConversationContext?.screenContext?.activeScanState != .none {
+            activeConversationContext = nil
+        }
+    }
+
     private func startNewChat() {
-        activeConversationContext = nil
+        activeConversationContext = screenContext.activeScanState == .none ? nil : initialContext
         _ = speechInput.cancelListening()
         draft = ""
         speechInput.clearTranscript()

@@ -270,7 +270,9 @@ struct ContentView: View {
     @State private var isSoftwareKeyboardVisible = false
     @State private var bottomNavigationFrame: CGRect = .null
     @State private var rootSafeAreaBottomInset: CGFloat = 0
-    @State private var stylistEntryPoint = StylistEntryPoint.aiTab
+    @State private var stylistRouteAuthority = StylistAIRouteAuthority()
+    @State private var pendingExplicitGlobalAIGeneration: UInt64?
+    @State private var scanStylistHandoff: StylistScanHandoff?
     @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
 
     private var activeTheme: StyleMatchAppTheme {
@@ -335,7 +337,15 @@ struct ContentView: View {
         }
         .styleMatchOnChange(of: selectedTab) { tab in
             if tab == .ai {
-                stylistEntryPoint = stylistEntryPointForAI(from: previousSelectedTab)
+                if pendingExplicitGlobalAIGeneration == stylistRouteAuthority.generation {
+                    pendingExplicitGlobalAIGeneration = nil
+                } else {
+                    stylistRouteAuthority = stylistRouteAuthority.publishingCarriedEntry(
+                        stylistEntryPointForAI(from: previousSelectedTab)
+                    )
+                }
+            } else {
+                pendingExplicitGlobalAIGeneration = nil
             }
             previousSelectedTab = tab
             dismissSoftwareKeyboard()
@@ -405,7 +415,16 @@ struct ContentView: View {
 
             if mountedTabs.contains(.scan) {
                 preservedTab(.scan) {
-                    ScanView(selectedTab: $selectedTab)
+                    ScanView(
+                        selectedTab: $selectedTab,
+                        onStylistScanHandoffChanged: { handoff in
+                            scanStylistHandoff = handoff
+#if DEBUG
+                            let state = handoff?.screenContext.activeScanState.rawValue ?? "none"
+                            print("[Stylist Scan Handoff] received_state=\(state)")
+#endif
+                        }
+                    )
                 }
             }
 
@@ -429,7 +448,9 @@ struct ContentView: View {
                 preservedTab(.ai) {
                     if FeatureFlags.conversationalStylist {
                         StylistChatView(
-                            screenContext: .aiTab(entryPoint: stylistEntryPoint),
+                            initialContext: activeStylistScanHandoff?.aiChatContext,
+                            screenContext: activeStylistScanHandoff?.aiScreenContext
+                                ?? stylistRouteAuthority.screenContext,
                             bottomNavigationClearance: chatBottomNavigationClearance,
                             onSignInRequested: { selectedTab = .profile }
                         )
@@ -458,12 +479,13 @@ struct ContentView: View {
         if tab == .home {
             homeNavigationResetID &+= 1
         }
+        if tab == .ai {
+            stylistRouteAuthority = stylistRouteAuthority.publishingGlobalAI()
+            pendingExplicitGlobalAIGeneration = stylistRouteAuthority.generation
+        }
         guard selectedTab != tab else {
             dismissSoftwareKeyboard()
             return
-        }
-        if tab == .ai {
-            stylistEntryPoint = stylistEntryPointForAI(from: selectedTab)
         }
         mountedTabs.insert(tab)
         var transaction = Transaction()
@@ -480,14 +502,18 @@ struct ContentView: View {
         case .closet:
             return .closetDesigner
         case .shop:
-            return .other
+            return .shopping
         case .profile:
             return .profile
         case .scan:
-            return .scanTab
+            return scanStylistHandoff == nil ? .scanTab : .scanResult
         case .ai:
             return .aiTab
         }
+    }
+
+    private var activeStylistScanHandoff: StylistScanHandoff? {
+        stylistRouteAuthority.acceptsScanHandoff ? scanStylistHandoff : nil
     }
 
     private func checkForPendingFeedbackPrompt() {

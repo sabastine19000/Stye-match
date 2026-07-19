@@ -7,6 +7,16 @@ import Vision
 
 struct ScanView: View {
     @Binding var selectedTab: AppTab
+    let onStylistScanHandoffChanged: (StylistScanHandoff?) -> Void
+
+    init(
+        selectedTab: Binding<AppTab>,
+        onStylistScanHandoffChanged: @escaping (StylistScanHandoff?) -> Void = { _ in }
+    ) {
+        _selectedTab = selectedTab
+        self.onStylistScanHandoffChanged = onStylistScanHandoffChanged
+    }
+
     @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
     @AppStorage("favoriteColors") private var favoriteColors = ""
     @AppStorage("sizeProfile") private var sizeProfile = ""
@@ -567,6 +577,12 @@ struct ScanView: View {
             Task {
                 await refreshCompleteLookAccessories()
             }
+        }
+        .onAppear {
+            onStylistScanHandoffChanged(currentStylistScanHandoff)
+        }
+        .styleMatchOnChange(of: currentStylistScanHandoff) { handoff in
+            onStylistScanHandoffChanged(handoff)
         }
         .onDisappear {
             voiceAssistant.stop()
@@ -4104,6 +4120,18 @@ struct ScanView: View {
         )
     }
 
+    private var currentStylistScanHandoff: StylistScanHandoff? {
+        let screenContext = currentScreenContext
+        guard screenContext.activeScanState != .none, let result else { return nil }
+        return StylistScanHandoff(
+            context: PersonalizationContextBuilder.scanStylistContext(
+                for: result,
+                screenContext: screenContext
+            ),
+            screenContext: screenContext
+        )
+    }
+
     private var scanHistoryFilterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -4453,11 +4481,30 @@ struct ScanView: View {
             isSuccess: true
         )
 
+        // Publish from the authoritative user action instead of waiting for a
+        // computed SwiftUI onChange edge. This guarantees that selecting AI
+        // immediately after Open carries this exact saved scan with it.
+        publishCurrentStylistScanHandoff(source: "saved_scan_open")
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation(.easeInOut(duration: 0.25)) {
                 scrollProxy.scrollTo("loadedScanResult", anchor: .top)
             }
         }
+    }
+
+    private func publishCurrentStylistScanHandoff(source: String) {
+        let handoff = currentStylistScanHandoff
+#if DEBUG
+        let state = handoff?.screenContext.activeScanState.rawValue ?? "none"
+        let scorePresent = handoff?.screenContext.visibleOverallScore != nil
+        let scanIDPresent = handoff?.screenContext.activeScanID != nil
+        print(
+            "[Stylist Scan Handoff] source=\(source) state=\(state) "
+                + "scan_id_present=\(scanIDPresent) score_present=\(scorePresent)"
+        )
+#endif
+        onStylistScanHandoffChanged(handoff)
     }
 
     private func updateSavedScanOccasion(_ occasion: Occasion?, for scan: RecentOutfitScore) {

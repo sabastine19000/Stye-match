@@ -86,6 +86,7 @@ enum StylistEntryPoint: String, Codable, Equatable {
     case scanTab = "scan_tab"
     case scanResult = "scan_result"
     case closetDesigner = "closet_designer"
+    case shopping
     case aiTab = "ai_tab"
     case profile = "profile"
     case other
@@ -284,6 +285,70 @@ struct ChatContext: Codable, Equatable {
     }
 }
 
+struct StylistScanHandoff: Equatable {
+    let context: ChatContext
+    let screenContext: StylistScreenContext
+
+    init(context: ChatContext, screenContext: StylistScreenContext) {
+        self.screenContext = screenContext
+        var resolvedContext = context
+        resolvedContext.screenContext = screenContext
+        self.context = resolvedContext
+    }
+
+    var aiScreenContext: StylistScreenContext {
+        StylistScreenContext(
+            currentTab: .ai,
+            activeScanState: screenContext.activeScanState,
+            activeScanID: screenContext.activeScanID,
+            selectedOccasion: screenContext.selectedOccasion,
+            selectedAnalysisSection: screenContext.selectedAnalysisSection,
+            visibleOverallScore: screenContext.visibleOverallScore,
+            entryPoint: .scanResult,
+            visibleAggregates: screenContext.visibleAggregates,
+            closetState: screenContext.closetState
+        )
+    }
+
+    var aiChatContext: ChatContext {
+        var resolvedContext = context
+        resolvedContext.screenContext = aiScreenContext
+        return resolvedContext
+    }
+}
+
+struct StylistAIRouteAuthority: Equatable {
+    let generation: UInt64
+    let screenContext: StylistScreenContext
+    let acceptsScanHandoff: Bool
+
+    init(
+        generation: UInt64 = 0,
+        screenContext: StylistScreenContext = .aiTab(),
+        acceptsScanHandoff: Bool = false
+    ) {
+        self.generation = generation
+        self.screenContext = screenContext
+        self.acceptsScanHandoff = acceptsScanHandoff
+    }
+
+    func publishingGlobalAI() -> Self {
+        Self(
+            generation: generation &+ 1,
+            screenContext: .aiTab(entryPoint: .aiTab),
+            acceptsScanHandoff: false
+        )
+    }
+
+    func publishingCarriedEntry(_ entryPoint: StylistEntryPoint) -> Self {
+        Self(
+            generation: generation &+ 1,
+            screenContext: .aiTab(entryPoint: entryPoint),
+            acceptsScanHandoff: entryPoint == .scanResult
+        )
+    }
+}
+
 extension ChatContext {
     func applyingCurrentScreenContext(_ currentScreenContext: StylistScreenContext) -> Self {
         var resolved = self
@@ -308,6 +373,23 @@ enum StylistSavedScanAvailability {
             return []
         }
         return Set(history.keys)
+    }
+}
+
+enum StylistConversationScreenContextResolver {
+    static func resolve(
+        _ screenContext: StylistScreenContext,
+        hasAuthoritativeScanHandoff: Bool,
+        savedScanIDs: Set<String>
+    ) -> StylistScreenContext {
+        // An explicit handoff is created by ScanView from the decoded scan the
+        // user just opened. Do not downgrade it through a second raw-defaults
+        // lookup that can lag account/environment snapshot restoration.
+        if hasAuthoritativeScanHandoff,
+           screenContext.activeScanState != .none {
+            return screenContext
+        }
+        return screenContext.resolvingSavedScanAvailability(savedScanIDs)
     }
 }
 
