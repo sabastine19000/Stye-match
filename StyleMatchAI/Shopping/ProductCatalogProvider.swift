@@ -4,6 +4,80 @@ protocol ProductCatalogProvider {
     func products() async throws -> [AffiliateProduct]
 }
 
+enum ProductCatalogSource: String, Equatable {
+    case remote
+    case cache
+    case bundled
+    case none
+}
+
+enum ProductCatalogFailureClassification: String, Equatable {
+    case timeout
+    case dns
+    case connectivity
+    case tls
+    case http
+    case decoding
+    case cancellation
+    case missingCatalog
+    case unknown
+}
+
+struct ProductCatalogLoadDiagnostic: Equatable {
+    var effectiveEndpoint: String? = nil
+    var requestStartedAt: Date? = nil
+    var requestCompletedAt: Date? = nil
+    var httpStatus: Int? = nil
+    var urlSessionErrorDomain: String? = nil
+    var urlSessionErrorCode: Int? = nil
+    var classification: ProductCatalogFailureClassification? = nil
+    var remoteProductCount: Int? = nil
+    var cacheHit: Bool = false
+    var cacheAge: TimeInterval? = nil
+    var bundledFallbackCount: Int? = nil
+    var finalSource: ProductCatalogSource = .none
+
+    static let empty = ProductCatalogLoadDiagnostic()
+
+    var debugSummary: String {
+        [
+            "endpoint=\(effectiveEndpoint ?? "none")",
+            "started=\(requestStartedAt.map(Self.isoString) ?? "none")",
+            "completed=\(requestCompletedAt.map(Self.isoString) ?? "none")",
+            "http_status=\(httpStatus.map(String.init) ?? "none")",
+            "error_domain=\(urlSessionErrorDomain ?? "none")",
+            "error_code=\(urlSessionErrorCode.map(String.init) ?? "none")",
+            "classification=\(classification?.rawValue ?? "none")",
+            "remote_count=\(remoteProductCount.map(String.init) ?? "none")",
+            "cache=\(cacheHit ? "hit" : "miss")",
+            "cache_age=\(cacheAge.map { String(format: "%.0fs", $0) } ?? "none")",
+            "bundled_count=\(bundledFallbackCount.map(String.init) ?? "none")",
+            "final_source=\(finalSource.rawValue)"
+        ].joined(separator: " ")
+    }
+
+    private static func isoString(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
+    }
+}
+
+struct ProductCatalogLoadResult: Equatable {
+    let products: [AffiliateProduct]
+    let source: ProductCatalogSource
+    let diagnostic: ProductCatalogLoadDiagnostic
+}
+
+protocol ProductCatalogSourceProviding {
+    func loadResult() async -> ProductCatalogLoadResult
+}
+
+private struct RemoteCatalogFetchResult {
+    let data: Data
+    let startedAt: Date
+    let completedAt: Date
+    let statusCode: Int?
+}
+
 protocol CatalogDisclosureProviding {
     func disclosure() async -> String?
 }
@@ -49,9 +123,9 @@ actor SharedProductCatalogLoader {
     private let provider: ProductCatalogProvider
     private let timeToLive: TimeInterval
     private let now: () -> Date
-    private var cachedProducts: [AffiliateProduct]?
+    private var cachedResult: ProductCatalogLoadResult?
     private var cachedAt: Date?
-    private var inFlight: Task<[AffiliateProduct], Error>?
+    private var inFlight: Task<ProductCatalogLoadResult, Never>?
 
     init(
         provider: ProductCatalogProvider,
@@ -64,6 +138,14 @@ actor SharedProductCatalogLoader {
     }
 
     func products() async throws -> [AffiliateProduct] {
+        let result = await loadResult()
+        guard result.source != .none else {
+            throw ProductCatalogProviderError.missingCatalog
+        }
+        return result.products
+    }
+
+    func loadResult() async -> ProductCatalogLoadResult {
         #if DEBUG
         let startedAt = Date()
         func logDuration(_ message: String) {
@@ -71,46 +153,38 @@ actor SharedProductCatalogLoader {
         }
         #endif
         let currentDate = now()
-        if let cachedProducts, let cachedAt {
+        if let cachedResult, let cachedAt {
             if currentDate.timeIntervalSince(cachedAt) < timeToLive {
                 #if DEBUG
-                logDuration("memory-cache hit products=\(cachedProducts.count)")
+                logDuration("memory-cache hit products=\(cachedResult.products.count) source=\(cachedResult.source.rawValue)")
                 #endif
-                return cachedProducts
+                return cachedResult
             }
             startBackgroundRefreshIfNeeded()
             #if DEBUG
-            logDuration("stale memory-cache returned products=\(cachedProducts.count)")
+            logDuration("stale memory-cache returned products=\(cachedResult.products.count) source=\(cachedResult.source.rawValue)")
             #endif
-            return cachedProducts
+            return cachedResult
         }
 
         if let inFlight {
-            let products = try await inFlight.value
+            let result = await inFlight.value
             #if DEBUG
-            logDuration("joined in-flight products=\(products.count)")
+            logDuration("joined in-flight products=\(result.products.count) source=\(result.source.rawValue)")
             #endif
-            return products
+            return result
         }
 
-        let task = Task { try await provider.products() }
+        let task = Task { await loadFromProvider() }
         inFlight = task
-        do {
-            let products = try await task.value
-            cachedProducts = products
-            cachedAt = currentDate
-            inFlight = nil
-            #if DEBUG
-            logDuration("provider fetch products=\(products.count)")
-            #endif
-            return products
-        } catch {
-            inFlight = nil
-            #if DEBUG
-            logDuration("provider fetch failed")
-            #endif
-            throw error
-        }
+        let result = await task.value
+        cachedResult = result.source == .none ? nil : result
+        cachedAt = result.source == .none ? nil : currentDate
+        inFlight = nil
+        #if DEBUG
+        logDuration("provider fetch products=\(result.products.count) source=\(result.source.rawValue)")
+        #endif
+        return result
     }
 
     func disclosure() async -> String {
@@ -126,19 +200,50 @@ actor SharedProductCatalogLoader {
 
     private func startBackgroundRefreshIfNeeded() {
         guard inFlight == nil else { return }
-        let task = Task { try await provider.products() }
+        let task = Task { await loadFromProvider() }
         inFlight = task
         Task {
-            let result = await task.result
+            let result = await task.value
             finishBackgroundRefresh(result)
         }
     }
 
-    private func finishBackgroundRefresh(_ result: Result<[AffiliateProduct], Error>) {
+    private func finishBackgroundRefresh(_ result: ProductCatalogLoadResult) {
         inFlight = nil
-        guard case .success(let products) = result else { return }
-        cachedProducts = products
+        guard result.source != .none else { return }
+        cachedResult = result
         cachedAt = now()
+    }
+
+    private func loadFromProvider() async -> ProductCatalogLoadResult {
+        if let sourceProvider = provider as? ProductCatalogSourceProviding {
+            return await sourceProvider.loadResult()
+        }
+        do {
+            let products = try await provider.products()
+            return ProductCatalogLoadResult(
+                products: products,
+                source: .bundled,
+                diagnostic: ProductCatalogLoadDiagnostic(
+                    remoteProductCount: nil,
+                    cacheHit: false,
+                    bundledFallbackCount: products.count,
+                    finalSource: .bundled
+                )
+            )
+        } catch {
+            return ProductCatalogLoadResult(
+                products: [],
+                source: .none,
+                diagnostic: ProductCatalogLoadDiagnostic(
+                    urlSessionErrorDomain: (error as NSError).domain,
+                    urlSessionErrorCode: (error as NSError).code,
+                    classification: .missingCatalog,
+                    cacheHit: false,
+                    finalSource: .none
+                )
+            )
+        }
     }
 }
 
@@ -223,7 +328,7 @@ struct BundledStoreDirectoryProvider: StoreDirectoryProvider {
     }
 }
 
-struct BundledCatalogProvider: ProductCatalogProvider {
+struct BundledCatalogProvider: ProductCatalogProvider, ProductCatalogSourceProviding {
     let bundle: Bundle
     let catalogResourceName: String
     let retailerConfigResourceName: String
@@ -239,21 +344,70 @@ struct BundledCatalogProvider: ProductCatalogProvider {
     }
 
     func products() async throws -> [AffiliateProduct] {
-        guard let catalogURL = bundle.url(forResource: catalogResourceName, withExtension: "json") else {
+        let result = await loadResult()
+        guard result.source != .none else {
             throw ProductCatalogProviderError.missingCatalog
+        }
+        return result.products
+    }
+
+    func loadResult() async -> ProductCatalogLoadResult {
+        guard let catalogURL = bundle.url(forResource: catalogResourceName, withExtension: "json") else {
+            return ProductCatalogLoadResult(
+                products: [],
+                source: .none,
+                diagnostic: ProductCatalogLoadDiagnostic(
+                    classification: .missingCatalog,
+                    cacheHit: false,
+                    bundledFallbackCount: 0,
+                    finalSource: .none
+                )
+            )
         }
         let configURL = bundle.url(forResource: retailerConfigResourceName, withExtension: "json")
-        let decodedProducts = try Self.decodeProducts(
-            catalogData: Data(contentsOf: catalogURL),
-            retailerConfigData: configURL.flatMap { try? Data(contentsOf: $0) }
-        )
-        let customerSafeProducts = CatalogProductSafetyValidator.validated(decodedProducts)
+        do {
+            let decodedProducts = try Self.decodeProducts(
+                catalogData: Data(contentsOf: catalogURL),
+                retailerConfigData: configURL.flatMap { try? Data(contentsOf: $0) }
+            )
+            let customerSafeProducts = CatalogProductSafetyValidator.validated(decodedProducts)
 
-        guard !customerSafeProducts.isEmpty else {
-            throw ProductCatalogProviderError.missingCatalog
+            guard !customerSafeProducts.isEmpty else {
+                return ProductCatalogLoadResult(
+                    products: [],
+                    source: .none,
+                    diagnostic: ProductCatalogLoadDiagnostic(
+                        classification: .missingCatalog,
+                        cacheHit: false,
+                        bundledFallbackCount: 0,
+                        finalSource: .none
+                    )
+                )
+            }
+
+            return ProductCatalogLoadResult(
+                products: customerSafeProducts,
+                source: .bundled,
+                diagnostic: ProductCatalogLoadDiagnostic(
+                    cacheHit: false,
+                    bundledFallbackCount: customerSafeProducts.count,
+                    finalSource: .bundled
+                )
+            )
+        } catch {
+            return ProductCatalogLoadResult(
+                products: [],
+                source: .none,
+                diagnostic: ProductCatalogLoadDiagnostic(
+                    urlSessionErrorDomain: (error as NSError).domain,
+                    urlSessionErrorCode: (error as NSError).code,
+                    classification: .decoding,
+                    cacheHit: false,
+                    bundledFallbackCount: 0,
+                    finalSource: .none
+                )
+            )
         }
-
-        return customerSafeProducts
     }
 
     static func decodeProducts(catalogData: Data, retailerConfigData: Data? = nil) throws -> [AffiliateProduct] {
@@ -312,7 +466,7 @@ struct BundledCatalogProvider: ProductCatalogProvider {
 
 typealias CatalogProductSearchProvider = CatalogSearchProvider
 
-struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding {
+struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding, ProductCatalogSourceProviding {
     /// Catalog requests should complete well within this 10-second budget under
     /// normal conditions while still tolerating cellular connection setup.
     static let defaultRequestTimeout: TimeInterval = 10
@@ -324,57 +478,137 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
     var requestTimeout: TimeInterval = Self.defaultRequestTimeout
 
     func products() async throws -> [AffiliateProduct] {
-        try Task.checkCancellation()
+        let result = await loadResult()
+        if result.diagnostic.classification == .cancellation {
+            throw CancellationError()
+        }
+        guard result.source != .none else {
+            throw ProductCatalogProviderError.missingCatalog
+        }
+        return result.products
+    }
+
+    func loadResult() async -> ProductCatalogLoadResult {
+        var diagnostic = ProductCatalogLoadDiagnostic.empty
+        diagnostic.effectiveEndpoint = sanitizedProductsEndpoint()?.absoluteString
+        if Task.isCancelled {
+            diagnostic.classification = .cancellation
+            diagnostic.finalSource = .none
+            return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
+        }
         do {
-            let data = try await fetchRemoteData()
-            try Task.checkCancellation()
-            let decoded = try Self.decodeRemoteProducts(data, baseURL: baseURL)
+            let fetch = try await fetchRemoteData()
+            diagnostic.requestStartedAt = fetch.startedAt
+            diagnostic.requestCompletedAt = fetch.completedAt
+            diagnostic.httpStatus = fetch.statusCode
+            if Task.isCancelled {
+                diagnostic.classification = .cancellation
+                diagnostic.finalSource = .none
+                return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
+            }
+            let decoded = try Self.decodeRemoteProducts(fetch.data, baseURL: baseURL)
+            diagnostic.remoteProductCount = decoded.count
             guard !decoded.isEmpty else {
                 debugLog("remote decode produced zero safe products")
+                diagnostic.classification = .decoding
                 throw ProductCatalogProviderError.missingCatalog
             }
             do {
-                try cache(data)
+                try cache(fetch.data)
             } catch {
                 debugLog(error, prefix: "cache write failed; keeping decoded remote catalog")
             }
+            diagnostic.finalSource = .remote
             debugLog("selected source=remote products=\(decoded.count)")
-            return decoded
+            debugLog(diagnostic.debugSummary)
+            return ProductCatalogLoadResult(products: decoded, source: .remote, diagnostic: diagnostic)
         } catch {
-            if Self.isCancellation(error) { throw error }
+            if Self.isCancellation(error) {
+                diagnostic.classification = .cancellation
+                debugLog(diagnostic.debugSummary)
+                return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
+            }
+            let nsError = error as NSError
+            diagnostic.urlSessionErrorDomain = nsError.domain
+            diagnostic.urlSessionErrorCode = nsError.code
+            diagnostic.classification = diagnostic.classification ?? Self.classification(for: error)
+            diagnostic.requestCompletedAt = diagnostic.requestCompletedAt ?? Date()
             debugLog(error, prefix: "remote source failed")
         }
 
-        try Task.checkCancellation()
+        if Task.isCancelled {
+            diagnostic.classification = .cancellation
+            diagnostic.finalSource = .none
+            return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
+        }
         do {
-            let cached = try cachedProducts()
-            if !cached.isEmpty {
-                debugLog("selected source=cache products=\(cached.count)")
-                return cached
+            let cached = try cachedProductsWithMetadata()
+            diagnostic.cacheHit = true
+            diagnostic.cacheAge = cached.age
+            if !cached.products.isEmpty {
+                diagnostic.finalSource = .cache
+                debugLog("selected source=cache products=\(cached.products.count)")
+                debugLog(diagnostic.debugSummary)
+                return ProductCatalogLoadResult(products: cached.products, source: .cache, diagnostic: diagnostic)
             }
             debugLog("cache decoded zero safe products")
         } catch {
-            if Self.isCancellation(error) { throw error }
+            if Self.isCancellation(error) {
+                diagnostic.classification = .cancellation
+                debugLog(diagnostic.debugSummary)
+                return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
+            }
             debugLog(error, prefix: "cache source failed")
         }
 
-        try Task.checkCancellation()
-        do {
-            let bundled = CatalogProductSafetyValidator.validated(try await fallbackProvider.products())
-            try Task.checkCancellation()
-            guard !bundled.isEmpty else {
-                debugLog("bundled source produced zero safe products")
-                throw ProductCatalogProviderError.missingCatalog
+        if Task.isCancelled {
+            diagnostic.classification = .cancellation
+            diagnostic.finalSource = .none
+            return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
+        }
+        let fallbackResult: ProductCatalogLoadResult
+        if let sourceProvider = fallbackProvider as? ProductCatalogSourceProviding {
+            fallbackResult = await sourceProvider.loadResult()
+        } else {
+            do {
+                let products = CatalogProductSafetyValidator.validated(try await fallbackProvider.products())
+                fallbackResult = ProductCatalogLoadResult(
+                    products: products,
+                    source: products.isEmpty ? .none : .bundled,
+                    diagnostic: ProductCatalogLoadDiagnostic(
+                        bundledFallbackCount: products.count,
+                        finalSource: products.isEmpty ? .none : .bundled
+                    )
+                )
+            } catch {
+                fallbackResult = ProductCatalogLoadResult(
+                    products: [],
+                    source: .none,
+                    diagnostic: ProductCatalogLoadDiagnostic(
+                        urlSessionErrorDomain: (error as NSError).domain,
+                        urlSessionErrorCode: (error as NSError).code,
+                        classification: .missingCatalog,
+                        bundledFallbackCount: 0,
+                        finalSource: .none
+                    )
+                )
             }
-            debugLog("selected source=bundled products=\(bundled.count)")
-            return bundled
-        } catch {
-            if Self.isCancellation(error) { throw error }
-            debugLog(error, prefix: "bundled source failed")
+        }
+        diagnostic.bundledFallbackCount = fallbackResult.products.count
+        if fallbackResult.source == .bundled, !fallbackResult.products.isEmpty {
+            diagnostic.finalSource = .bundled
+            debugLog("selected source=bundled products=\(fallbackResult.products.count)")
+            debugLog(diagnostic.debugSummary)
+            return ProductCatalogLoadResult(products: fallbackResult.products, source: .bundled, diagnostic: diagnostic)
+        } else {
+            diagnostic.classification = diagnostic.classification ?? fallbackResult.diagnostic.classification ?? .missingCatalog
+            debugLog("bundled source failed products=\(fallbackResult.products.count)")
         }
 
+        diagnostic.finalSource = .none
         debugLog("all catalog sources failed")
-        throw ProductCatalogProviderError.missingCatalog
+        debugLog(diagnostic.debugSummary)
+        return ProductCatalogLoadResult(products: [], source: .none, diagnostic: diagnostic)
     }
 
     func disclosure() async -> String? {
@@ -437,7 +671,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         try JSONDecoder.catalog.decode(RemoteProductsResponse.self, from: data).disclosure
     }
 
-    private func fetchRemoteData() async throws -> Data {
+    private func fetchRemoteData() async throws -> RemoteCatalogFetchResult {
         var components = URLComponents(url: baseURL.appendingPathComponent("v1/products"), resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "limit", value: "100"),
@@ -456,7 +690,8 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         let startedAt = Date()
         do {
             let (data, response) = try await urlSession.data(for: request)
-            let duration = Date().timeIntervalSince(startedAt)
+            let completedAt = Date()
+            let duration = completedAt.timeIntervalSince(startedAt)
             guard let http = response as? HTTPURLResponse else {
                 debugLog("request duration=\(Self.durationText(duration)) status=unavailable")
                 throw ProductCatalogProviderError.missingCatalog
@@ -465,7 +700,7 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
             guard (200..<300).contains(http.statusCode) else {
                 throw CatalogHTTPError(statusCode: http.statusCode)
             }
-            return data
+            return RemoteCatalogFetchResult(data: data, startedAt: startedAt, completedAt: completedAt, statusCode: http.statusCode)
         } catch {
             let duration = Date().timeIntervalSince(startedAt)
             debugLog(error, prefix: "request duration=\(Self.durationText(duration)) status=unavailable")
@@ -474,8 +709,16 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
     }
 
     private func cachedProducts() throws -> [AffiliateProduct] {
-        let data = try Data(contentsOf: cacheFileURL())
-        return try Self.decodeRemoteProducts(data, baseURL: baseURL)
+        try cachedProductsWithMetadata().products
+    }
+
+    private func cachedProductsWithMetadata() throws -> (products: [AffiliateProduct], age: TimeInterval?) {
+        let fileURL = cacheFileURL()
+        let data = try Data(contentsOf: fileURL)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let modifiedAt = attributes?[.modificationDate] as? Date
+        let age = modifiedAt.map { Date().timeIntervalSince($0) }
+        return (try Self.decodeRemoteProducts(data, baseURL: baseURL), age)
     }
 
     private func cache(_ data: Data) throws {
@@ -485,6 +728,15 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
 
     private func cacheFileURL() -> URL {
         cacheDirectory.appendingPathComponent("ProductCatalog.worker.remote.json")
+    }
+
+    private func sanitizedProductsEndpoint() -> URL? {
+        var components = URLComponents(url: baseURL.appendingPathComponent("v1/products"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "country", value: Self.currentRegionCode)
+        ]
+        return components?.url
     }
 
     private static func decimalFromCents(_ cents: Int) -> Decimal {
@@ -510,6 +762,36 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
 
     private static func isCancellation(_ error: Error) -> Bool {
         error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
+    private static func classification(for error: Error) -> ProductCatalogFailureClassification {
+        if isCancellation(error) {
+            return .cancellation
+        }
+        if let httpError = error as? CatalogHTTPError {
+            return (200..<300).contains(httpError.statusCode) ? .unknown : .http
+        }
+        if error is DecodingError {
+            return .decoding
+        }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return .timeout
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return .dns
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed:
+                return .connectivity
+            case .secureConnectionFailed, .serverCertificateHasBadDate, .serverCertificateUntrusted, .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid, .clientCertificateRejected, .clientCertificateRequired:
+                return .tls
+            default:
+                return .unknown
+            }
+        }
+        if error is ProductCatalogProviderError {
+            return .missingCatalog
+        }
+        return .unknown
     }
 
     private static func durationText(_ duration: TimeInterval) -> String {

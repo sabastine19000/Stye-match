@@ -336,6 +336,50 @@ enum ProductImageURLValidator {
     }
 }
 
+enum ShoppingProductImageFallbackReason: Equatable {
+    case missing
+    case loadFailure
+}
+
+struct ShoppingProductImageFallbackPresentation: Equatable {
+    let systemImage: String
+    let categoryLabel: String
+    let identityText: String
+    let statusText: String
+
+    static func make(
+        category: ProductCategory?,
+        productName: String,
+        retailerName: String,
+        reason: ShoppingProductImageFallbackReason
+    ) -> ShoppingProductImageFallbackPresentation {
+        let product = productName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let retailer = retailerName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return ShoppingProductImageFallbackPresentation(
+            systemImage: systemImage(for: category),
+            categoryLabel: category?.displayName ?? "Style pick",
+            identityText: !retailer.isEmpty ? retailer : (!product.isEmpty ? product : "StyleMatch pick"),
+            statusText: reason == .missing ? "Product image coming soon" : "Image unavailable"
+        )
+    }
+
+    static func accentOpacity(isDarkMode: Bool) -> Double {
+        isDarkMode ? 0.26 : 0.14
+    }
+
+    private static func systemImage(for category: ProductCategory?) -> String {
+        switch category {
+        case .clothing: return "tshirt.fill"
+        case .shoes: return "figure.walk"
+        case .accessories: return "bag.fill"
+        case .electronics: return "headphones"
+        case .styleTools: return "sparkles"
+        case nil: return "shippingbox.fill"
+        }
+    }
+}
+
 struct RetailerConfig: Codable, Equatable {
     let retailers: [Retailer]
 

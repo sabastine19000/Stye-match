@@ -4,6 +4,7 @@
     {"name": "Macy's", "trackingID": "", "trackingParamName": "stylematch_affiliate", "disclosureName": "Macy's", "searchAdapter": "cj", "searchStatus": "pending"},
     {"name": "Best Buy", "trackingID": "", "trackingParamName": "irclickid", "disclosureName": "Best Buy", "searchAdapter": "bestbuy", "searchStatus": "pending"},
     {"name": "Amazon", "trackingID": "", "trackingParamName": "tag", "disclosureName": "Amazon", "searchAdapter": "amazon", "searchStatus": "pending"},
+    {"name": "American Eagle", "trackingID": "", "trackingParamName": "stylematch_affiliate", "disclosureName": "American Eagle", "searchAdapter": "none", "searchStatus": "pending"},
     {"name": "Nordstrom", "trackingID": "", "trackingParamName": "utm_source", "disclosureName": "Nordstrom", "searchAdapter": "rakuten", "searchStatus": "pending"},
     {"name": "Levi's", "trackingID": "", "trackingParamName": "camp", "disclosureName": "Levi's", "searchAdapter": "cj", "searchStatus": "pending"},
     {"name": "Target", "trackingID": "", "trackingParamName": "clkid", "disclosureName": "Target", "searchAdapter": "impact", "searchStatus": "pending"},
