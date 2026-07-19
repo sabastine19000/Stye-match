@@ -3972,7 +3972,8 @@ struct ScanView: View {
     }
 
     private func styleProgressOverTimeCard(_ scans: [RecentOutfitScore], scrollProxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let summary = scanProgressSummary(from: scans)
+        return VStack(alignment: .leading, spacing: 14) {
             Label("Style Progress", systemImage: "chart.line.uptrend.xyaxis")
                 .font(.headline)
                 .foregroundStyle(.white)
@@ -3985,13 +3986,13 @@ struct ScanView: View {
                 ],
                 spacing: 10
             ) {
-                progressOverTimeMetric(title: "Average Score", value: averageScoreText(from: scans), icon: "sum")
-                progressOverTimeMetric(title: "Highest Score", value: highestScoreText(from: scans), icon: "star.fill")
+                progressOverTimeMetric(title: "Average Score", value: summary.averageScoreText, icon: "sum")
+                progressOverTimeMetric(title: "Highest Score", value: summary.highestScoreText, icon: "star.fill")
                 progressOverTimeMetric(
-                    title: "Outfits Scanned",
-                    value: outfitsScannedText(from: scans),
+                    title: "Saved Scans",
+                    value: summary.savedScanCountText,
                     icon: "camera.fill",
-                    accessibilityLabel: "Open scan history, \(outfitsScannedText(from: scans)) outfits scanned",
+                    accessibilityLabel: "Open scan history, \(summary.savedScanCountText) saved scans",
                     accessibilityHint: "Opens your recent outfit scores."
                 ) {
                     withAnimation(.easeInOut(duration: 0.25)) {
@@ -4067,30 +4068,8 @@ struct ScanView: View {
         }
     }
 
-    private func averageScoreText(from scans: [RecentOutfitScore]) -> String {
-        guard !scans.isEmpty else {
-            return "88"
-        }
-
-        let total = scans.map(\.score).reduce(0, +)
-        return "\(Int((Double(total) / Double(scans.count)).rounded()))"
-    }
-
-    private func highestScoreText(from scans: [RecentOutfitScore]) -> String {
-        guard let highest = scans.map(\.score).max() else {
-            return "96"
-        }
-
-        return "\(highest)"
-    }
-
-    private func outfitsScannedText(from scans: [RecentOutfitScore]) -> String {
-        guard !scans.isEmpty else {
-            return "347"
-        }
-
-        let totalScans = scans.map(\.scanCount).reduce(0, +)
-        return "\(max(totalScans, scans.count))"
+    private func scanProgressSummary(from scans: [RecentOutfitScore]) -> ScanProgressSummary {
+        ScanProgressSummary(scores: scans.map(\.score))
     }
 
     private var scanClosetItemCountText: String {
@@ -4105,16 +4084,12 @@ struct ScanView: View {
 
     private var currentScreenContext: StylistScreenContext {
         let scans = recentStoredScans
+        let progressSummary = scanProgressSummary(from: scans)
         let state = StylistActiveScanStateResolver.resolve(
             hasResult: result != nil,
             hasSelectedImage: selectedUIImage != nil,
             activeScanID: activeScanFingerprint,
             savedScanIDs: Set(loadScanHistory().keys)
-        )
-        let aggregate = StylistVisibleAggregateStatistics(
-            averageScore: Int(averageScoreText(from: scans)),
-            highestScore: Int(highestScoreText(from: scans)),
-            totalScans: Int(outfitsScannedText(from: scans))
         )
         return StylistScreenContext(
             currentTab: .scan,
@@ -4124,7 +4099,7 @@ struct ScanView: View {
             selectedAnalysisSection: selectedScannerInsight.lowercased(),
             visibleOverallScore: state == .none ? nil : result?.score,
             entryPoint: result == nil ? .scanTab : .scanResult,
-            visibleAggregates: aggregate,
+            visibleAggregates: progressSummary.visibleAggregates,
             closetState: StylistClosetState.fromSerializedClosetData(closetItemsData)
         )
     }
