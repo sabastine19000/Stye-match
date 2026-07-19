@@ -44,7 +44,7 @@ final class ShoppingLocalStore: ObservableObject {
 
     init(defaults: UserDefaults = .standard, userID: String? = nil, supportedStores: [SupportedStore]? = nil) {
         self.defaults = defaults
-        let normalizedUserID = PersonalStylistStorage.normalizedUserID(userID ?? PersonalStylistStorage.activeUserID(defaults: defaults))
+        let normalizedUserID = PersonalStylistStorage.normalizedUserID(userID ?? Self.defaultUserID(defaults: defaults))
         self.userID = normalizedUserID
 
         func scoped(_ base: String) -> String {
@@ -57,8 +57,13 @@ final class ShoppingLocalStore: ObservableObject {
         self.wishlistStorage = Array((defaults.stringArray(forKey: scoped(Self.wishlistBaseKey)) ?? []).prefix(200))
         self.cartStorage = Array((defaults.stringArray(forKey: scoped(Self.cartBaseKey)) ?? []).prefix(100))
         self.shoppingCardStorage = Array((defaults.stringArray(forKey: scoped(Self.shoppingCardsBaseKey)) ?? []).prefix(200))
-        let storedPreferredRetailerIDs = defaults.stringArray(forKey: scoped(Self.preferredRetailerIDsBaseKey)) ?? []
-        if let supportedStores {
+        let preferredRetailerKey = scoped(Self.preferredRetailerIDsBaseKey)
+        let storedPreferredRetailerIDs = Self.storedPreferredRetailerIDs(
+            defaults: defaults,
+            primaryKey: preferredRetailerKey,
+            normalizedUserID: normalizedUserID
+        )
+        if let supportedStores, !supportedStores.isEmpty {
             self.preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
                 storedPreferredRetailerIDs,
                 supportedStores: supportedStores
@@ -81,9 +86,19 @@ final class ShoppingLocalStore: ObservableObject {
         self.saleNotificationHistoryStorage = Self.decoded([Date].self, defaults: defaults, key: scoped(Self.saleNotificationHistoryBaseKey)) ?? []
         self.recentSaleEventsStorage = Array((Self.decoded([SaleEvent].self, defaults: defaults, key: scoped(Self.recentSaleEventsBaseKey)) ?? []).prefix(50))
         self.viewedSaleEventIDStorage = Set(defaults.stringArray(forKey: scoped(Self.viewedSaleEventIDsBaseKey)) ?? [])
-        if supportedStores != nil {
-            defaults.set(preferredRetailerIDStorage, forKey: scoped(Self.preferredRetailerIDsBaseKey))
+        if let supportedStores, !supportedStores.isEmpty,
+           preferredRetailerIDStorage != RetailerPreferencePolicy.normalizedCandidateRetailerIDs(storedPreferredRetailerIDs) {
+            defaults.set(preferredRetailerIDStorage, forKey: preferredRetailerKey)
         }
+        Self.debugLog(
+            "init",
+            defaults: defaults,
+            userID: normalizedUserID,
+            key: preferredRetailerKey,
+            loadedIDs: storedPreferredRetailerIDs,
+            normalizedIDs: preferredRetailerIDStorage,
+            supportedStores: supportedStores
+        )
     }
 
     var recentlyViewedProductIDs: [String] {
@@ -145,23 +160,71 @@ final class ShoppingLocalStore: ObservableObject {
     func setPreferredRetailerIDs(_ ids: [String], supportedStores: [SupportedStore]) {
         preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(ids, supportedStores: supportedStores)
         defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
+        Self.debugLog(
+            "setPreferredRetailerIDs",
+            defaults: defaults,
+            userID: userID,
+            key: key(Self.preferredRetailerIDsBaseKey),
+            loadedIDs: ids,
+            normalizedIDs: preferredRetailerIDStorage,
+            supportedStores: supportedStores
+        )
     }
 
     @discardableResult
-    func normalizePreferredRetailerIDs(supportedStores: [SupportedStore]) -> [String] {
+    func normalizePreferredRetailerIDs(
+        supportedStores: [SupportedStore],
+        registryIsLoaded: Bool = true
+    ) -> [String] {
+        let candidates = RetailerPreferencePolicy.normalizedCandidateRetailerIDs(preferredRetailerIDStorage)
+        guard registryIsLoaded, !supportedStores.isEmpty else {
+            Self.debugLog(
+                "normalizePreferredRetailerIDs",
+                defaults: defaults,
+                userID: userID,
+                key: key(Self.preferredRetailerIDsBaseKey),
+                loadedIDs: candidates,
+                normalizedIDs: candidates,
+                supportedStores: supportedStores,
+                registryIsLoaded: registryIsLoaded,
+                persistenceAction: "skipped"
+            )
+            return candidates
+        }
         let normalized = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
-            preferredRetailerIDStorage,
+            candidates,
             supportedStores: supportedStores
         )
+        let persistenceAction: String
         if normalized != preferredRetailerIDStorage {
             preferredRetailerIDStorage = normalized
             defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
+            persistenceAction = "written"
+        } else {
+            persistenceAction = "skipped"
         }
+        Self.debugLog(
+            "normalizePreferredRetailerIDs",
+            defaults: defaults,
+            userID: userID,
+            key: key(Self.preferredRetailerIDsBaseKey),
+            loadedIDs: preferredRetailerIDStorage,
+            normalizedIDs: normalized,
+            supportedStores: supportedStores,
+            registryIsLoaded: registryIsLoaded,
+            persistenceAction: persistenceAction
+        )
         return normalized
     }
 
-    func preferredRetailerIDs(supportedStores: [SupportedStore]) -> [String] {
-        normalizePreferredRetailerIDs(supportedStores: supportedStores)
+    func preferredRetailerIDs(
+        supportedStores: [SupportedStore],
+        registryIsLoaded: Bool = true
+    ) -> [String] {
+        normalizePreferredRetailerIDs(
+            supportedStores: supportedStores,
+            registryIsLoaded: registryIsLoaded
+        )
     }
 
     var saleAlertProductIDs: Set<String> {
@@ -325,6 +388,15 @@ final class ShoppingLocalStore: ObservableObject {
         for baseKey in Self.allPersistedBaseKeys {
             defaults.removeObject(forKey: key(baseKey))
         }
+        Self.debugLog(
+            "deleteAll",
+            defaults: defaults,
+            userID: userID,
+            key: key(Self.preferredRetailerIDsBaseKey),
+            loadedIDs: preferredRetailerIDStorage,
+            normalizedIDs: [],
+            supportedStores: nil
+        )
         recentlyViewedStorage = []
         dismissedStorage = []
         savedFavoritesStorage = []
@@ -375,6 +447,59 @@ final class ShoppingLocalStore: ObservableObject {
         PersonalStylistStorage.scopedKey(base, userID: userID)
     }
 
+    private static func defaultUserID(defaults: UserDefaults) -> String {
+        AccountScopedStorage.activePresentationUserID(defaults: defaults)
+    }
+
+    private static func storedPreferredRetailerIDs(
+        defaults: UserDefaults,
+        primaryKey: String,
+        normalizedUserID: String
+    ) -> [String] {
+        if let stored = defaults.stringArray(forKey: primaryKey) {
+            return stored
+        }
+
+        let legacyUserID = PersonalStylistStorage.activeUserID(defaults: defaults)
+        let legacyKey = PersonalStylistStorage.scopedKey(Self.preferredRetailerIDsBaseKey, userID: legacyUserID)
+        guard PersonalStylistStorage.normalizedUserID(legacyUserID) != normalizedUserID,
+              let legacy = defaults.stringArray(forKey: legacyKey),
+              !legacy.isEmpty else {
+            return []
+        }
+
+        defaults.set(legacy, forKey: primaryKey)
+        #if DEBUG
+        print("[StyleMatch My Stores Storage] event=legacy_migration from_key=\(redactedKey(legacyKey, userID: legacyUserID)) to_key=\(redactedKey(primaryKey, userID: normalizedUserID)) migrated_count=\(legacy.count)")
+        #endif
+        return legacy
+    }
+
+    private static func debugLog(
+        _ event: String,
+        defaults: UserDefaults,
+        userID: String,
+        key: String,
+        loadedIDs: [String],
+        normalizedIDs: [String],
+        supportedStores: [SupportedStore]?,
+        registryIsLoaded: Bool? = nil,
+        persistenceAction: String? = nil
+    ) {
+        #if DEBUG
+        let supportedIDs = supportedStores?.map(\.id).joined(separator: ",") ?? "not-provided"
+        let activeMode = defaults.string(forKey: "customerAccountMode") ?? "unset"
+        let activeEnvironment = AccountScopedStorage.activeEnvironment(defaults: defaults).rawValue
+        let readiness = registryIsLoaded.map(String.init) ?? "not-provided"
+        let persistence = persistenceAction ?? "not-provided"
+        print("[StyleMatch My Stores Storage] event=\(event) namespace_present=\(!userID.isEmpty) key=\(redactedKey(key, userID: userID)) registry_ready=\(readiness) candidate_ids=\(loadedIDs.joined(separator: ",")) normalized_ids=\(normalizedIDs.joined(separator: ",")) persistence=\(persistence) supported_ids=\(supportedIDs) account_mode=\(activeMode) account_environment=\(activeEnvironment)")
+        #endif
+    }
+
+    private static func redactedKey(_ key: String, userID: String) -> String {
+        key.replacingOccurrences(of: PersonalStylistStorage.normalizedUserID(userID), with: "<user>")
+    }
+
     private func encode<T: Encodable>(_ value: T, baseKey: String) {
         guard let data = try? JSONEncoder().encode(value) else { return }
         defaults.set(data, forKey: key(baseKey))
@@ -423,7 +548,16 @@ struct RetailerPreferenceResult: Equatable {
 
 enum RetailerPreferencePolicy {
     static let maximumPreferredRetailerIDs = 32
-    static let fallbackCopy = "No products from your selected stores yet, so we’re showing all approved stores."
+    static let fallbackCopy = "No matching products are currently available from your selected stores. Showing recommendations from all approved retailers until more inventory becomes available."
+
+    static func fallbackCopy(selectedStoreNames: [String]) -> String {
+        let normalizedNames = selectedStoreNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .removingDuplicates()
+        guard !normalizedNames.isEmpty else { return fallbackCopy }
+        return "\(fallbackCopy) Selected stores: \(normalizedNames.joined(separator: ", "))."
+    }
 
     static func normalizedCandidateRetailerIDs(_ ids: [String], limit: Int = maximumPreferredRetailerIDs) -> [String] {
         Array(Set(ids.compactMap { canonicalID($0) }).sorted().prefix(limit))
@@ -472,7 +606,7 @@ enum RetailerPreferencePolicy {
         return RetailerPreferenceResult(products: matched, usedFallback: false, requestedRetailerIDs: requestedIDs)
     }
 
-    private static func canonicalID(_ id: String?) -> String? {
+    static func canonicalID(_ id: String?) -> String? {
         guard let id else { return nil }
         let cleaned = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return cleaned.isEmpty ? nil : cleaned

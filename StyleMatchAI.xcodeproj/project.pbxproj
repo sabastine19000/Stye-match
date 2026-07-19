@@ -33,6 +33,7 @@
 		AA0000000000000000000035 /* ProductCatalogProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003B /* ProductCatalogProvider.swift */; };
 		AA0000000000000000000036 /* ShoppingRecommendationEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003C /* ShoppingRecommendationEngine.swift */; };
 		AA0000000000000000000037 /* ShoppingLocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003D /* ShoppingLocalStore.swift */; };
+		AA0000000000000000000180 /* StoreCoverageState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000181 /* StoreCoverageState.swift */; };
 		AA0000000000000000000038 /* ProductCatalog.json in Resources */ = {isa = PBXBuildFile; fileRef = AA000000000000000000003E /* ProductCatalog.json */; };
 		AA000000000000000000003F /* RetailerConfig.json in Resources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000F8 /* RetailerConfig.json */; };
 		AA00000000000000000000A1 /* FashionKnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA00000000000000000000A0 /* FashionKnowledgeBase.swift */; };
@@ -116,6 +117,7 @@
 		AA000000000000000000003B /* ProductCatalogProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogProvider.swift; sourceTree = "<group>"; };
 		AA000000000000000000003C /* ShoppingRecommendationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingRecommendationEngine.swift; sourceTree = "<group>"; };
 		AA000000000000000000003D /* ShoppingLocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingLocalStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000181 /* StoreCoverageState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreCoverageState.swift; sourceTree = "<group>"; };
 		AA000000000000000000003E /* ProductCatalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = ProductCatalog.json; sourceTree = "<group>"; };
 		AA00000000000000000000A0 /* FashionKnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FashionKnowledgeBase.swift; sourceTree = "<group>"; };
 		AA00000000000000000000B0 /* LoginWelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginWelcomeView.swift; sourceTree = "<group>"; };
@@ -264,6 +266,7 @@
 				AA000000000000000000003B /* ProductCatalogProvider.swift */,
 				AA000000000000000000003C /* ShoppingRecommendationEngine.swift */,
 				AA000000000000000000003D /* ShoppingLocalStore.swift */,
+				AA0000000000000000000181 /* StoreCoverageState.swift */,
 				AA0000000000000000000101 /* ShoppingSaleAlertService.swift */,
 				AA0000000000000000000103 /* SaleWatcher.swift */,
 				AA00000000000000000000F4 /* ShoppingSearchEngine.swift */,
@@ -434,6 +437,7 @@
 				AA0000000000000000000035 /* ProductCatalogProvider.swift in Sources */,
 				AA0000000000000000000036 /* ShoppingRecommendationEngine.swift in Sources */,
 				AA0000000000000000000037 /* ShoppingLocalStore.swift in Sources */,
+				AA0000000000000000000180 /* StoreCoverageState.swift in Sources */,
 				AA0000000000000000000100 /* ShoppingSaleAlertService.swift in Sources */,
 				AA0000000000000000000102 /* SaleWatcher.swift in Sources */,
 				AA00000000000000000000F3 /* ShoppingSearchEngine.swift in Sources */,

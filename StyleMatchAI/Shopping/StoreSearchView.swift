@@ -17,17 +17,20 @@ struct StoreSearchView: View {
     @State private var sort: SearchSort = .relevance
     @State private var storeScope: ShoppingStoreScope = .myStores
     @State private var catalogProducts: [AffiliateProduct] = []
+    @State private var catalogSource: ProductCatalogSource = .none
     @State private var products: [AffiliateProduct] = []
     @State private var rankedProducts: [RankedProduct] = []
     @State private var relaxedSearchResult: ShoppingSearchEngine.RelaxedFilterResult?
     @State private var retailerPreferenceFallbackUsed = false
     @State private var retailers: [SupportedStore] = []
+    @State private var isStoreRegistryLoaded = false
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var partialFailureNote: String?
     @State private var showFilters = false
     @State private var showDisclosure = false
     @State private var showMyStores = false
+    @State private var hasLoadedCatalog = false
     @State private var searchTask: Task<Void, Never>?
     @StateObject private var localStore = ShoppingLocalStore()
 
@@ -118,7 +121,12 @@ struct StoreSearchView: View {
             filterSheet
         }
         .sheet(isPresented: $showMyStores) {
-            MyStoresManagementView(supportedStores: retailers, store: localStore)
+            MyStoresManagementView(
+                supportedStores: retailers,
+                store: localStore,
+                coverage: currentStoreCoverage,
+                registryIsLoaded: isStoreRegistryLoaded
+            )
         }
         .sheet(isPresented: $showDisclosure) {
             NavigationStack {
@@ -169,40 +177,6 @@ struct StoreSearchView: View {
         #endif
     }
 
-    private var storeScopeControls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Picker("Store scope", selection: $storeScope) {
-                ForEach(ShoppingStoreScope.allCases) { scope in
-                    Text(scope.title).tag(scope)
-                }
-            }
-            .pickerStyle(.segmented)
-            .styleMatchOnChange(of: storeScope) { _ in debouncedSearch() }
-
-            Button {
-                showMyStores = true
-            } label: {
-                Label("Manage My Stores", systemImage: "storefront")
-                    .font(.caption)
-                    .fontWeight(.bold)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
-    private var retailerPreferenceFallbackNotice: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "storefront")
-                .foregroundStyle(Color.orange)
-            Text(RetailerPreferencePolicy.fallbackCopy)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .appCard(.shop, radius: 10)
-    }
-
     private var searchBar: some View {
         HStack {
             Image(systemName: "magnifyingglass")
@@ -239,6 +213,40 @@ struct StoreSearchView: View {
                 }
             }
         }
+    }
+
+    private var storeScopeControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Store scope", selection: $storeScope) {
+                ForEach(ShoppingStoreScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .styleMatchOnChange(of: storeScope) { _ in debouncedSearch() }
+
+            Button {
+                showMyStores = true
+            } label: {
+                Label("Manage My Stores", systemImage: "storefront")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+        }
+    }
+
+    private var retailerPreferenceFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "storefront")
+                .foregroundStyle(Color.orange)
+            Text(RetailerPreferencePolicy.fallbackCopy(selectedStoreNames: selectedFallbackStoreNames))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .appCard(.shop, radius: 10)
     }
 
     private func chip(_ title: String, isSelected: Bool, isInactive: Bool = false, action: @escaping () -> Void) -> some View {
@@ -409,7 +417,11 @@ struct StoreSearchView: View {
     private func loadRetailersAndSearch() async {
         let stores = (try? await BundledStoreDirectoryProvider().stores()) ?? []
         retailers = stores.filter(\.isEnabled)
-        _ = localStore.normalizePreferredRetailerIDs(supportedStores: retailers)
+        isStoreRegistryLoaded = true
+        _ = localStore.normalizePreferredRetailerIDs(
+            supportedStores: retailers,
+            registryIsLoaded: true
+        )
         await runSearch()
     }
 
@@ -430,7 +442,11 @@ struct StoreSearchView: View {
         }
 
         do {
-            let safeProducts = try await SharedProductCatalogLoader.shared.products()
+            let catalogResult = await SharedProductCatalogLoader.shared.loadResult()
+            guard catalogResult.source != .none else {
+                throw ProductCatalogProviderError.missingCatalog
+            }
+            let safeProducts = catalogResult.products
             let policyResult = RetailerPreferencePolicy.apply(
                 products: safeProducts,
                 preferredRetailerIDs: activePreferredRetailerIDs,
@@ -439,9 +455,11 @@ struct StoreSearchView: View {
             let results = ShoppingSearchEngine.relaxedFilter(products: policyResult.products, query: currentQuery())
             await MainActor.run {
                 catalogProducts = safeProducts
+                catalogSource = catalogResult.source
                 products = results.displayedResults
                 relaxedSearchResult = results
                 retailerPreferenceFallbackUsed = policyResult.usedFallback
+                hasLoadedCatalog = true
                 rerank()
                 isLoading = false
             }
@@ -451,6 +469,8 @@ struct StoreSearchView: View {
             #endif
             await MainActor.run {
                 errorMessage = "We could not search right now. Please try again."
+                hasLoadedCatalog = false
+                catalogSource = .none
                 isLoading = false
             }
         }
@@ -490,7 +510,19 @@ struct StoreSearchView: View {
         guard storeScope == .myStores, selectedRetailers.isEmpty else {
             return []
         }
-        return localStore.preferredRetailerIDs(supportedStores: retailers)
+        return localStore.preferredRetailerIDs(
+            supportedStores: retailers,
+            registryIsLoaded: isStoreRegistryLoaded
+        )
+    }
+
+    private var selectedFallbackStoreNames: [String] {
+        let namesByID = Dictionary(uniqueKeysWithValues: retailers.map { ($0.id, $0.name) })
+        return activePreferredRetailerIDs.map { namesByID[$0] ?? $0 }
+    }
+
+    private var currentStoreCoverage: StoreCoverageState {
+        hasLoadedCatalog ? .loaded(products: catalogProducts, source: catalogSource) : .unavailable
     }
 }
 
@@ -505,7 +537,7 @@ private struct SearchProductCard: View {
         let viewModel = AffiliateProductViewModel(product: product, reasonText: reason)
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 12) {
-                ShoppingProductImage(imageURL: product.remoteImageRequestURL)
+                ShoppingProductImage(product: product)
                 .frame(width: 82, height: 82)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 

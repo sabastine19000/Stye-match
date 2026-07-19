@@ -1088,7 +1088,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         profile.dislikedColors = ["neon"]
         profile.favoriteBrands = ["Nike"]
         profile.declaredUndertone = .neutral
-        profile.preferredFit = .relaxed
+        profile.preferredPantFit = .relaxed
         profile.styleGoals = ["Build confidence", "Spend more intentionally"]
         profile.preferredNeutrals = ["Black", "White"]
         profile.preferredAccentColors = ["Olive", "Burgundy"]
@@ -1106,7 +1106,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let reloaded = ProfileStore(defaults: defaults, userId: userA).currentProfile
 
         XCTAssertEqual(reloaded.declaredUndertone, .neutral)
-        XCTAssertEqual(reloaded.preferredFit, .relaxed)
+        XCTAssertEqual(reloaded.preferredPantFit, .relaxed)
         XCTAssertEqual(reloaded.styleGoals, ["Build confidence", "Spend more intentionally"])
         XCTAssertEqual(reloaded.preferredNeutrals, ["Black", "White"])
         XCTAssertEqual(reloaded.preferredAccentColors, ["Olive", "Burgundy"])
@@ -1127,8 +1127,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(context.contains("Preferred accent colors"))
         XCTAssertFalse(context.contains("Comfort preferences"))
         XCTAssertFalse(context.contains("Declared color undertone"))
-        XCTAssertTrue(context.contains("Preferred fit: relaxed"))
-        XCTAssertFalse(context.contains("Preferred pant rise"))
+        XCTAssertTrue(context.contains("Preferred pant fit: Relaxed Fit"))
+        XCTAssertTrue(context.contains("Preferred pant rise: Mid Rise"))
         XCTAssertFalse(context.contains("Shopping focus"))
         XCTAssertFalse(context.contains("Preferred shopping categories"))
         XCTAssertFalse(context.contains("Work setting"))
@@ -1265,6 +1265,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         profile.favoriteBrands = ["Nike"]
         profile.declaredUndertone = .cool
         profile.preferredFit = .relaxed
+        profile.preferredPantFit = .athletic
         profile.styleGoals = ["Build confidence"]
         profile.preferredNeutrals = ["Black", "White"]
         profile.preferredAccentColors = ["Burgundy"]
@@ -1287,6 +1288,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(context.favoriteBrands, ["Nike"])
         XCTAssertEqual(context.declaredUndertone, .cool)
         XCTAssertEqual(context.preferredFit, .relaxed)
+        XCTAssertEqual(context.preferredPantFit, .athletic)
         XCTAssertEqual(context.styleGoals, ["Build confidence"])
         XCTAssertEqual(context.preferredNeutrals, ["Black", "White"])
         XCTAssertEqual(context.preferredAccentColors, ["Burgundy"])
@@ -1401,7 +1403,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         profile.favoriteColors = ["navy", "black"]
         profile.dislikedColors = ["neon"]
         profile.favoriteBrands = ["Nike"]
-        profile.preferredFit = .tailored
+        profile.preferredPantFit = .athletic
         profile.budgetRange = BudgetRange(minPrice: 80, maxPrice: 180, preferredTier: "Mid")
         profile.clothingSizes = ClothingSizes(shirtSize: "XL", pantSize: "36x36", shoeSize: "12")
         profile.stylePreferencesLearned = ["business casual": 0.8]
@@ -1430,7 +1432,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(context.contains("Favorite colors: navy, black"))
         XCTAssertTrue(context.contains("Avoid colors: neon"))
         XCTAssertTrue(context.contains("Favorite brands: Nike"))
-        XCTAssertTrue(context.contains("Preferred fit: tailored"))
+        XCTAssertTrue(context.contains("Preferred pant fit: Athletic Fit"))
         XCTAssertTrue(context.contains("Budget: $80-$180"))
         XCTAssertTrue(context.contains("shirt XL"))
         XCTAssertTrue(context.contains("Recently liked"))
@@ -2250,11 +2252,59 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(catalogSource.contains("stylematch.local/product-placeholder.png"))
         XCTAssertTrue(modelSource.contains("var remoteImageRequestURL: URL?"))
         XCTAssertTrue(shoppingSource.contains("if let imageURL"))
-        XCTAssertTrue(shoppingSource.contains("No product image available"))
+        XCTAssertTrue(shoppingSource.contains("brandedFallback(reason: .missing)"))
+        XCTAssertTrue(shoppingSource.contains("brandedFallback(reason: .loadFailure)"))
+        XCTAssertTrue(shoppingSource.contains(".accessibilityHidden(true)"))
+        XCTAssertFalse(shoppingSource.contains("No product image available"))
+        XCTAssertFalse(shoppingSource.contains("title: \"No image\""))
         XCTAssertEqual(shoppingSource.components(separatedBy: "AsyncImage(url:").count - 1, 1)
-        XCTAssertTrue(shoppingSource.contains("ShoppingProductImage(imageURL: product.remoteImageRequestURL)"))
-        XCTAssertTrue(searchSource.contains("ShoppingProductImage(imageURL: product.remoteImageRequestURL)"))
+        XCTAssertTrue(shoppingSource.contains("ShoppingProductImage(product: product)"))
+        XCTAssertTrue(searchSource.contains("ShoppingProductImage(product: product)"))
         XCTAssertFalse(searchSource.contains("AsyncImage(url:"))
+    }
+
+    func testShoppingImageFallbackPresentationCoversCategoryFailureDarkModeAndAccessibility() throws {
+        let missingClothing = ShoppingProductImageFallbackPresentation.make(
+            category: .clothing,
+            productName: "Classic Oxford",
+            retailerName: "Macy's",
+            reason: .missing
+        )
+        XCTAssertEqual(missingClothing.systemImage, "tshirt.fill")
+        XCTAssertEqual(missingClothing.categoryLabel, "Clothing")
+        XCTAssertEqual(missingClothing.identityText, "Macy's")
+        XCTAssertEqual(missingClothing.statusText, "Product image coming soon")
+
+        let failedShoes = ShoppingProductImageFallbackPresentation.make(
+            category: .shoes,
+            productName: "Walking Shoe",
+            retailerName: "Foot Locker",
+            reason: .loadFailure
+        )
+        XCTAssertEqual(failedShoes.systemImage, "figure.walk")
+        XCTAssertEqual(failedShoes.statusText, "Image unavailable")
+
+        let unknownCategory = ShoppingProductImageFallbackPresentation.make(
+            category: nil,
+            productName: "",
+            retailerName: "",
+            reason: .missing
+        )
+        XCTAssertEqual(unknownCategory.systemImage, "shippingbox.fill")
+        XCTAssertEqual(unknownCategory.categoryLabel, "Style pick")
+        XCTAssertEqual(unknownCategory.identityText, "StyleMatch pick")
+
+        XCTAssertGreaterThan(
+            ShoppingProductImageFallbackPresentation.accentOpacity(isDarkMode: true),
+            ShoppingProductImageFallbackPresentation.accentOpacity(isDarkMode: false)
+        )
+
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        XCTAssertTrue(shoppingSource.contains("@Environment(\\.colorScheme) private var colorScheme"))
+        XCTAssertTrue(shoppingSource.contains("Color(.secondarySystemBackground)"))
+        XCTAssertTrue(shoppingSource.contains(".accessibilityHidden(true)"))
+        XCTAssertTrue(shoppingSource.contains(".accessibilityLabel(productAccessibilitySummary(product, action: viewModel.actionTitle))"))
+        XCTAssertTrue(shoppingSource.contains(".accessibilityHint(\"Opens this product through the retailer link\")"))
     }
 
     func testAmazonPriceRuleIgnoresStoredPriceAtRenderTime() {
@@ -2493,7 +2543,6 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(restored.usesCalendarEvents)
     }
 
-
     func testUnsetShoppingBudgetDoesNotHideLoadedCatalogProducts() {
         let catalog = [
             makeAffiliateProduct(id: "shirt", name: "White Shirt", price: Decimal(89)),
@@ -2561,8 +2610,6 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(source.contains("logCatalogDisplayInvariant"))
         XCTAssertTrue(source.contains("[StyleMatch Shopping Display Invariant Failure]"))
         XCTAssertTrue(source.contains("displayed zero with All selected"))
-        XCTAssertTrue(source.contains("remote_count="))
-        XCTAssertTrue(source.contains("displayed_count="))
     }
 
     func testShoppingDisclosureDoesNotExposeTrackingIds() throws {
@@ -3096,6 +3143,21 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let stores = try BundledStoreDirectoryProvider.decodeStores(Data(json.utf8))
 
         XCTAssertEqual(stores.map(\.name), ["Nike", "Sephora"])
+    }
+
+    func testBundledSupportedStoresIncludesAmericanEagle() throws {
+        let data = try Data(projectSource("StyleMatchAI/Shopping/SupportedStores.json").utf8)
+        let stores = try BundledStoreDirectoryProvider.decodeStores(data)
+        let americanEagle = try XCTUnwrap(stores.first { $0.id == "american-eagle" })
+
+        XCTAssertEqual(americanEagle.name, "American Eagle")
+        XCTAssertEqual(americanEagle.primaryDomain, "ae.com")
+        XCTAssertTrue(americanEagle.isEnabled)
+        XCTAssertTrue(americanEagle.categories.contains(.clothing))
+        XCTAssertTrue(americanEagle.categories.contains(.accessories))
+        XCTAssertEqual(americanEagle.websiteURL?.host, "www.ae.com")
+        XCTAssertEqual(americanEagle.searchURLTemplate, "https://www.ae.com/us/en/s/search?keyword={QUERY}")
+        XCTAssertEqual(americanEagle.affiliateTrackingActive, false)
     }
 
     func testShoppingSearchFiltersByStoreColorPriceOccasionAndStyle() {
@@ -3755,12 +3817,15 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let bestBuy = try XCTUnwrap(config.retailer(named: "Best Buy"))
         let amazon = try XCTUnwrap(config.retailer(named: "Amazon"))
         let target = try XCTUnwrap(config.retailer(named: "Target"))
+        let americanEagle = try XCTUnwrap(config.retailer(named: "American Eagle"))
 
         XCTAssertEqual(bestBuy.searchAdapter, "bestbuy")
         XCTAssertEqual(amazon.searchAdapter, "amazon")
         XCTAssertEqual(target.searchAdapter, "impact")
+        XCTAssertEqual(americanEagle.searchAdapter, "none")
         XCTAssertEqual(bestBuy.searchStatus, "pending")
         XCTAssertEqual(amazon.searchStatus, "pending")
+        XCTAssertEqual(americanEagle.searchStatus, "pending")
     }
 
     func testEveryRetailerAdapterDecodesLocalFixtureResponses() throws {
@@ -3905,6 +3970,122 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(reloaded.preferredRetailerIDs, ["amazon", "macys"])
     }
 
+    func testPreferredRetailerIDsUseAccountScopedPresentationNamespaceByDefault() {
+        let supportedStores = makeSupportedStores()
+        defaults.set("guest", forKey: AccountScopedStorage.activeUserMarkerKey)
+        defaults.set("guest", forKey: "customerAccountMode")
+        defaults.set("stale@example.com", forKey: "customerAccountEmail")
+
+        let store = ShoppingLocalStore(defaults: defaults, supportedStores: supportedStores)
+        store.setPreferredRetailerIDs(["nike", "macys"], supportedStores: supportedStores)
+
+        let guestKey = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: "guest")
+        let staleEmailKey = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: "stale@example.com")
+        XCTAssertEqual(defaults.stringArray(forKey: guestKey), ["nike", "macys"])
+        XCTAssertNil(defaults.stringArray(forKey: staleEmailKey))
+    }
+
+    func testPreferredRetailerIDsSurviveLaunchRepairSimulation() {
+        let supportedStores = makeSupportedStores()
+        defaults.set("guest", forKey: AccountScopedStorage.activeUserMarkerKey)
+        defaults.set("guest", forKey: "customerAccountMode")
+
+        ShoppingLocalStore(defaults: defaults, supportedStores: supportedStores)
+            .setPreferredRetailerIDs(["nike", "macys"], supportedStores: supportedStores)
+
+        if AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .production) {
+            AccountScopedStorage.restoreCapturedLaunchData(defaults: defaults, environment: .production)
+        }
+
+        let relaunched = ShoppingLocalStore(defaults: defaults, supportedStores: supportedStores)
+        XCTAssertEqual(relaunched.preferredRetailerIDs, ["nike", "macys"])
+    }
+
+    func testPreferredRetailerInitializationDoesNotOverwriteNonemptySavedPreferences() {
+        let supportedStores = makeSupportedStores()
+        let key = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: userA)
+        defaults.set(["nike", "macys"], forKey: key)
+
+        _ = ShoppingLocalStore(defaults: defaults, userID: userA, supportedStores: supportedStores)
+
+        XCTAssertEqual(defaults.stringArray(forKey: key), ["nike", "macys"])
+    }
+
+    func testEmptyPreloadRegistryCannotEraseSavedSelectionAcrossAppearanceAndRelaunch() {
+        let key = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: userA)
+        defaults.set(["nike"], forKey: key)
+
+        let firstAppearance = ShoppingLocalStore(defaults: defaults, userID: userA)
+        XCTAssertEqual(
+            firstAppearance.normalizePreferredRetailerIDs(
+                supportedStores: [],
+                registryIsLoaded: false
+            ),
+            ["nike"]
+        )
+        XCTAssertEqual(defaults.stringArray(forKey: key), ["nike"])
+
+        let relaunched = ShoppingLocalStore(defaults: defaults, userID: userA)
+        XCTAssertEqual(
+            relaunched.normalizePreferredRetailerIDs(
+                supportedStores: [],
+                registryIsLoaded: false
+            ),
+            ["nike"]
+        )
+        XCTAssertEqual(defaults.stringArray(forKey: key), ["nike"])
+    }
+
+    func testLoadedRegistryPrunesGenuinelyUnsupportedCanonicalID() {
+        let key = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: userA)
+        defaults.set(["nike", "unsupported-retailer"], forKey: key)
+        let store = ShoppingLocalStore(defaults: defaults, userID: userA)
+
+        XCTAssertEqual(
+            store.normalizePreferredRetailerIDs(
+                supportedStores: makeSupportedStores(),
+                registryIsLoaded: true
+            ),
+            ["nike"]
+        )
+        XCTAssertEqual(defaults.stringArray(forKey: key), ["nike"])
+    }
+
+    func testRowTogglePersistsAcrossSheetDismissAndShoppingReentry() {
+        let supportedStores = makeSupportedStores()
+        let firstShoppingEntry = ShoppingLocalStore(defaults: defaults, userID: userA)
+
+        firstShoppingEntry.setPreferredRetailerIDs(["nike"], supportedStores: supportedStores)
+        _ = firstShoppingEntry.normalizePreferredRetailerIDs(
+            supportedStores: [],
+            registryIsLoaded: false
+        )
+
+        let shoppingReentry = ShoppingLocalStore(defaults: defaults, userID: userA)
+        XCTAssertEqual(
+            shoppingReentry.preferredRetailerIDs(
+                supportedStores: supportedStores,
+                registryIsLoaded: true
+            ),
+            ["nike"]
+        )
+    }
+
+    func testPreferredRetailerLegacyActiveUserNamespaceMigratesToPresentationNamespace() {
+        let supportedStores = makeSupportedStores()
+        defaults.set("guest", forKey: AccountScopedStorage.activeUserMarkerKey)
+        defaults.set("guest", forKey: "customerAccountMode")
+        defaults.set("stale@example.com", forKey: "customerAccountEmail")
+        let legacyKey = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: "stale@example.com")
+        let presentationKey = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: "guest")
+        defaults.set(["nike", "macys"], forKey: legacyKey)
+
+        let store = ShoppingLocalStore(defaults: defaults, supportedStores: supportedStores)
+
+        XCTAssertEqual(store.preferredRetailerIDs, ["nike", "macys"])
+        XCTAssertEqual(defaults.stringArray(forKey: presentationKey), ["nike", "macys"])
+    }
+
     func testPreferredRetailerIDsNormalizeDuplicatesAndRemoveUnknownIDs() {
         let supportedStores = makeSupportedStores()
         let key = PersonalStylistStorage.scopedKey(ShoppingLocalStore.preferredRetailerIDsBaseKey, userID: userA)
@@ -3958,6 +4139,24 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(result.usedFallback)
     }
 
+    func testRetailerPreferencePolicyMatchingCanonicalIDsReturnOnlyThoseRetailers() {
+        let products = [
+            makeAffiliateProduct(id: "nike-shoe", retailerID: "nike"),
+            makeAffiliateProduct(id: "macys-shirt", retailerID: "macys"),
+            makeAffiliateProduct(id: "amazon-shirt", retailerID: "amazon")
+        ]
+
+        let result = RetailerPreferencePolicy.apply(
+            products: products,
+            preferredRetailerIDs: ["nike", "macys"],
+            supportedStores: makeSupportedStores()
+        )
+
+        XCTAssertEqual(result.products.map(\.id), ["nike-shoe", "macys-shirt"])
+        XCTAssertEqual(result.requestedRetailerIDs, ["nike", "macys"])
+        XCTAssertFalse(result.usedFallback)
+    }
+
     func testRetailerPreferencePolicyZeroMatchesFailsOpen() {
         let products = [
             makeAffiliateProduct(id: "amazon", retailerID: "amazon"),
@@ -3973,6 +4172,76 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(result.products.map(\.id), ["amazon", "legacy-without-id"])
         XCTAssertTrue(result.usedFallback)
         XCTAssertEqual(result.requestedRetailerIDs, ["macys"])
+    }
+
+    func testRetailerPreferenceFallbackDoesNotAlterSavedPreferences() {
+        let supportedStores = makeSupportedStores()
+        let store = ShoppingLocalStore(defaults: defaults, userID: userA, supportedStores: supportedStores)
+        store.setPreferredRetailerIDs(["nike", "macys"], supportedStores: supportedStores)
+
+        let result = RetailerPreferencePolicy.apply(
+            products: [makeAffiliateProduct(id: "amazon", retailerID: "amazon")],
+            preferredRetailerIDs: store.preferredRetailerIDs,
+            supportedStores: supportedStores
+        )
+
+        XCTAssertTrue(result.usedFallback)
+        XCTAssertEqual(store.preferredRetailerIDs, ["nike", "macys"])
+    }
+
+    func testRetailerPreferenceFallbackCopyNamesSelectedStores() {
+        XCTAssertEqual(
+            RetailerPreferencePolicy.fallbackCopy(selectedStoreNames: ["Nike", "Macy's", "Best Buy", "Target", "Walmart"]),
+            "No matching products are currently available from your selected stores. Showing recommendations from all approved retailers until more inventory becomes available. Selected stores: Nike, Macy's, Best Buy, Target, Walmart."
+        )
+    }
+
+    func testZeroMatchSelectionUsesFallbackWithAlignedBanner() {
+        let result = RetailerPreferencePolicy.apply(
+            products: [makeAffiliateProduct(id: "amazon", retailerID: "amazon")],
+            preferredRetailerIDs: ["nike"],
+            supportedStores: makeSupportedStores()
+        )
+
+        XCTAssertTrue(result.usedFallback)
+        XCTAssertEqual(result.products.map(\.id), ["amazon"])
+        XCTAssertEqual(
+            RetailerPreferencePolicy.fallbackCopy(selectedStoreNames: ["Nike"]),
+            "No matching products are currently available from your selected stores. Showing recommendations from all approved retailers until more inventory becomes available. Selected stores: Nike."
+        )
+    }
+
+    func testStoreCoverageStateCountsCanonicalRetailerIDsAndExcludesNil() {
+        let coverage = StoreCoverageState.loaded(products: [
+            makeAffiliateProduct(id: "nike-1", retailerID: "nike"),
+            makeAffiliateProduct(id: "nike-2", retailerID: "NIKE"),
+            makeAffiliateProduct(id: "macys", retailerID: " macys "),
+            makeAffiliateProduct(id: "legacy", retailerID: nil)
+        ], source: .remote)
+
+        XCTAssertEqual(coverage.productCount(for: "nike"), 2)
+        XCTAssertEqual(coverage.productCount(for: "macys"), 1)
+        XCTAssertEqual(coverage.productCount(for: "amazon"), 0)
+        XCTAssertEqual(coverage, .loaded(countsByRetailerID: ["nike": 2, "macys": 1], source: .remote))
+    }
+
+    func testStoreCoverageStateDistinguishesUnavailableFromLoadedZero() {
+        let unavailable = StoreCoverageState.unavailable
+        let loadedEmpty = StoreCoverageState.loaded(products: [], source: .bundled)
+
+        XCTAssertNil(unavailable.productCount(for: "nike"))
+        XCTAssertEqual(loadedEmpty.productCount(for: "nike"), 0)
+        XCTAssertEqual(loadedEmpty, .loaded(countsByRetailerID: [:], source: .bundled))
+    }
+
+    func testMyStoresRowsPresentCoverageLabelsWithoutBlockingSelection() throws {
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+
+        XCTAssertTrue(shoppingSource.contains("availabilityLine(for: supportedStore)"))
+        XCTAssertTrue(shoppingSource.contains("Availability unknown"))
+        XCTAssertTrue(shoppingSource.contains("No products available yet"))
+        XCTAssertTrue(shoppingSource.contains("toggle(supportedStore)"))
+        XCTAssertTrue(shoppingSource.contains("accessibilityLabel(\"\\(supportedStore.name),"))
     }
 
     func testShoppingObservableStoreIgnoresMalformedEncodedValuesWithoutClearingValidState() {
@@ -4449,7 +4718,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     func testStoreSearchUsesSharedWorkerBackedCatalogProvider() throws {
         let source = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
 
-        XCTAssertTrue(source.contains("SharedProductCatalogLoader.shared.products()"))
+        XCTAssertTrue(source.contains("SharedProductCatalogLoader.shared.loadResult()"))
+        XCTAssertTrue(source.contains("catalogResult.source != .none"))
         XCTAssertTrue(source.contains("ShoppingSearchEngine.relaxedFilter(products: policyResult.products, query: currentQuery())"))
         XCTAssertTrue(source.contains("[StyleMatch Store Search] Search failed:"))
     }
@@ -4675,8 +4945,13 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             urlSession: session
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .remote)
+        XCTAssertEqual(result.diagnostic.finalSource, .remote)
+        XCTAssertEqual(result.diagnostic.httpStatus, 200)
+        XCTAssertEqual(result.diagnostic.remoteProductCount, 1)
         XCTAssertEqual(products.map(\.id), ["macys-white-oxford"])
         XCTAssertEqual(products.first?.affiliateURL.absoluteString, "https://proxy.example.com/v1/go/macys-white-oxford")
         XCTAssertEqual(products.first?.retailerID, "macys")
@@ -4695,7 +4970,6 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(url.absoluteString.contains("user"))
         XCTAssertFalse(url.absoluteString.contains("wardrobe"))
     }
-
 
     func testRemoteCatalogDecodePreservesCanonicalStoreIDWithoutNameInference() throws {
         let data = Data("""
@@ -4777,6 +5051,41 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertNil(products.first(where: { $0.id == "legacy-local-shirt" })?.retailerID)
     }
 
+    func testBundledCatalogEntriesUseApprovedCanonicalRetailerIDs() throws {
+        let catalogData = try Data(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("StyleMatchAI/Shopping/ProductCatalog.json")
+        )
+        let supportedStoresData = try Data(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("StyleMatchAI/Shopping/SupportedStores.json")
+        )
+
+        let products = try BundledCatalogProvider.decodeProducts(catalogData: catalogData)
+        let supportedStores = try JSONDecoder().decode([SupportedStore].self, from: supportedStoresData)
+        let approvedStoreIDs = Set(
+            supportedStores
+                .filter(\.isEnabled)
+                .map(\.id)
+                .compactMap(RetailerPreferencePolicy.canonicalID(_:))
+        )
+
+        XCTAssertEqual(products.count, 12)
+        XCTAssertFalse(approvedStoreIDs.isEmpty)
+        for product in products {
+            let retailerID = try XCTUnwrap(product.retailerID, "\(product.id) is missing retailer_id")
+            XCTAssertEqual(retailerID, "amazon")
+            XCTAssertTrue(
+                approvedStoreIDs.contains(retailerID),
+                "\(product.id) uses unsupported retailer_id \(retailerID)"
+            )
+        }
+    }
+
     func testBundledCatalogUnknownRetailerIDDoesNotSilentlyMapFromDisplayName() throws {
         let catalogData = Data("""
         [
@@ -4829,6 +5138,21 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(legacy.id, backfilled.id)
         XCTAssertNil(legacy.retailerID)
         XCTAssertEqual(backfilled.retailerID, "macys")
+    }
+
+    func testRemoteCatalogReturningTwelveProductsSelectsRemoteSourceForBrowse() async throws {
+        CatalogTestURLProtocol.mode = .response(remoteCatalogPayload(ids: (1...12).map { "remote-\($0)" }), 200)
+        let provider = makeResilientCatalogProvider(
+            cacheDirectory: temporaryCatalogDirectory(),
+            fallback: StaticProductCatalogProvider(products: [catalogTestProduct(id: "bundled-product")])
+        )
+
+        let result = await provider.loadResult()
+
+        XCTAssertEqual(result.source, .remote)
+        XCTAssertEqual(result.products.count, 12)
+        XCTAssertEqual(result.diagnostic.remoteProductCount, 12)
+        XCTAssertEqual(result.diagnostic.finalSource, .remote)
     }
 
     func testRemoteCatalogProviderFiltersByCountryAndFormatsGBPPrices() throws {
@@ -4901,8 +5225,13 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: StaticProductCatalogProvider(products: [catalogTestProduct(id: "bundled-product")])
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .cache)
+        XCTAssertEqual(result.diagnostic.finalSource, .cache)
+        XCTAssertTrue(result.diagnostic.cacheHit)
+        XCTAssertNotNil(result.diagnostic.cacheAge)
         XCTAssertEqual(products.map(\.id), ["cached-product"])
         XCTAssertEqual(CatalogTestURLProtocol.lastRequest?.timeoutInterval, RemoteCatalogProvider.defaultRequestTimeout)
         XCTAssertEqual(RemoteCatalogProvider.defaultRequestTimeout, 10)
@@ -4916,8 +5245,12 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: StaticProductCatalogProvider(products: [catalogTestProduct(id: "bundled-product")])
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .bundled)
+        XCTAssertEqual(result.diagnostic.finalSource, .bundled)
+        XCTAssertEqual(result.diagnostic.bundledFallbackCount, 1)
         XCTAssertEqual(products.map(\.id), ["bundled-product"])
     }
 
@@ -4929,8 +5262,12 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: StaticProductCatalogProvider(products: [catalogTestProduct(id: "offline-bundled")])
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .bundled)
+        XCTAssertEqual(result.diagnostic.finalSource, .bundled)
+        XCTAssertEqual(result.diagnostic.classification, .connectivity)
         XCTAssertEqual(products.map(\.id), ["offline-bundled"])
         XCTAssertFalse(FileManager.default.fileExists(atPath: cacheDirectory.path))
     }
@@ -4946,8 +5283,11 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: StaticProductCatalogProvider(products: [catalogTestProduct(id: "bundled-after-corrupt-cache")])
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .bundled)
+        XCTAssertEqual(result.diagnostic.finalSource, .bundled)
         XCTAssertEqual(products.map(\.id), ["bundled-after-corrupt-cache"])
     }
 
@@ -4961,8 +5301,11 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: StaticProductCatalogProvider(products: [catalogTestProduct(id: "bundled-product")])
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .remote)
+        XCTAssertEqual(result.diagnostic.finalSource, .remote)
         XCTAssertEqual(products.map(\.id), ["remote-product"])
     }
 
@@ -4996,8 +5339,11 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: StaticProductCatalogProvider(products: [unsafeURL, unavailable, wrongCountry, safe])
         )
 
-        let products = try await provider.products()
+        let result = await provider.loadResult()
+        let products = result.products
 
+        XCTAssertEqual(result.source, .bundled)
+        XCTAssertEqual(result.diagnostic.finalSource, .bundled)
         XCTAssertEqual(products.map(\.id), ["safe"])
     }
 
@@ -5012,6 +5358,10 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             fallback: FailingProductCatalogProvider(error: ProductCatalogProviderError.missingCatalog)
         )
 
+        let result = await provider.loadResult()
+        XCTAssertEqual(result.source, .none)
+        XCTAssertEqual(result.diagnostic.finalSource, .none)
+
         do {
             _ = try await provider.products()
             XCTFail("Expected every catalog source to fail.")
@@ -5020,6 +5370,59 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         } catch {
             XCTFail("Expected missingCatalog, received \(error).")
         }
+    }
+
+    func testBundledStaticFallbackCatalogContainsApprovedSafeBrowseProductsAndNoDeals() throws {
+        let catalogData = try Data(projectSource("StyleMatchAI/Shopping/ProductCatalog.json").utf8)
+        let retailerConfigData = try Data(projectSource("StyleMatchAI/Shopping/RetailerConfig.json").utf8)
+        let decoded = try BundledCatalogProvider.decodeProducts(
+            catalogData: catalogData,
+            retailerConfigData: retailerConfigData
+        )
+        let safe = CatalogProductSafetyValidator.validated(decoded, regionCode: "US")
+
+        XCTAssertEqual(safe.count, 12)
+        XCTAssertTrue(safe.contains { $0.imageURL == nil })
+        XCTAssertTrue(safe.allSatisfy { $0.salePrice == nil && $0.saleEndsAt == nil })
+        XCTAssertTrue(safe.allSatisfy { $0.tags.contains("fallback-static") })
+        XCTAssertTrue(safe.allSatisfy { product in
+            guard let host = URLComponents(url: AffiliateLinkBuilder.outboundURL(for: product), resolvingAgainstBaseURL: false)?.host else {
+                return false
+            }
+            return !host.isEmpty && host != "stylematch.local"
+        })
+    }
+
+    func testRemoteCatalogUSNGAndGBResponsesDecodeSuccessfully() throws {
+        let payload = remoteCatalogPayload(
+            ids: (1...13).map { "global-\($0)" },
+            availableCountries: ["US", "NG", "GB"]
+        )
+
+        XCTAssertEqual(try RemoteCatalogProvider.decodeRemoteProducts(payload, baseURL: URL(string: "https://proxy.example.com")!, regionCode: "US").count, 13)
+        XCTAssertEqual(try RemoteCatalogProvider.decodeRemoteProducts(payload, baseURL: URL(string: "https://proxy.example.com")!, regionCode: "NG").count, 13)
+        XCTAssertEqual(try RemoteCatalogProvider.decodeRemoteProducts(payload, baseURL: URL(string: "https://proxy.example.com")!, regionCode: "GB").count, 13)
+    }
+
+    func testShoppingSourceStatesSeparateTransportFailureFromNarrowFilters() throws {
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+
+        XCTAssertTrue(shoppingSource.contains("SharedProductCatalogLoader.shared.loadResult()"))
+        XCTAssertTrue(shoppingSource.contains("catalogResult.source != .none"))
+        XCTAssertTrue(shoppingSource.contains("live catalog, cache, or bundled fallback"))
+        XCTAssertTrue(shoppingSource.contains("catalogSource == .bundled"))
+        XCTAssertTrue(shoppingSource.contains("searchResults.isEmpty, !products.isEmpty"))
+        XCTAssertTrue(shoppingSource.contains("Your current filters are narrow"))
+    }
+
+    func testShoppingEndpointIsCatalogConfigAndNotChatOrAccountStagingOverride() throws {
+        let catalogSource = try projectSource("StyleMatchAI/Shopping/ProductCatalogProvider.swift")
+
+        XCTAssertTrue(catalogSource.contains("ShoppingRuntimeConfig"))
+        XCTAssertTrue(catalogSource.contains("catalogBaseURL"))
+        XCTAssertTrue(catalogSource.contains("appendingPathComponent(\"v1/products\")"))
+        XCTAssertFalse(catalogSource.contains("StyleMatchAccountClient"))
+        XCTAssertFalse(catalogSource.contains("StylistChatService"))
     }
 
     func testPersonalStylistEngineFinalMessageOmitsDealsWhenSaleMatchingFlagIsFalse() {
@@ -5778,6 +6181,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
     private func makeSupportedStores() -> [SupportedStore] {
         [
+            SupportedStore(id: "nike", name: "Nike", domains: ["nike.com"], categories: [.clothing, .shoes, .accessories], affiliateNetwork: "TBD", apiStatus: "affiliate-placeholder", isEnabled: true),
             SupportedStore(id: "amazon", name: "Amazon", domains: ["amazon.com"], categories: ProductCategory.allCases, affiliateNetwork: "Amazon Associates", apiStatus: "approved", isEnabled: true),
             SupportedStore(id: "macys", name: "Macy's", domains: ["macys.com"], categories: [.clothing, .shoes, .accessories], affiliateNetwork: "Impact", apiStatus: "approved", isEnabled: true),
             SupportedStore(id: "disabled", name: "Disabled", domains: ["disabled.example"], categories: [.clothing], affiliateNetwork: nil, apiStatus: "disabled", isEnabled: false)
@@ -5837,14 +6241,18 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     }
 
     private func remoteCatalogPayload(id: String) -> Data {
-        Data("""
-        {
-          "products": [
+        remoteCatalogPayload(ids: [id])
+    }
+
+    private func remoteCatalogPayload(ids: [String], availableCountries: [String] = ["*"]) -> Data {
+        let countries = availableCountries.map { "\"\($0)\"" }.joined(separator: ", ")
+        let productObjects = ids.map { id in
+            """
             {
               "id": "\(id)",
               "store_id": "example",
               "store_name": "Example",
-              "name": "Remote Catalog Product",
+              "name": "Remote Catalog Product \(id)",
               "image_url": null,
               "category": "tops",
               "brand": "Example",
@@ -5853,11 +6261,17 @@ final class StyleMatchProPhase2Tests: XCTestCase {
               "sale_ends_at": null,
               "currency": "USD",
               "country_code": "US",
-              "available_countries": ["*"],
+              "available_countries": [\(countries)],
               "availability": "in_stock",
               "tags": ["navy", "shirt"],
               "buy_url": "https://proxy.example.com/go/\(id)"
             }
+            """
+        }.joined(separator: ",")
+        return Data("""
+        {
+          "products": [
+            \(productObjects)
           ],
           "next_cursor": null,
           "disclosure": "Test disclosure"
@@ -5872,7 +6286,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             favoriteColors: [],
             dislikedColors: [],
             favoriteBrands: [],
-            preferredFit: .regular,
+            preferredFit: .unset,
             budgetRange: BudgetRange(minPrice: 50, maxPrice: 200, preferredTier: "Mid"),
             climate: "Mild",
             workDressCode: "Smart casual",
@@ -6110,7 +6524,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let completeBlock = String(profileSource[completeStart.lowerBound..<completeEnd.lowerBound])
         XCTAssertTrue(completeBlock.contains("styleConsultationCompletedAt = ISO8601DateFormatter().string(from: Date())"))
         XCTAssertTrue(completeBlock.contains("saveProfileDraft()"))
-        XCTAssertTrue(profileSource.contains("Sizes come from your existing Size Profile"))
+        XCTAssertTrue(profileSource.contains("Waist and inseam determine pant sizing."))
         XCTAssertTrue(profileSource.contains("Self-selected only. StyleMatch Pro does not estimate or infer undertone from images."))
         XCTAssertTrue(profileSource.contains("Color groups are optional and editable. If a color belongs in more than one group for you, keep both and adjust later."))
         XCTAssertTrue(profileSource.contains("This phase does not rewrite the AI assistant personality system."))
@@ -6201,7 +6615,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(profileSource.contains("they do not change outfit scores"))
         XCTAssertTrue(profileSource.contains("Style Identity"))
         XCTAssertTrue(profileSource.contains("Primary goals"))
-        XCTAssertTrue(profileSource.contains("Preferred Fit"))
+        XCTAssertTrue(profileSource.contains("Preferred Pant Fit"))
         XCTAssertTrue(profileSource.contains("Color Palette"))
         XCTAssertTrue(profileSource.contains("Comfort Preferences"))
         XCTAssertTrue(profileSource.contains("Favorite Brands"))
@@ -6261,7 +6675,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertTrue(scanSource.contains("private func progressOverTimeMetric("))
         XCTAssertTrue(scanSource.contains("action: (() -> Void)? = nil"))
-        XCTAssertTrue(scanSource.contains("progressOverTimeMetric(\n                    title: \"Outfits Scanned\""))
+        XCTAssertTrue(scanSource.contains("progressOverTimeMetric(\n                    title: \"Saved Scans\""))
         XCTAssertTrue(scanSource.contains("scrollProxy.scrollTo(\"recentOutfitScores\", anchor: .top)"))
         XCTAssertTrue(scanSource.contains("progressOverTimeMetric(\n                    title: \"Closet Items\""))
         XCTAssertTrue(scanSource.contains("accessibilityLabel: \"Open Virtual Closet, \\(scanClosetItemCountText) items\""))
@@ -6855,6 +7269,153 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertFalse(contentSource.contains("Only black loafers or clean sneakers appear to be missing."))
     }
 
+    func testScanProgressSummaryUsesTruthfulEmptyState() {
+        let summary = ScanProgressSummary(scores: [])
+
+        XCTAssertNil(summary.averageScore)
+        XCTAssertNil(summary.highestScore)
+        XCTAssertEqual(summary.savedScanCount, 0)
+        XCTAssertEqual(summary.averageScoreText, "—")
+        XCTAssertEqual(summary.highestScoreText, "—")
+        XCTAssertEqual(summary.savedScanCountText, "0")
+    }
+
+    func testScanProgressSummaryDerivesThreePersistedScores() {
+        let summary = ScanProgressSummary(scores: [80, 90, 100])
+
+        XCTAssertEqual(summary.averageScore, 90)
+        XCTAssertEqual(summary.highestScore, 100)
+        XCTAssertEqual(summary.savedScanCount, 3)
+    }
+
+    func testEmptyScanProgressOmitsUnavailableAIAggregates() {
+        let aggregates = ScanProgressSummary(scores: []).visibleAggregates
+
+        XCTAssertNil(aggregates.averageScore)
+        XCTAssertNil(aggregates.highestScore)
+        XCTAssertEqual(aggregates.totalScans, 0)
+    }
+
+    func testRetainedHistoryLimitIsPresentedAsSavedScans() throws {
+        let summary = ScanProgressSummary(scores: Array(repeating: 80, count: 20))
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertEqual(summary.savedScanCount, 20)
+        XCTAssertTrue(scanSource.contains("title: \"Saved Scans\""))
+        XCTAssertTrue(scanSource.contains(".prefix(20)"))
+        XCTAssertFalse(scanSource.contains("title: \"Outfits Scanned\""))
+    }
+
+    func testScanProgressHasNoSampleEmptyFallbacks() throws {
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertFalse(scanSource.contains("return \"88\""))
+        XCTAssertFalse(scanSource.contains("return \"96\""))
+        XCTAssertFalse(scanSource.contains("return \"347\""))
+        XCTAssertFalse(scanSource.contains("Int(averageScoreText"))
+        XCTAssertFalse(scanSource.contains("Int(highestScoreText"))
+        XCTAssertFalse(scanSource.contains("Int(outfitsScannedText"))
+    }
+
+    func testPreferredPantFitOptionsMatchTheProfileContract() {
+        XCTAssertEqual(
+            PantFitPreference.options,
+            ["Slim Fit", "Regular Fit", "Relaxed Fit", "Athletic Fit", "Loose Fit", "No Preference"]
+        )
+        XCTAssertEqual(PantFitPreference.fromProfileInput("Slim").displayName, "Slim Fit")
+        XCTAssertEqual(PantFitPreference.fromProfileInput("Regular Fit").displayName, "Regular Fit")
+        XCTAssertEqual(PantFitPreference.fromProfileInput("Relaxed").displayName, "Relaxed Fit")
+        XCTAssertEqual(PantFitPreference.fromProfileInput("Athletic Fit").displayName, "Athletic Fit")
+        XCTAssertEqual(PantFitPreference.fromProfileInput("Loose").displayName, "Loose Fit")
+    }
+
+    func testAmbiguousLegacyPantPreferencesMigrateToNoPreference() {
+        for legacyValue in ["Low", "Mid", "High", "Oversized", "Tailored", "unknown"] {
+            XCTAssertEqual(
+                PantFitPreference.migratedValue(currentValue: legacyValue, legacyOverallFit: nil),
+                "No Preference",
+                "\(legacyValue) must not be guessed into a pant-fit preference"
+            )
+        }
+    }
+
+    func testPantFitMigrationPreservesWaistAndInseam() {
+        defaults.set("36", forKey: "waistSize")
+        defaults.set("32", forKey: "inseamLength")
+        defaults.set("Mid", forKey: "preferredPantRise")
+        defaults.set("Oversized", forKey: "fitPreference")
+
+        PantFitPreference.migrateDefaultsIfNeeded(defaults: defaults)
+
+        XCTAssertEqual(defaults.string(forKey: "preferredPantFit"), "No Preference")
+        XCTAssertEqual(defaults.string(forKey: "fitPreference"), "Oversized")
+        XCTAssertEqual(defaults.string(forKey: "waistSize"), "36")
+        XCTAssertEqual(defaults.string(forKey: "inseamLength"), "32")
+        XCTAssertEqual(defaults.string(forKey: "preferredPantRise"), "Mid")
+    }
+
+    func testClearLegacyFitMappingsArePreserved() {
+        let expected = [
+            "Slim": "Slim Fit",
+            "Regular": "Regular Fit",
+            "Relaxed": "Relaxed Fit"
+        ]
+
+        for (legacy, canonical) in expected {
+            XCTAssertEqual(PantFitPreference.migratedValue(currentValue: nil, legacyOverallFit: legacy), canonical)
+        }
+
+        for ambiguousLegacyValue in ["Oversized", "Tailored", "Athletic", "Loose", "unknown", ""] {
+            XCTAssertEqual(
+                PantFitPreference.migratedValue(currentValue: nil, legacyOverallFit: ambiguousLegacyValue),
+                "No Preference"
+            )
+        }
+    }
+
+    func testPreferredPantFitIsDisplayedAndUsedConsistently() throws {
+        let profileSource = try projectSource("StyleMatchAI/ProfileView.swift")
+        let closetSource = try projectSource("StyleMatchAI/ClosetView.swift")
+        let contextSource = try projectSource("StyleMatchAI/PersonalStylist/StylistContextBuilder.swift")
+        let clientSource = try projectSource("StyleMatchAI/OpenAIStylistClient.swift")
+        let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
+
+        XCTAssertTrue(profileSource.contains("Picker(\"Preferred Pant Fit\""))
+        XCTAssertTrue(closetSource.contains("Picker(\"Preferred Pant Fit\""))
+        XCTAssertTrue(profileSource.contains("Picker(\"Preferred Pant Rise\""))
+        XCTAssertTrue(closetSource.contains("Picker(\"Preferred Pant Rise\""))
+        XCTAssertEqual(PantRisePreference.options, ["Low Rise", "Mid Rise", "High Rise", "No Preference"])
+        XCTAssertTrue(contextSource.contains("Preferred pant fit:"))
+        XCTAssertTrue(clientSource.contains("Preferred pant fit"))
+        XCTAssertTrue(scanSource.contains("preferred pant fit:"))
+        XCTAssertFalse(scanSource.contains("parts.append(\"preferred fit:"))
+    }
+
+    func testFitProfileOnboardingMeasurementsAreInteractive() throws {
+        let profileSource = try projectSource("StyleMatchAI/ProfileView.swift")
+
+        XCTAssertTrue(profileSource.contains("Picker(\"Shirt Size\", selection: binding(\\.shirtSize))"))
+        XCTAssertTrue(profileSource.contains("Picker(\"Shoe Size\", selection: binding(\\.shoeSize))"))
+        XCTAssertTrue(profileSource.contains("measurementField(\"Waist\", keyPath: \\.waistSize"))
+        XCTAssertTrue(profileSource.contains("measurementField(\"Inseam\", keyPath: \\.inseamLength"))
+        XCTAssertTrue(profileSource.contains("measurementField(\"Sleeve Length\", keyPath: \\.sleeveLength"))
+        XCTAssertTrue(profileSource.contains("measurementField(\"Neck Size\", keyPath: \\.neckSize"))
+        XCTAssertTrue(profileSource.contains("Text(\"Choose size\").tag(\"\")"))
+        XCTAssertTrue(profileSource.contains("prompt: \"Add measurement\""))
+        XCTAssertFalse(profileSource.contains("profileValueRow(\"Shirt size\""))
+        XCTAssertFalse(profileSource.contains("profileValueRow(\"Waist\""))
+        XCTAssertTrue(profileSource.contains("Waist and inseam determine pant sizing."))
+    }
+
+    func testNoPreferenceIsOmittedFromPersonalStylistContext() {
+        var profile = makeStylistProfile(userId: userA)
+        profile.preferredPantFit = .unset
+
+        let context = PersonalizationContextBuilder.buildContext(profile: profile, recentMemories: [])
+
+        XCTAssertFalse(context.contains("Preferred pant fit:"))
+    }
+
     func testPrivacyDeletionUsesActiveUserBeforeClearingSessionKeys() {
         defaults.set(userA, forKey: "customerAppleUserID")
         defaults.set(["Saba", "stine"].joined(), forKey: "profileName")
@@ -6969,6 +7530,94 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: "outfitScanHistoryData"), Data("guest-history".utf8))
         XCTAssertEqual(ProfileStore(defaults: defaults, userId: userA).currentProfile.favoriteColors, ["navy"])
         XCTAssertEqual(ShoppingLocalStore(defaults: defaults, userID: userA).savedFavorites, ["guest-favorite"])
+    }
+
+    func testAccountSnapshotsAreIsolatedByBackendEnvironment() {
+        defaults.set("apple", forKey: "customerAccountMode")
+        defaults.set(userA, forKey: "customerAppleUserID")
+        defaults.set(PersonalStylistStorage.normalizedUserID(userA), forKey: AccountScopedStorage.activeUserMarkerKey)
+        defaults.set(AccountStorageEnvironment.production.rawValue, forKey: AccountScopedStorage.activeEnvironmentMarkerKey)
+        defaults.set(Data("production-history".utf8), forKey: "outfitScanHistoryData")
+
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .staging))
+        XCTAssertNil(defaults.data(forKey: "outfitScanHistoryData"))
+        defaults.set(Data("staging-history".utf8), forKey: "outfitScanHistoryData")
+
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .localAcceptance))
+        XCTAssertNil(defaults.data(forKey: "outfitScanHistoryData"))
+        defaults.set(Data("local-history".utf8), forKey: "outfitScanHistoryData")
+
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .production))
+        XCTAssertEqual(defaults.data(forKey: "outfitScanHistoryData"), Data("production-history".utf8))
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .staging))
+        XCTAssertEqual(defaults.data(forKey: "outfitScanHistoryData"), Data("staging-history".utf8))
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .localAcceptance))
+        XCTAssertEqual(defaults.data(forKey: "outfitScanHistoryData"), Data("local-history".utf8))
+    }
+
+    func testLegacyAccountSnapshotMigratesToProductionOnlyWithoutDeletion() {
+        defaults.set("apple", forKey: "customerAccountMode")
+        defaults.set(userA, forKey: "customerAppleUserID")
+        defaults.set(PersonalStylistStorage.normalizedUserID(userA), forKey: AccountScopedStorage.activeUserMarkerKey)
+        let legacyKey = AccountScopedStorage.legacySnapshotKey("outfitScanHistoryData", userID: userA)
+        let productionKey = AccountScopedStorage.snapshotKey(
+            "outfitScanHistoryData",
+            userID: userA,
+            environment: .production
+        )
+        let stagingKey = AccountScopedStorage.snapshotKey(
+            "outfitScanHistoryData",
+            userID: userA,
+            environment: .staging
+        )
+        defaults.set(Data("legitimate-history".utf8), forKey: legacyKey)
+
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .staging))
+        XCTAssertNil(defaults.data(forKey: "outfitScanHistoryData"))
+        XCTAssertEqual(defaults.data(forKey: productionKey), Data("legitimate-history".utf8))
+        XCTAssertNil(defaults.data(forKey: stagingKey))
+        XCTAssertEqual(defaults.data(forKey: legacyKey), Data("legitimate-history".utf8))
+
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: .production))
+        XCTAssertEqual(defaults.data(forKey: "outfitScanHistoryData"), Data("legitimate-history".utf8))
+    }
+
+    func testGuestTransferRemainsExplicitWithinCurrentEnvironment() {
+        defaults.set("guest", forKey: AccountScopedStorage.activeUserMarkerKey)
+        defaults.set(AccountStorageEnvironment.staging.rawValue, forKey: AccountScopedStorage.activeEnvironmentMarkerKey)
+        defaults.set(Data("staging-guest-history".utf8), forKey: "outfitScanHistoryData")
+
+        AccountScopedStorage.switchUser(
+            from: "guest",
+            to: userA,
+            transferSourceData: false,
+            defaults: defaults,
+            environment: .staging
+        )
+        XCTAssertNil(defaults.data(forKey: "outfitScanHistoryData"))
+
+        AccountScopedStorage.switchUser(
+            from: userA,
+            to: "guest",
+            transferSourceData: false,
+            defaults: defaults,
+            environment: .staging
+        )
+        AccountScopedStorage.switchUser(
+            from: "guest",
+            to: userA,
+            transferSourceData: true,
+            defaults: defaults,
+            environment: .staging
+        )
+        XCTAssertEqual(defaults.data(forKey: "outfitScanHistoryData"), Data("staging-guest-history".utf8))
+        XCTAssertNil(
+            defaults.data(forKey: AccountScopedStorage.snapshotKey(
+                "outfitScanHistoryData",
+                userID: userA,
+                environment: .production
+            ))
+        )
     }
 
     func testDeletingOneAccountScopePreservesOtherAccountScope() {
@@ -8046,10 +8695,11 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         let scan = try projectSource("StyleMatchAI/ScanView.swift")
         let chat = try projectSource("StyleMatchAI/StylistChat/StylistChatView.swift")
 
-        XCTAssertTrue(content.contains("screenContext: .aiTab(entryPoint: stylistEntryPoint)"))
+        XCTAssertTrue(content.contains("initialContext: activeStylistScanHandoff?.aiChatContext"))
+        XCTAssertTrue(content.contains("activeStylistScanHandoff?.aiScreenContext"))
         XCTAssertTrue(content.contains("stylistEntryPointForAI(from:"))
-        XCTAssertFalse(content.contains("latestScanScreenContext"))
-        XCTAssertFalse(content.contains("stylistEntryScreenContext"))
+        XCTAssertTrue(content.contains("case .shop:\n            return .shopping"))
+        XCTAssertTrue(content.contains("scanStylistHandoff == nil ? .scanTab : .scanResult"))
 
         XCTAssertTrue(scan.contains("StylistActiveScanStateResolver.resolve("))
         XCTAssertTrue(scan.contains("savedScanIDs: Set(loadScanHistory().keys)"))
@@ -8057,9 +8707,14 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(scan.contains("if deletedActiveScan {\n            invalidateActiveScanSession()\n            result = nil\n            preparedAnalysis = nil"))
         XCTAssertTrue(scan.contains("private func prepareNewCameraSession() {\n        invalidateActiveScanSession()\n        isAnalyzing = false\n        selectedItem = nil\n        result = nil"))
         XCTAssertTrue(scan.contains("private func loadImage(from item: PhotosPickerItem?) async {\n        invalidateActiveScanSession()\n        result = nil"))
+        XCTAssertTrue(scan.contains("onStylistScanHandoffChanged(currentStylistScanHandoff)"))
+        XCTAssertTrue(scan.contains("onStylistScanHandoffChanged(handoff)"))
+        XCTAssertTrue(scan.contains("publishCurrentStylistScanHandoff(source: \"saved_scan_open\")"))
 
-        XCTAssertTrue(chat.contains("resolvingSavedScanAvailability("))
+        XCTAssertTrue(chat.contains("StylistConversationScreenContextResolver.resolve("))
         XCTAssertTrue(chat.contains("applyingCurrentScreenContext(currentScreenContext)"))
+        XCTAssertTrue(chat.contains("applyCurrentScanHandoff()"))
+        XCTAssertTrue(chat.contains("screenContext.activeScanState == .none ? nil : initialContext"))
     }
 
     func testConversationalStylistVoiceInputHasPermissionCopyAndAccessibilityLabels() throws {

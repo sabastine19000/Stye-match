@@ -122,6 +122,7 @@ struct ShoppingView: View {
     @State private var products: [AffiliateProduct] = []
     @State private var liveSearchProducts: [AffiliateProduct]?
     @State private var supportedStores: [SupportedStore] = []
+    @State private var isStoreRegistryLoaded = false
     @State private var recommendations: [ProductRecommendation] = []
     @State private var saleAlerts: [ShoppingSaleAlert] = []
     @State private var favoriteSaleEvents: [SaleEvent] = []
@@ -136,14 +137,16 @@ struct ShoppingView: View {
     @State private var showBrowseFilters = false
     @State private var engagementPath: [ShoppingEngagementDestination] = []
     @State private var browseMode: ShoppingBrowseMode = .browse
-    @State private var deckIndex = 0
     @State private var storeScope: ShoppingStoreScope = .myStores
+    @State private var deckIndex = 0
     @State private var recommendationBasis: Set<ShoppingRecommendationBasis> = Set(ShoppingRecommendationBasis.defaultEnabled)
     @State private var derivedCatalogContent = ShoppingDerivedCatalogContent.empty
     @State private var isLoading = true
     @State private var isCatalogLoadInFlight = false
     @State private var isSearchingLive = false
     @State private var loadError: String?
+    @State private var catalogSource: ProductCatalogSource = .none
+    @State private var catalogDiagnostic = ProductCatalogLoadDiagnostic.empty
     @State private var catalogDisclosure = ShoppingCatalogDisclosure.fallback
     @StateObject private var profileStore = ProfileStore()
     @StateObject private var outfitMemoryStore = OutfitMemoryStore()
@@ -171,6 +174,12 @@ struct ShoppingView: View {
                         if isCatalogLoadInFlight {
                             catalogRefreshNotice
                         }
+                        if catalogSource == .bundled {
+                            catalogFallbackNotice
+                        }
+                        if retailerPreferenceResult.usedFallback, storeScope == .myStores {
+                            retailerPreferenceFallbackNotice
+                        }
                         stylistFeedCard
                         discoveryShortcutRail
 
@@ -197,9 +206,6 @@ struct ShoppingView: View {
                         styleProgressCard
                         feedbackRecommendedSection
                         browseHeader
-                        if retailerPreferenceResult.usedFallback, storeScope == .myStores {
-                            retailerPreferenceFallbackNotice
-                        }
                         if showBrowseFilters, browseMode == .browse {
                             searchControls
                             recommendationBasisControls
@@ -258,7 +264,7 @@ struct ShoppingView: View {
                         Button {
                             showRecommendationPreferences = true
                         } label: {
-                            Label("Recommendation preferences", systemImage: "gearshape")
+                            Label("Recommendation preferences", systemImage: "slider.horizontal.3")
                         }
                     } label: {
                         Label("Shopping settings", systemImage: "gearshape")
@@ -281,7 +287,12 @@ struct ShoppingView: View {
                 recommendationPreferencesSheet
             }
             .sheet(isPresented: $showMyStores) {
-                MyStoresManagementView(supportedStores: supportedStores, store: store)
+                MyStoresManagementView(
+                    supportedStores: supportedStores,
+                    store: store,
+                    coverage: currentStoreCoverage,
+                    registryIsLoaded: isStoreRegistryLoaded
+                )
             }
             .sheet(isPresented: $showExpandedDisclosure) {
                 NavigationStack {
@@ -314,7 +325,10 @@ struct ShoppingView: View {
                 #endif
                 showExpandedDisclosure = store.affiliateDisclosureExpanded
                 recommendationBasis = Set(basis(from: RecommendationRationaleBuilder.preferences(from: profileStore.currentProfile)))
-                _ = store.normalizePreferredRetailerIDs(supportedStores: supportedStores)
+                _ = store.normalizePreferredRetailerIDs(
+                    supportedStores: supportedStores,
+                    registryIsLoaded: isStoreRegistryLoaded
+                )
             }
         }
     }
@@ -360,6 +374,39 @@ struct ShoppingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Refreshing shopping catalog")
+    }
+
+    private var catalogFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Static shopping catalog")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                Text("Live Shopping refresh is unavailable, so these fallback picks may not reflect the latest retailer catalog.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .appCard(.shop, radius: 10)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var retailerPreferenceFallbackNotice: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "storefront")
+                .foregroundStyle(Color.orange)
+            Text(RetailerPreferencePolicy.fallbackCopy(selectedStoreNames: selectedFallbackStoreNames))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .appCard(.shop, radius: 10)
+        .accessibilityElement(children: .combine)
     }
 
     private var stylistFeedCard: some View {
@@ -686,18 +733,6 @@ struct ShoppingView: View {
             }
             .buttonStyle(.bordered)
         }
-    }
-
-    private var retailerPreferenceFallbackNotice: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "storefront")
-                .foregroundStyle(Color.orange)
-            Text(RetailerPreferencePolicy.fallbackCopy)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding()
-        .appCard(.shop, radius: 10)
     }
 
     private var filteredDiscoveryState: some View {
@@ -1126,7 +1161,7 @@ struct ShoppingView: View {
 
     private func swipeProductCard(_ product: AffiliateProduct) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            ShoppingProductImage(imageURL: product.remoteImageRequestURL)
+            ShoppingProductImage(product: product)
                 .frame(height: 260)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
 
@@ -1253,7 +1288,7 @@ struct ShoppingView: View {
             openProductExternally(product)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                ShoppingProductImage(imageURL: product.remoteImageRequestURL)
+                ShoppingProductImage(product: product)
                     .frame(width: 168, height: 120)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                 Text(viewModel.name)
@@ -1552,12 +1587,6 @@ struct ShoppingView: View {
 
     private var searchControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("Search store, product, brand, color, size, style, gender, price, or occasion", text: Binding(
-                get: { searchCriteria.query },
-                set: { searchCriteria.query = $0 }
-            ))
-            .textFieldStyle(.roundedBorder)
-
             Picker("Store scope", selection: $storeScope) {
                 ForEach(ShoppingStoreScope.allCases) { scope in
                     Text(scope.title).tag(scope)
@@ -1568,6 +1597,12 @@ struct ShoppingView: View {
                 normalizeDeckIndex()
                 reloadRecommendations()
             }
+
+            TextField("Search store, product, brand, color, size, style, gender, price, or occasion", text: Binding(
+                get: { searchCriteria.query },
+                set: { searchCriteria.query = $0 }
+            ))
+            .textFieldStyle(.roundedBorder)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -1620,10 +1655,6 @@ struct ShoppingView: View {
         retailerPreferenceResult.products
     }
 
-    private var searchCatalogProducts: [AffiliateProduct] {
-        budgetFiltered(baseSearchProducts)
-    }
-
     private var retailerPreferenceResult: RetailerPreferenceResult {
         RetailerPreferencePolicy.apply(
             products: rawBaseSearchProducts,
@@ -1633,10 +1664,18 @@ struct ShoppingView: View {
     }
 
     private var activePreferredRetailerIDs: [String] {
-        guard storeScope == .myStores, searchCriteria.storeName == nil else {
+        guard storeScope == .myStores,
+              searchCriteria.storeName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true else {
             return []
         }
-        return store.preferredRetailerIDs(supportedStores: supportedStores)
+        return store.preferredRetailerIDs(
+            supportedStores: supportedStores,
+            registryIsLoaded: isStoreRegistryLoaded
+        )
+    }
+
+    private var searchCatalogProducts: [AffiliateProduct] {
+        budgetFiltered(baseSearchProducts)
     }
 
     private var relaxedSearchResult: ShoppingSearchEngine.RelaxedFilterResult {
@@ -1664,6 +1703,14 @@ struct ShoppingView: View {
     private var selectedSupportedStore: SupportedStore? {
         guard let storeName = searchCriteria.storeName, !storeName.isEmpty else { return nil }
         return supportedStores.first { $0.name.caseInsensitiveCompare(storeName) == .orderedSame }
+    }
+
+    private var selectedFallbackStoreNames: [String] {
+        storeNames(for: retailerPreferenceResult.requestedRetailerIDs)
+    }
+
+    private var currentStoreCoverage: StoreCoverageState {
+        catalogSource == .none ? .unavailable : .loaded(products: rawBaseSearchProducts, source: catalogSource)
     }
 
     private var isSelectedStoreUnavailable: Bool {
@@ -1856,10 +1903,11 @@ struct ShoppingView: View {
     }
 
     private var currentDeckProduct: AffiliateProduct? {
-        guard deckIndex < searchCatalogProducts.count else {
+        let deckProducts = searchCatalogProducts
+        guard deckIndex < deckProducts.count else {
             return nil
         }
-        return searchCatalogProducts[deckIndex]
+        return deckProducts[deckIndex]
     }
 
     private var styleLevel: Int {
@@ -2170,7 +2218,7 @@ struct ShoppingView: View {
                 openProductExternally(product)
             } label: {
                 HStack(alignment: .top, spacing: 12) {
-                    ShoppingProductImage(imageURL: product.remoteImageRequestURL)
+                    ShoppingProductImage(product: product)
                     .frame(width: 82, height: 82)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -2618,13 +2666,34 @@ struct ShoppingView: View {
         isCatalogLoadInFlight = true
         isLoading = products.isEmpty
         loadError = nil
+        let providerStartedAt = CFAbsoluteTimeGetCurrent()
+        async let loadedCatalog = SharedProductCatalogLoader.shared.loadResult()
+        async let loadedStores = BundledStoreDirectoryProvider().stores()
+        let catalogResult = await loadedCatalog
+        #if DEBUG
+        print("[StyleMatch Shopping Catalog] \(catalogResult.diagnostic.debugSummary)")
+        #endif
+        guard catalogResult.source != .none else {
+            let stores = (try? await loadedStores) ?? []
+            await MainActor.run {
+                products = []
+                supportedStores = stores
+                isStoreRegistryLoaded = true
+                catalogSource = .none
+                catalogDiagnostic = catalogResult.diagnostic
+                loadError = "We could not load Shopping from the live catalog, cache, or bundled fallback. Please check your connection and retry."
+                isCatalogLoadInFlight = false
+                isLoading = false
+                #if DEBUG
+                ShoppingPerformanceLog.mark("catalog total failure", startedAt: loadStartedAt)
+                #endif
+            }
+            return
+        }
         do {
-            let providerStartedAt = CFAbsoluteTimeGetCurrent()
-            async let loadedProducts = SharedProductCatalogLoader.shared.products()
-            async let loadedStores = BundledStoreDirectoryProvider().stores()
-            let loaded = try await loadedProducts
+            let loaded = catalogResult.products
             #if DEBUG
-            ShoppingPerformanceLog.mark("catalog provider load products=\(loaded.count)", startedAt: providerStartedAt)
+            ShoppingPerformanceLog.mark("catalog provider load products=\(loaded.count) source=\(catalogResult.source.rawValue)", startedAt: providerStartedAt)
             #endif
             let disclosureStartedAt = CFAbsoluteTimeGetCurrent()
             let disclosure = await SharedProductCatalogLoader.shared.disclosure()
@@ -2636,13 +2705,12 @@ struct ShoppingView: View {
             let preferences = currentRecommendationPreferences()
             let profile = profileStore.currentProfile
             let memories = outfitMemoryStore.memories
-            let normalizedPreferredRetailerIDs = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
-                store.preferredRetailerIDs,
-                supportedStores: stores
-            )
+            let normalizedPreferredRetailerIDs = storeScope == .myStores
+                ? store.preferredRetailerIDs(supportedStores: stores)
+                : []
             let retailerPolicyResult = RetailerPreferencePolicy.apply(
                 products: loaded,
-                preferredRetailerIDs: storeScope == .myStores ? normalizedPreferredRetailerIDs : [],
+                preferredRetailerIDs: normalizedPreferredRetailerIDs,
                 supportedStores: stores
             )
             let scopedCatalog = retailerPolicyResult.products
@@ -2686,9 +2754,15 @@ struct ShoppingView: View {
             #endif
             await MainActor.run {
                 products = loaded
+                catalogSource = catalogResult.source
+                catalogDiagnostic = catalogResult.diagnostic
                 catalogDisclosure = disclosure
                 supportedStores = stores
-                store.setPreferredRetailerIDs(normalizedPreferredRetailerIDs, supportedStores: stores)
+                isStoreRegistryLoaded = true
+                _ = store.normalizePreferredRetailerIDs(
+                    supportedStores: stores,
+                    registryIsLoaded: true
+                )
                 recommendations = visibleRecommendations
                 derivedCatalogContent = derivedContent
                 alertsEnabled = store.saleNotificationsEnabled
@@ -2699,32 +2773,33 @@ struct ShoppingView: View {
                 isCatalogLoadInFlight = false
                 isLoading = false
                 #if DEBUG
-                logCatalogDisplayInvariant(providerCount: loaded.count, eligibleCount: eligibleCatalog.count)
+                logCatalogDisplayInvariant(
+                    providerCount: loaded.count,
+                    eligibleCount: eligibleCatalog.count,
+                    source: catalogResult.source,
+                    diagnostic: catalogResult.diagnostic
+                )
+                logRetailerPreferenceDiagnostics(
+                    selectedRetailerIDs: normalizedPreferredRetailerIDs,
+                    loadedProducts: loaded,
+                    filteredProducts: scopedCatalog,
+                    fallbackUsed: retailerPolicyResult.usedFallback,
+                    displayedProducts: visibleRecommendations.map(\.product)
+                )
                 ShoppingPerformanceLog.mark("Shop final ready state", startedAt: loadStartedAt)
                 #endif
             }
             await checkPendingProductRoute()
         } catch {
             await MainActor.run {
-                loadError = "We could not load the retailer catalog. Please try again."
+                catalogSource = .none
+                catalogDiagnostic = catalogResult.diagnostic
+                loadError = "We could not finish preparing the Shopping catalog. Please try again."
                 isCatalogLoadInFlight = false
                 isLoading = false
             }
         }
     }
-
-    #if DEBUG
-    private func logCatalogDisplayInvariant(providerCount: Int, eligibleCount: Int) {
-        let filteredCount = searchCatalogProducts.count
-        let displayedCount = searchResults.count
-        let allSelected = selectedCategory == nil && searchCriteria.isEmpty
-        let summary = "remote_count=\(providerCount) provider_count=\(providerCount) shopping_state_count=\(products.count) eligible_count=\(eligibleCount) filtered_count=\(filteredCount) displayed_count=\(displayedCount) all_selected=\(allSelected) in_flight=\(isCatalogLoadInFlight)"
-        print("[StyleMatch Shopping Display] \(summary)")
-        if providerCount > 0, displayedCount == 0, allSelected {
-            print("[StyleMatch Shopping Display Invariant Failure] remote products loaded but displayed zero with All selected: \(summary)")
-        }
-    }
-    #endif
 
     private func runLiveSearch() async {
         guard FeatureFlags.liveSearchEnabled else {
@@ -2757,6 +2832,27 @@ struct ShoppingView: View {
             }
         }
     }
+
+    #if DEBUG
+    private func logCatalogDisplayInvariant(
+        providerCount: Int,
+        eligibleCount: Int,
+        source: ProductCatalogSource,
+        diagnostic: ProductCatalogLoadDiagnostic
+    ) {
+        let filteredCount = searchCatalogProducts.count
+        let displayedCount = searchResults.count
+        let allSelected = selectedCategory == nil && searchCriteria.isEmpty
+        let summary = "source=\(source.rawValue) provider_count=\(providerCount) shopping_state_count=\(products.count) eligible_count=\(eligibleCount) filtered_count=\(filteredCount) displayed_count=\(displayedCount) all_selected=\(allSelected) in_flight=\(isCatalogLoadInFlight) final_source=\(diagnostic.finalSource.rawValue)"
+        print("[StyleMatch Shopping Display] \(summary)")
+        if source == .remote,
+           diagnostic.remoteProductCount ?? 0 > 0,
+           displayedCount == 0,
+           allSelected {
+            print("[StyleMatch Shopping Display Invariant Failure] remote decoded products but displayed zero with All selected: \(summary)")
+        }
+    }
+    #endif
 
     private func refreshSaleAlerts() {
         saleAlerts = makeSaleAlerts(from: products)
@@ -2823,11 +2919,44 @@ struct ShoppingView: View {
         formatter.maximumFractionDigits = 2
         return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
     }
+
+    private func storeNames(for retailerIDs: [String]) -> [String] {
+        let namesByID = Dictionary(uniqueKeysWithValues: supportedStores.map { ($0.id, $0.name) })
+        return retailerIDs.map { namesByID[$0] ?? $0 }
+    }
+
+    #if DEBUG
+    private func logRetailerPreferenceDiagnostics(
+        selectedRetailerIDs: [String],
+        loadedProducts: [AffiliateProduct],
+        filteredProducts: [AffiliateProduct],
+        fallbackUsed: Bool,
+        displayedProducts: [AffiliateProduct]
+    ) {
+        let loadedCounts = Self.countsByRetailerID(loadedProducts)
+        let displayedCounts = Self.countsByRetailerID(displayedProducts)
+        let fallbackReason = fallbackUsed
+            ? "selected_retailers_matched_zero_products"
+            : "none"
+        print(
+            "[StyleMatch Shopping Retailers] selected=\(selectedRetailerIDs) loadedByRetailer=\(loadedCounts) filteredCount=\(filteredProducts.count) fallbackReason=\(fallbackReason) displayedByRetailer=\(displayedCounts)"
+        )
+    }
+
+    private static func countsByRetailerID(_ products: [AffiliateProduct]) -> [String: Int] {
+        Dictionary(
+            grouping: products.compactMap { RetailerPreferencePolicy.canonicalID($0.retailerID) },
+            by: { $0 }
+        ).mapValues(\.count)
+    }
+    #endif
 }
 
 struct MyStoresManagementView: View {
     let supportedStores: [SupportedStore]
     @ObservedObject var store: ShoppingLocalStore
+    let coverage: StoreCoverageState
+    let registryIsLoaded: Bool
     @Environment(\.dismiss) private var dismiss
 
     private var enabledStores: [SupportedStore] {
@@ -2835,7 +2964,10 @@ struct MyStoresManagementView: View {
     }
 
     private var selectedIDs: Set<String> {
-        Set(store.preferredRetailerIDs(supportedStores: enabledStores))
+        Set(store.preferredRetailerIDs(
+            supportedStores: enabledStores,
+            registryIsLoaded: registryIsLoaded
+        ))
     }
 
     var body: some View {
@@ -2874,6 +3006,10 @@ struct MyStoresManagementView: View {
                                     Text(supportedStore.primaryDomain ?? supportedStore.id)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                    Text(availabilityLine(for: supportedStore))
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(availabilityColor(for: supportedStore))
                                 }
                                 Spacer()
                                 Image(systemName: selectedIDs.contains(supportedStore.id) ? "checkmark.circle.fill" : "circle")
@@ -2908,10 +3044,45 @@ struct MyStoresManagementView: View {
         }
         store.setPreferredRetailerIDs(Array(next), supportedStores: enabledStores)
     }
+
+    private func availabilityLine(for supportedStore: SupportedStore) -> String {
+        guard let count = coverage.productCount(for: supportedStore.id) else {
+            return "Availability unknown"
+        }
+        if count == 1 { return "1 product" }
+        if count > 1 { return "\(count) products" }
+        return "No products available yet"
+    }
+
+    private func availabilityColor(for supportedStore: SupportedStore) -> Color {
+        guard let count = coverage.productCount(for: supportedStore.id) else {
+            return .secondary
+        }
+        return .secondary
+    }
 }
 
 struct ShoppingProductImage: View {
     let imageURL: URL?
+    let productName: String
+    let retailerName: String
+    let category: ProductCategory?
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(product: AffiliateProduct) {
+        imageURL = product.remoteImageRequestURL
+        productName = product.name
+        retailerName = product.retailer.name
+        category = product.category
+    }
+
+    init(imageURL: URL?, productName: String, retailerName: String, category: ProductCategory?) {
+        self.imageURL = imageURL
+        self.productName = productName
+        self.retailerName = retailerName
+        self.category = category
+    }
 
     var body: some View {
         Group {
@@ -2923,21 +3094,79 @@ struct ShoppingProductImage: View {
                     case .success(let image):
                         image.resizable().scaledToFill()
                     case .failure:
-                        imagePlaceholder(systemImage: "exclamationmark.triangle.fill", title: "Image unavailable", showsProgress: false)
+                        brandedFallback(reason: .loadFailure)
                     @unknown default:
                         imagePlaceholder(systemImage: "photo", title: "Loading image", showsProgress: true)
                     }
                 }
             } else {
-                imagePlaceholder(systemImage: "photo", title: "No image", showsProgress: false)
+                brandedFallback(reason: .missing)
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(imageURL == nil ? "No product image available" : "Product image")
+        .accessibilityHidden(true)
         .onAppear {
             #if DEBUG
             ShoppingPerformanceLog.mark("product image view appeared hasURL=\(imageURL != nil)")
             #endif
+        }
+    }
+
+    private func brandedFallback(reason: ShoppingProductImageFallbackReason) -> some View {
+        let presentation = ShoppingProductImageFallbackPresentation.make(
+            category: category,
+            productName: productName,
+            retailerName: retailerName,
+            reason: reason
+        )
+
+        return GeometryReader { proxy in
+            let compact = proxy.size.height < 110 || proxy.size.width < 120
+
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color.orange.opacity(
+                            ShoppingProductImageFallbackPresentation.accentOpacity(
+                                isDarkMode: colorScheme == .dark
+                            )
+                        ),
+                        Color(.secondarySystemBackground)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                VStack(spacing: compact ? 3 : 7) {
+                    Image(systemName: presentation.systemImage)
+                        .font(compact ? .headline : .title2)
+                        .foregroundStyle(Color.orange)
+                        .frame(width: compact ? 30 : 44, height: compact ? 30 : 44)
+                        .background(Color.orange.opacity(colorScheme == .dark ? 0.22 : 0.12))
+                        .clipShape(Circle())
+
+                    if !compact {
+                        Text(presentation.categoryLabel.uppercased())
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .tracking(0.7)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Text(presentation.identityText)
+                        .font(compact ? .caption2 : .caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(compact ? 1 : 2)
+
+                    Text(presentation.statusText)
+                        .font(.system(size: compact ? 8 : 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(1)
+                }
+                .padding(compact ? 5 : 10)
+            }
         }
     }
 

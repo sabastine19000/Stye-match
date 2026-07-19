@@ -64,6 +64,7 @@ let package = Package(
                 "Shopping/ProductComplementaryPieceRecommender.swift",
                 "Shopping/ShoppingTabUpgradeNotes.swift",
                 "Shopping/ShoppingLocalStore.swift",
+                "Shopping/StoreCoverageState.swift",
                 "Shopping/ShoppingSaleAlertService.swift",
                 "Shopping/SaleWatcher.swift",
                 "Shopping/ShoppingSearchEngine.swift",
