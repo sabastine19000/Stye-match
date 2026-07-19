@@ -152,10 +152,29 @@ enum PersonalStylistStorage {
     }
 }
 
+enum AccountStorageEnvironment: String, CaseIterable {
+    case production
+    case staging
+    case localAcceptance = "local-acceptance"
+
+    static var current: AccountStorageEnvironment {
+        guard let resolution = StyleMatchRuntimeEndpoint.chatResolution() else {
+            return .production
+        }
+        if resolution.overrideActive {
+            return .localAcceptance
+        }
+        return resolution.baseURL.host?.lowercased() == StylistChatConfiguration.stagingHost
+            ? .staging
+            : .production
+    }
+}
+
 enum AccountScopedStorage {
     static let activeUserMarkerKey = "accountScopedActiveUserID"
+    static let activeEnvironmentMarkerKey = "accountScopedActiveEnvironment"
     static let migrationVersionKey = "accountScopedStorageVersion"
-    static let currentMigrationVersion = 1
+    static let currentMigrationVersion = 2
 
     /// Existing screens continue using these shared presentation keys. At an
     /// account boundary they are snapshotted and restored under the destination
@@ -190,6 +209,7 @@ enum AccountScopedStorage {
         "sleeveLength",
         "shoeSize",
         "fitPreference",
+        "preferredPantFit",
         "stylePreferences",
         "occasions",
         "plannedOccasion",
@@ -252,65 +272,111 @@ enum AccountScopedStorage {
         )
     }
 
+    static func activeEnvironment(defaults: UserDefaults = .standard) -> AccountStorageEnvironment {
+        guard let rawValue = defaults.string(forKey: activeEnvironmentMarkerKey),
+              let environment = AccountStorageEnvironment(rawValue: rawValue) else {
+            // Version 1 snapshots predate environment isolation and are production data.
+            return .production
+        }
+        return environment
+    }
+
     /// Called before older launch migrations. Returning true means this launch
     /// captured legacy shared data and must restore it after those migrations.
     @discardableResult
-    static func prepareForLaunch(defaults: UserDefaults = .standard) -> Bool {
+    static func prepareForLaunch(
+        defaults: UserDefaults = .standard,
+        environment: AccountStorageEnvironment = .current
+    ) -> Bool {
         let sessionUser = sessionUserID(defaults: defaults)
+        let storedUser = PersonalStylistStorage.normalizedUserID(
+            defaults.string(forKey: activeUserMarkerKey) ?? sessionUser
+        )
+        let hadEnvironmentMarker = defaults.string(forKey: activeEnvironmentMarkerKey) != nil
+        let storedEnvironment = activeEnvironment(defaults: defaults)
 
-        guard let storedActiveUser = defaults.string(forKey: activeUserMarkerKey) else {
-            snapshotSharedData(for: sessionUser, defaults: defaults)
-            defaults.set(sessionUser, forKey: activeUserMarkerKey)
-            defaults.set(currentMigrationVersion, forKey: migrationVersionKey)
-            return true
+        if !hadEnvironmentMarker {
+            // Preserve the version 1 presentation and snapshots as production-only data.
+            snapshotSharedData(for: storedUser, environment: .production, defaults: defaults)
+            migrateLegacySnapshotToProduction(for: storedUser, defaults: defaults)
         }
 
-        let activeUser = PersonalStylistStorage.normalizedUserID(storedActiveUser)
-        guard activeUser != sessionUser else { return false }
+        if storedUser == sessionUser, storedEnvironment == environment {
+            defaults.set(sessionUser, forKey: activeUserMarkerKey)
+            defaults.set(environment.rawValue, forKey: activeEnvironmentMarkerKey)
+            defaults.set(currentMigrationVersion, forKey: migrationVersionKey)
+            return !hadEnvironmentMarker && environment == .production
+        }
 
-        snapshotSharedData(for: activeUser, defaults: defaults)
+        if hadEnvironmentMarker {
+            snapshotSharedData(for: storedUser, environment: storedEnvironment, defaults: defaults)
+        }
         clearSharedData(defaults: defaults)
-        restoreSharedData(for: sessionUser, defaults: defaults)
+        if environment == .production {
+            migrateLegacySnapshotToProduction(for: sessionUser, defaults: defaults)
+        }
+        restoreSharedData(for: sessionUser, environment: environment, defaults: defaults)
         defaults.set(sessionUser, forKey: activeUserMarkerKey)
+        defaults.set(environment.rawValue, forKey: activeEnvironmentMarkerKey)
+        defaults.set(currentMigrationVersion, forKey: migrationVersionKey)
         return false
     }
 
-    static func restoreCapturedLaunchData(defaults: UserDefaults = .standard) {
+    static func restoreCapturedLaunchData(
+        defaults: UserDefaults = .standard,
+        environment: AccountStorageEnvironment? = nil
+    ) {
         let activeUser = defaults.string(forKey: activeUserMarkerKey) ?? sessionUserID(defaults: defaults)
+        let resolvedEnvironment = environment ?? activeEnvironment(defaults: defaults)
         clearSharedData(defaults: defaults)
-        restoreSharedData(for: activeUser, defaults: defaults)
+        restoreSharedData(for: activeUser, environment: resolvedEnvironment, defaults: defaults)
     }
 
     static func switchUser(
         from sourceUserID: String,
         to destinationUserID: String,
         transferSourceData: Bool,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        environment: AccountStorageEnvironment = .current
     ) {
         let source = PersonalStylistStorage.normalizedUserID(sourceUserID)
         let destination = PersonalStylistStorage.normalizedUserID(destinationUserID)
         guard source != destination else {
             defaults.set(destination, forKey: activeUserMarkerKey)
+            defaults.set(environment.rawValue, forKey: activeEnvironmentMarkerKey)
             return
         }
 
-        snapshotSharedData(for: source, defaults: defaults)
-        if transferSourceData, !hasUserData(for: destination, defaults: defaults) {
-            copySnapshot(from: source, to: destination, defaults: defaults)
-            PersonalStylistStorage.transferPersonalization(from: source, to: destination, defaults: defaults)
+        snapshotSharedData(for: source, environment: environment, defaults: defaults)
+        if transferSourceData, !hasUserData(for: destination, defaults: defaults, environment: environment) {
+            copySnapshot(from: source, to: destination, environment: environment, defaults: defaults)
+            if environment == .production {
+                PersonalStylistStorage.transferPersonalization(from: source, to: destination, defaults: defaults)
+            }
         }
 
         clearSharedData(defaults: defaults)
-        restoreSharedData(for: destination, defaults: defaults)
+        if environment == .production {
+            migrateLegacySnapshotToProduction(for: destination, defaults: defaults)
+        }
+        restoreSharedData(for: destination, environment: environment, defaults: defaults)
         defaults.set(destination, forKey: activeUserMarkerKey)
+        defaults.set(environment.rawValue, forKey: activeEnvironmentMarkerKey)
     }
 
-    static func hasUserData(for userID: String, defaults: UserDefaults = .standard) -> Bool {
+    static func hasUserData(
+        for userID: String,
+        defaults: UserDefaults = .standard,
+        environment: AccountStorageEnvironment = .current
+    ) -> Bool {
         let normalized = PersonalStylistStorage.normalizedUserID(userID)
-        if userDataKeys.contains(where: { defaults.object(forKey: snapshotKey($0, userID: normalized)) != nil }) {
+        if userDataKeys.contains(where: {
+            defaults.object(forKey: snapshotKey($0, userID: normalized, environment: environment)) != nil
+        }) {
             return true
         }
 
+        guard environment == .production else { return false }
         return [
             PersonalStylistStorage.legacyProfileKey,
             PersonalStylistStorage.legacyMemoriesKey,
@@ -321,14 +387,23 @@ enum AccountScopedStorage {
         }
     }
 
-    static func deleteUserData(for userID: String, defaults: UserDefaults = .standard) {
+    static func deleteUserData(
+        for userID: String,
+        defaults: UserDefaults = .standard,
+        environment: AccountStorageEnvironment = .current
+    ) {
         let normalized = PersonalStylistStorage.normalizedUserID(userID)
-        userDataKeys.forEach { defaults.removeObject(forKey: snapshotKey($0, userID: normalized)) }
-        PersonalStylistStorage.deletePersonalization(for: normalized, defaults: defaults)
-        ShoppingLocalStore.deleteShoppingData(for: normalized, defaults: defaults)
-        ChatConversationStore.deleteAll(for: normalized)
+        userDataKeys.forEach {
+            defaults.removeObject(forKey: snapshotKey($0, userID: normalized, environment: environment))
+        }
+        if environment == .production {
+            PersonalStylistStorage.deletePersonalization(for: normalized, defaults: defaults)
+            ShoppingLocalStore.deleteShoppingData(for: normalized, defaults: defaults)
+            ChatConversationStore.deleteAll(for: normalized)
+        }
 
-        if PersonalStylistStorage.normalizedUserID(defaults.string(forKey: activeUserMarkerKey) ?? "guest") == normalized {
+        if PersonalStylistStorage.normalizedUserID(defaults.string(forKey: activeUserMarkerKey) ?? "guest") == normalized,
+           activeEnvironment(defaults: defaults) == environment {
             clearSharedData(defaults: defaults)
         }
     }
@@ -337,10 +412,14 @@ enum AccountScopedStorage {
         sensitiveDeviceKeys.forEach { defaults.removeObject(forKey: $0) }
     }
 
-    private static func snapshotSharedData(for userID: String, defaults: UserDefaults) {
+    private static func snapshotSharedData(
+        for userID: String,
+        environment: AccountStorageEnvironment,
+        defaults: UserDefaults
+    ) {
         let normalized = PersonalStylistStorage.normalizedUserID(userID)
         for key in userDataKeys {
-            let destination = snapshotKey(key, userID: normalized)
+            let destination = snapshotKey(key, userID: normalized, environment: environment)
             if let value = defaults.object(forKey: key) {
                 defaults.set(value, forKey: destination)
             } else {
@@ -349,10 +428,14 @@ enum AccountScopedStorage {
         }
     }
 
-    private static func restoreSharedData(for userID: String, defaults: UserDefaults) {
+    private static func restoreSharedData(
+        for userID: String,
+        environment: AccountStorageEnvironment,
+        defaults: UserDefaults
+    ) {
         let normalized = PersonalStylistStorage.normalizedUserID(userID)
         for key in userDataKeys {
-            if let value = defaults.object(forKey: snapshotKey(key, userID: normalized)) {
+            if let value = defaults.object(forKey: snapshotKey(key, userID: normalized, environment: environment)) {
                 defaults.set(value, forKey: key)
             }
         }
@@ -362,17 +445,42 @@ enum AccountScopedStorage {
         userDataKeys.forEach { defaults.removeObject(forKey: $0) }
     }
 
-    private static func copySnapshot(from sourceUserID: String, to destinationUserID: String, defaults: UserDefaults) {
+    private static func copySnapshot(
+        from sourceUserID: String,
+        to destinationUserID: String,
+        environment: AccountStorageEnvironment,
+        defaults: UserDefaults
+    ) {
         for key in userDataKeys {
-            let source = snapshotKey(key, userID: sourceUserID)
-            let destination = snapshotKey(key, userID: destinationUserID)
+            let source = snapshotKey(key, userID: sourceUserID, environment: environment)
+            let destination = snapshotKey(key, userID: destinationUserID, environment: environment)
             if let value = defaults.object(forKey: source) {
                 defaults.set(value, forKey: destination)
             }
         }
     }
 
-    private static func snapshotKey(_ key: String, userID: String) -> String {
+    private static func migrateLegacySnapshotToProduction(for userID: String, defaults: UserDefaults) {
+        let normalized = PersonalStylistStorage.normalizedUserID(userID)
+        for key in userDataKeys {
+            let legacyKey = legacySnapshotKey(key, userID: normalized)
+            let productionKey = snapshotKey(key, userID: normalized, environment: .production)
+            if defaults.object(forKey: productionKey) == nil,
+               let legacyValue = defaults.object(forKey: legacyKey) {
+                defaults.set(legacyValue, forKey: productionKey)
+            }
+        }
+    }
+
+    static func snapshotKey(
+        _ key: String,
+        userID: String,
+        environment: AccountStorageEnvironment
+    ) -> String {
+        PersonalStylistStorage.scopedKey("accountScoped.\(environment.rawValue).\(key)", userID: userID)
+    }
+
+    static func legacySnapshotKey(_ key: String, userID: String) -> String {
         PersonalStylistStorage.scopedKey("accountScoped.\(key)", userID: userID)
     }
 }
@@ -410,6 +518,7 @@ enum LegacyProfileKeyMigration {
         "sleeveLength",
         "shoeSize",
         "fitPreference",
+        "preferredPantFit",
         "stylePreferences",
         "occasions",
         "plannedOccasion",
