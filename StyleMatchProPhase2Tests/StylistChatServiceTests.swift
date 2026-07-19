@@ -1,6 +1,138 @@
 import XCTest
 @testable import StyleMatchPro
 
+final class StyleMatchRuntimeEndpointTests: XCTestCase {
+    private let production = StylistChatConfiguration(
+        baseURL: URL(string: "https://api.stylematchpro.com")!
+    )
+
+    func testDebugOverrideUsesPrivateLANHTTPURL() throws {
+        let chatResolution = try XCTUnwrap(StyleMatchRuntimeEndpoint.chatResolution(
+            defaultConfiguration: production,
+            environment: [
+                StyleMatchRuntimeEndpoint.overrideEnvironmentKey: "http://192.168.1.42:8787"
+            ],
+            allowsOverride: true
+        ))
+        let accountResolution = try XCTUnwrap(StyleMatchRuntimeEndpoint.accountResolution(
+            defaultURL: production.baseURL,
+            environment: [
+                StyleMatchRuntimeEndpoint.overrideEnvironmentKey: "http://192.168.1.42:8787"
+            ],
+            allowsOverride: true
+        ))
+
+        XCTAssertTrue(chatResolution.overrideActive)
+        XCTAssertTrue(accountResolution.overrideActive)
+        XCTAssertEqual(chatResolution.baseURL.absoluteString, "http://192.168.1.42:8787")
+        XCTAssertEqual(accountResolution.baseURL, chatResolution.baseURL)
+    }
+
+    func testUnsetOverridePreservesConfiguredEndpoint() throws {
+        let resolution = try XCTUnwrap(StyleMatchRuntimeEndpoint.chatResolution(
+            defaultConfiguration: production,
+            environment: [:],
+            allowsOverride: true
+        ))
+
+        XCTAssertFalse(resolution.overrideActive)
+        XCTAssertEqual(resolution.baseURL, production.baseURL)
+    }
+
+    func testReleaseModeIgnoresOverride() throws {
+        let chatResolution = try XCTUnwrap(StyleMatchRuntimeEndpoint.chatResolution(
+            defaultConfiguration: production,
+            environment: [
+                StyleMatchRuntimeEndpoint.overrideEnvironmentKey: "http://10.0.0.25:8787"
+            ],
+            allowsOverride: false
+        ))
+        let accountResolution = try XCTUnwrap(StyleMatchRuntimeEndpoint.accountResolution(
+            defaultURL: production.baseURL,
+            environment: [
+                StyleMatchRuntimeEndpoint.overrideEnvironmentKey: "http://10.0.0.25:8787"
+            ],
+            allowsOverride: false
+        ))
+
+        XCTAssertFalse(chatResolution.overrideActive)
+        XCTAssertFalse(accountResolution.overrideActive)
+        XCTAssertEqual(chatResolution.baseURL, production.baseURL)
+        XCTAssertEqual(accountResolution.baseURL, production.baseURL)
+    }
+
+    func testDebugOverrideRejectsMalformedPublicOrUnscopedHosts() {
+        for rawValue in [
+            "not a URL",
+            "http://example.com:8787",
+            "http://192.168.1.42",
+            "http://192.168.1.42:8787/v1/chat"
+        ] {
+            let chatResolution = StyleMatchRuntimeEndpoint.chatResolution(
+                defaultConfiguration: production,
+                environment: [StyleMatchRuntimeEndpoint.overrideEnvironmentKey: rawValue],
+                allowsOverride: true
+            )
+            let accountResolution = StyleMatchRuntimeEndpoint.accountResolution(
+                defaultURL: production.baseURL,
+                environment: [StyleMatchRuntimeEndpoint.overrideEnvironmentKey: rawValue],
+                allowsOverride: true
+            )
+            XCTAssertNil(chatResolution, rawValue)
+            XCTAssertNil(accountResolution, rawValue)
+        }
+    }
+
+    func testStorageEnvironmentClassifiesOnlyApprovedHostsAndOverrides() throws {
+        let productionResolution = StyleMatchRuntimeEndpointResolution(
+            baseURL: production.baseURL,
+            overrideActive: false
+        )
+        let stagingResolution = StyleMatchRuntimeEndpointResolution(
+            baseURL: try XCTUnwrap(URL(string: "https://STYLEMATCH-AFFILIATE-PROXY-STAGING.SABASTINE-7000.WORKERS.DEV")),
+            overrideActive: false
+        )
+        let localResolution = try XCTUnwrap(StyleMatchRuntimeEndpoint.resolve(
+            defaultURL: production.baseURL,
+            environment: [StyleMatchRuntimeEndpoint.overrideEnvironmentKey: "http://10.0.0.25:8787"],
+            allowsOverride: true
+        ))
+
+        XCTAssertEqual(AccountStorageEnvironment.classification(for: productionResolution), .production)
+        XCTAssertEqual(AccountStorageEnvironment.classification(for: stagingResolution), .staging)
+        XCTAssertEqual(AccountStorageEnvironment.classification(for: localResolution), .localAcceptance)
+    }
+
+    func testStorageEnvironmentRejectsLookalikeSuffixSubdomainAndUnknownHosts() throws {
+        for host in [
+            "stylematch-affiliate-proxy-staging.sabastine-7000.workers.dev.evil.example",
+            "preview.stylematch-affiliate-proxy-staging.sabastine-7000.workers.dev",
+            "stylematch-affiliate-proxy-staging-sabastine-7000.workers.dev",
+            "unknown.example"
+        ] {
+            let resolution = StyleMatchRuntimeEndpointResolution(
+                baseURL: try XCTUnwrap(URL(string: "https://\(host)")),
+                overrideActive: false
+            )
+            XCTAssertNil(AccountStorageEnvironment.classification(for: resolution), host)
+        }
+    }
+
+    func testUnresolvedEndpointDoesNotMutateOrPersistStorageNamespace() {
+        let suiteName = "StyleMatchRuntimeEndpointTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("production", forKey: AccountScopedStorage.activeEnvironmentMarkerKey)
+        defaults.set("keep-me", forKey: "profileName")
+
+        XCTAssertNil(AccountStorageEnvironment.classification(for: nil))
+        XCTAssertFalse(AccountScopedStorage.prepareForLaunch(defaults: defaults, environment: nil))
+        XCTAssertEqual(defaults.string(forKey: AccountScopedStorage.activeEnvironmentMarkerKey), "production")
+        XCTAssertEqual(defaults.string(forKey: "profileName"), "keep-me")
+        XCTAssertNil(defaults.object(forKey: AccountScopedStorage.migrationVersionKey))
+    }
+}
+
 final class AIInsightChatPromptBuilderTests: XCTestCase {
     private let emptyFacts = AIInsightChatCardFacts(
         screen: "",

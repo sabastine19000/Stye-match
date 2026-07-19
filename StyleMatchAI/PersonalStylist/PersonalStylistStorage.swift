@@ -157,16 +157,23 @@ enum AccountStorageEnvironment: String, CaseIterable {
     case staging
     case localAcceptance = "local-acceptance"
 
-    static var current: AccountStorageEnvironment {
-        guard let resolution = StyleMatchRuntimeEndpoint.chatResolution() else {
+    static var current: AccountStorageEnvironment? {
+        classification(for: StyleMatchRuntimeEndpoint.chatResolution())
+    }
+
+    static func classification(
+        for resolution: StyleMatchRuntimeEndpointResolution?
+    ) -> AccountStorageEnvironment? {
+        guard let resolution else { return nil }
+        if resolution.overrideActive { return .localAcceptance }
+        switch resolution.baseURL.host?.lowercased() {
+        case AppBackendConfiguration.approvedProductionAPIHost:
             return .production
+        case AppBackendConfiguration.approvedStagingAPIHost:
+            return .staging
+        default:
+            return nil
         }
-        if resolution.overrideActive {
-            return .localAcceptance
-        }
-        return resolution.baseURL.host?.lowercased() == StylistChatConfiguration.stagingHost
-            ? .staging
-            : .production
     }
 }
 
@@ -286,8 +293,9 @@ enum AccountScopedStorage {
     @discardableResult
     static func prepareForLaunch(
         defaults: UserDefaults = .standard,
-        environment: AccountStorageEnvironment = .current
+        environment: AccountStorageEnvironment? = AccountStorageEnvironment.current
     ) -> Bool {
+        guard let environment else { return false }
         let sessionUser = sessionUserID(defaults: defaults)
         let storedUser = PersonalStylistStorage.normalizedUserID(
             defaults.string(forKey: activeUserMarkerKey) ?? sessionUser
@@ -337,8 +345,9 @@ enum AccountScopedStorage {
         to destinationUserID: String,
         transferSourceData: Bool,
         defaults: UserDefaults = .standard,
-        environment: AccountStorageEnvironment = .current
+        environment: AccountStorageEnvironment? = AccountStorageEnvironment.current
     ) {
+        guard let environment else { return }
         let source = PersonalStylistStorage.normalizedUserID(sourceUserID)
         let destination = PersonalStylistStorage.normalizedUserID(destinationUserID)
         guard source != destination else {
@@ -367,8 +376,9 @@ enum AccountScopedStorage {
     static func hasUserData(
         for userID: String,
         defaults: UserDefaults = .standard,
-        environment: AccountStorageEnvironment = .current
+        environment: AccountStorageEnvironment? = AccountStorageEnvironment.current
     ) -> Bool {
+        guard let environment else { return false }
         let normalized = PersonalStylistStorage.normalizedUserID(userID)
         if userDataKeys.contains(where: {
             defaults.object(forKey: snapshotKey($0, userID: normalized, environment: environment)) != nil
@@ -390,8 +400,9 @@ enum AccountScopedStorage {
     static func deleteUserData(
         for userID: String,
         defaults: UserDefaults = .standard,
-        environment: AccountStorageEnvironment = .current
+        environment: AccountStorageEnvironment? = AccountStorageEnvironment.current
     ) {
+        guard let environment else { return }
         let normalized = PersonalStylistStorage.normalizedUserID(userID)
         userDataKeys.forEach {
             defaults.removeObject(forKey: snapshotKey($0, userID: normalized, environment: environment))
