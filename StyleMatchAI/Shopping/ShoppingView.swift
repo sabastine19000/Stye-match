@@ -147,6 +147,7 @@ struct ShoppingView: View {
     @State private var loadError: String?
     @State private var catalogSource: ProductCatalogSource = .none
     @State private var catalogDiagnostic = ProductCatalogLoadDiagnostic.empty
+    @State private var catalogLoadGeneration = 0
     @State private var catalogDisclosure = ShoppingCatalogDisclosure.fallback
     @State private var productOpenAlert: ShoppingProductOpenAlert?
     @State private var retailerOpenAlert: ShoppingRetailerOpenAlert?
@@ -365,6 +366,10 @@ struct ShoppingView: View {
                     supportedStores: supportedStores,
                     registryIsLoaded: isStoreRegistryLoaded
                 )
+            }
+            .styleMatchOnChange(of: store.preferredRetailerIDs) { _ in
+                normalizeDeckIndex()
+                reloadRecommendations()
             }
         }
     }
@@ -2677,6 +2682,8 @@ struct ShoppingView: View {
             recommendations: visibleRecommendations,
             memories: outfitMemoryStore.memories
         )
+        saleAlerts = makeSaleAlerts(from: policyCatalog)
+        favoriteSaleEvents = SaleWatcher().currentFavoriteSaleEvents(catalog: policyCatalog)
         #if DEBUG
         ShoppingPerformanceLog.mark("recommendation derivation", startedAt: startedAt)
         #endif
@@ -2705,6 +2712,8 @@ struct ShoppingView: View {
             return
         }
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
+        catalogLoadGeneration += 1
+        let loadGeneration = catalogLoadGeneration
         #if DEBUG
         ShoppingPerformanceLog.mark("catalog load start existingProducts=\(products.count)")
         #endif
@@ -2791,9 +2800,9 @@ struct ShoppingView: View {
             ShoppingPerformanceLog.mark("C1 derived catalog summary", startedAt: derivedStartedAt)
             #endif
             let dealStartedAt = CFAbsoluteTimeGetCurrent()
-            let alertList = makeSaleAlerts(from: loaded)
+            let alertList = makeSaleAlerts(from: scopedCatalog)
             let watcher = SaleWatcher()
-            let favoriteSales = watcher.currentFavoriteSaleEvents(catalog: loaded)
+            let favoriteSales = watcher.currentFavoriteSaleEvents(catalog: scopedCatalog)
             #if DEBUG
             ShoppingPerformanceLog.mark("deal and favorite-sale filtering", startedAt: dealStartedAt)
             #endif
@@ -2825,6 +2834,8 @@ struct ShoppingView: View {
                     diagnostic: catalogResult.diagnostic
                 )
                 logRetailerPreferenceDiagnostics(
+                    generation: loadGeneration,
+                    source: catalogResult.source,
                     selectedRetailerIDs: normalizedPreferredRetailerIDs,
                     loadedProducts: loaded,
                     filteredProducts: scopedCatalog,
@@ -2978,6 +2989,8 @@ struct ShoppingView: View {
 
     #if DEBUG
     private func logRetailerPreferenceDiagnostics(
+        generation: Int,
+        source: ProductCatalogSource,
         selectedRetailerIDs: [String],
         loadedProducts: [AffiliateProduct],
         filteredProducts: [AffiliateProduct],
@@ -2985,12 +2998,23 @@ struct ShoppingView: View {
         displayedProducts: [AffiliateProduct]
     ) {
         let loadedCounts = Self.countsByRetailerID(loadedProducts)
+        let selectedSet = Set(selectedRetailerIDs)
+        let matchedBeforeFallback = loadedProducts.filter { product in
+            guard let retailerID = RetailerPreferencePolicy.canonicalID(product.retailerID) else { return false }
+            return selectedSet.contains(retailerID)
+        }
+        let filteredCounts = Self.countsByRetailerID(
+            fallbackUsed ? matchedBeforeFallback : filteredProducts
+        )
         let displayedCounts = Self.countsByRetailerID(displayedProducts)
-        let fallbackReason = fallbackUsed
-            ? "selected_retailers_matched_zero_products"
-            : "none"
+        let fallbackReason: String
+        if fallbackUsed {
+            fallbackReason = "selected_retailers_matched_zero_products_soft_fallback"
+        } else {
+            fallbackReason = "none"
+        }
         print(
-            "[StyleMatch Shopping Retailers] selected=\(selectedRetailerIDs) loadedByRetailer=\(loadedCounts) filteredCount=\(filteredProducts.count) fallbackReason=\(fallbackReason) displayedByRetailer=\(displayedCounts)"
+            "[StyleMatch Shopping Retailers] generation=\(generation) source=\(source.rawValue) before_filter=\(loadedCounts) selected=\(selectedRetailerIDs) after_filter=\(filteredCounts) displayed=\(displayedCounts) fallback_reason=\(fallbackReason)"
         )
     }
 

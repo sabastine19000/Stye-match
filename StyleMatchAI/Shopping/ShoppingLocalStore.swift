@@ -546,6 +546,73 @@ struct RetailerPreferenceResult: Equatable {
     let requestedRetailerIDs: [String]
 }
 
+enum RetailerIntegrationStatus: String, Equatable {
+    case integratedCatalog
+    case directAccessOnly
+    case unavailable
+}
+
+struct RetailerAvailability: Identifiable, Equatable {
+    let retailer: SupportedStore
+    let productCount: Int?
+    let integrationStatus: RetailerIntegrationStatus
+
+    var id: String { retailer.id }
+
+    var coverageLabel: String {
+        guard let productCount else { return "Availability unknown" }
+        if productCount == 1 { return "1 product" }
+        if productCount > 1 { return "\(productCount) products" }
+        return "No products available yet"
+    }
+}
+
+enum RetailerDirectoryPolicy {
+    static func availabilities(
+        supportedStores: [SupportedStore],
+        coverage: StoreCoverageState,
+        retailerIDs: [String]? = nil,
+        query: String = ""
+    ) -> [RetailerAvailability] {
+        let requestedIDs = retailerIDs.map { Set($0.compactMap(RetailerPreferencePolicy.canonicalID(_:))) }
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        return supportedStores
+            .filter(\.isEnabled)
+            .filter { store in
+                guard let requestedIDs else { return true }
+                return requestedIDs.contains(store.id)
+            }
+            .filter { store in
+                guard !normalizedQuery.isEmpty else { return true }
+                let searchable = ([store.id, store.name] + store.domains).joined(separator: " ").lowercased()
+                return searchable.contains(normalizedQuery)
+            }
+            .map { store in
+                let productCount = coverage.productCount(for: store.id)
+                let status: RetailerIntegrationStatus
+                if (productCount ?? 0) > 0 {
+                    status = .integratedCatalog
+                } else if store.directAccessURL != nil {
+                    status = .directAccessOnly
+                } else {
+                    status = .unavailable
+                }
+                return RetailerAvailability(
+                    retailer: store,
+                    productCount: productCount,
+                    integrationStatus: status
+                )
+            }
+            .sorted { lhs, rhs in
+                let lhsCount = lhs.productCount ?? 0
+                let rhsCount = rhs.productCount ?? 0
+                if lhsCount != rhsCount { return lhsCount > rhsCount }
+                return lhs.retailer.name.localizedCaseInsensitiveCompare(rhs.retailer.name) == .orderedAscending
+            }
+    }
+}
+
 enum RetailerPreferencePolicy {
     static let maximumPreferredRetailerIDs = 32
     static let fallbackCopy = "No matching products are currently available from your selected stores. Showing recommendations from all approved retailers until more inventory becomes available."

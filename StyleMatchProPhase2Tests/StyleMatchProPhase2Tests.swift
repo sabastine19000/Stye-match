@@ -4228,6 +4228,16 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(coverage, .loaded(countsByRetailerID: ["nike": 2, "macys": 1], source: .remote))
     }
 
+    func testMyStoresSelectionInvalidatesVisibleShoppingCollectionsImmediately() throws {
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+
+        XCTAssertTrue(shoppingSource.contains(".styleMatchOnChange(of: store.preferredRetailerIDs)"))
+        XCTAssertTrue(shoppingSource.contains("reloadRecommendations()"))
+        XCTAssertTrue(shoppingSource.contains("saleAlerts = makeSaleAlerts(from: policyCatalog)"))
+        XCTAssertTrue(shoppingSource.contains("currentFavoriteSaleEvents(catalog: policyCatalog)"))
+        XCTAssertTrue(shoppingSource.contains("retailerPreferenceResult.usedFallback"))
+    }
+
     func testStoreCoverageStateDistinguishesUnavailableFromLoadedZero() {
         let unavailable = StoreCoverageState.unavailable
         let loadedEmpty = StoreCoverageState.loaded(products: [], source: .bundled)
@@ -4716,6 +4726,86 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(ShoppingSearchEngine.filterStores(stores, query: "ulta").map(\.name), ["Ulta"])
         XCTAssertEqual(ShoppingSearchEngine.filterStores(stores, query: "shoes").map(\.name), ["Nike"])
         XCTAssertFalse(ShoppingSearchEngine.filterStores(stores, query: "").contains { $0.name == "Disabled" })
+    }
+
+    func testAllStoresDirectoryIncludesEnabledZeroProductRetailers() {
+        let stores = makeSupportedStores()
+        let catalog = (0..<12).map { directoryProduct(id: "amazon-\($0)", retailerID: "amazon", retailerName: "Amazon") }
+
+        let directory = RetailerDirectoryPolicy.availabilities(
+            supportedStores: stores,
+            coverage: .loaded(products: catalog, source: .remote)
+        )
+
+        XCTAssertEqual(directory.map(\.id), ["amazon", "macys", "nike"])
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: directory.map { ($0.id, $0.productCount) }), ["nike": 0, "amazon": 12, "macys": 0])
+        XCTAssertEqual(directory.first { $0.id == "amazon" }?.integrationStatus, .integratedCatalog)
+        XCTAssertEqual(directory.first { $0.id == "nike" }?.integrationStatus, .directAccessOnly)
+        XCTAssertFalse(directory.contains { $0.id == "disabled" })
+    }
+
+    func testRetailerDirectoryJoinsCountsByCanonicalIDNotDisplayName() {
+        let stores = [
+            SupportedStore(id: "amazon", name: "Renamed Store", domains: ["amazon.com"], categories: [.clothing], affiliateNetwork: nil, apiStatus: "approved", isEnabled: true)
+        ]
+        let catalog = [directoryProduct(id: "one", retailerID: "amazon", retailerName: "Different Display Name")]
+
+        let directory = RetailerDirectoryPolicy.availabilities(
+            supportedStores: stores,
+            coverage: .loaded(products: catalog, source: .remote)
+        )
+
+        XCTAssertEqual(directory.first?.productCount, 1)
+    }
+
+    func testRetailerDirectorySearchFindsZeroProductStoreByNameAndDomain() {
+        let stores = makeSupportedStores()
+
+        XCTAssertEqual(
+            RetailerDirectoryPolicy.availabilities(supportedStores: stores, coverage: .loaded(products: [], source: .remote), query: "Nike").map(\.id),
+            ["nike"]
+        )
+        XCTAssertEqual(
+            RetailerDirectoryPolicy.availabilities(supportedStores: stores, coverage: .loaded(products: [], source: .remote), query: "macys.com").map(\.id),
+            ["macys"]
+        )
+    }
+
+    func testMyStoresDirectoryScopeDoesNotMutateOrAutoSelectRetailers() {
+        let stores = makeSupportedStores()
+        let requested = ["nike", "macys"]
+
+        let myStores = RetailerDirectoryPolicy.availabilities(
+            supportedStores: stores,
+            coverage: .loaded(products: [directoryProduct(id: "amazon", retailerID: "amazon", retailerName: "Amazon")], source: .remote),
+            retailerIDs: requested
+        )
+        let allStores = RetailerDirectoryPolicy.availabilities(
+            supportedStores: stores,
+            coverage: .loaded(products: [], source: .remote)
+        )
+
+        XCTAssertEqual(myStores.map(\.id), ["macys", "nike"])
+        XCTAssertEqual(allStores.map(\.id), ["amazon", "macys", "nike"])
+        XCTAssertEqual(requested, ["nike", "macys"])
+    }
+
+    func testRetailerDirectoryCoverageVocabularyAndDeterministicOrdering() {
+        let stores = makeSupportedStores()
+        let amazonProducts = (0..<2).map { directoryProduct(id: "amazon-\($0)", retailerID: "amazon", retailerName: "Amazon") }
+        let loaded = RetailerDirectoryPolicy.availabilities(
+            supportedStores: stores,
+            coverage: .loaded(products: amazonProducts, source: .remote)
+        )
+        let unavailable = RetailerDirectoryPolicy.availabilities(
+            supportedStores: stores,
+            coverage: .unavailable
+        )
+
+        XCTAssertEqual(loaded.map(\.id), ["amazon", "macys", "nike"])
+        XCTAssertEqual(loaded.map(\.coverageLabel), ["2 products", "No products available yet", "No products available yet"])
+        XCTAssertTrue(unavailable.allSatisfy { $0.coverageLabel == "Availability unknown" })
+        XCTAssertEqual(unavailable.map(\.id), ["amazon", "macys", "nike"])
     }
 
     func testStoreSearchUsesSharedWorkerBackedCatalogProvider() throws {
@@ -6191,6 +6281,33 @@ final class StyleMatchProPhase2Tests: XCTestCase {
             SupportedStore(id: "macys", name: "Macy's", domains: ["macys.com"], categories: [.clothing, .shoes, .accessories], affiliateNetwork: "Impact", apiStatus: "approved", isEnabled: true),
             SupportedStore(id: "disabled", name: "Disabled", domains: ["disabled.example"], categories: [.clothing], affiliateNetwork: nil, apiStatus: "disabled", isEnabled: false)
         ]
+    }
+
+    private func directoryProduct(id: String, retailerID: String, retailerName: String) -> AffiliateProduct {
+        AffiliateProduct(
+            id: id,
+            name: "Directory Product",
+            category: .clothing,
+            subcategory: "tops",
+            colors: ["navy"],
+            retailerID: retailerID,
+            retailer: Retailer(
+                name: retailerName,
+                trackingID: AffiliateLinkBuilder.pendingApprovalTrackingID,
+                trackingParamName: "tag",
+                disclosureName: retailerName
+            ),
+            affiliateURL: URL(string: "https://www.example.com/product")!,
+            price: Decimal(20),
+            salePrice: nil,
+            saleEndsAt: nil,
+            availableColors: nil,
+            customerRating: nil,
+            reviewCount: nil,
+            estimatedShippingText: nil,
+            tags: [],
+            genderPresentation: nil
+        )
     }
 
     private func makeResilientCatalogProvider(
