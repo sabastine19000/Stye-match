@@ -4808,6 +4808,147 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertEqual(unavailable.map(\.id), ["amazon", "macys", "nike"])
     }
 
+    func testShoppingNavigationSeparatesProductsAndStoresWithoutCrossBleed() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let bodyStart = try XCTUnwrap(source.range(of: "var body: some View"))
+        let loadingStart = try XCTUnwrap(source.range(of: "private var shoppingLoadingShell", range: bodyStart.upperBound..<source.endIndex))
+        let bodyBlock = String(source[bodyStart.lowerBound..<loadingStart.lowerBound])
+
+        XCTAssertTrue(source.contains("private enum ShoppingPrimaryDestination"))
+        XCTAssertTrue(source.contains("@State private var primaryDestination: ShoppingPrimaryDestination = .products"))
+        XCTAssertFalse(source.contains("@AppStorage(\"shoppingPrimaryDestination\")"))
+        XCTAssertTrue(bodyBlock.contains("if primaryDestination == .stores"))
+        XCTAssertTrue(bodyBlock.contains("storesDestination"))
+        XCTAssertTrue(bodyBlock.contains("stylistFeedCard"))
+        XCTAssertFalse(bodyBlock.contains("retailerDirectorySection\n                        stylistFeedCard"))
+        XCTAssertTrue(source.contains("case .browse: return \"Browse\""))
+        XCTAssertTrue(source.contains("case .deck: return \"Swipe\""))
+        XCTAssertFalse(source.contains("case .deck: return \"Deck\""))
+        XCTAssertEqual(source.components(separatedBy: "Picker(\"Shopping destination\"").count - 1, 1)
+    }
+
+    func testStoreDirectoryHasOneDedicatedHomeAndNoProductFeedMount() throws {
+        let searchSource = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+        let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let storesStart = try XCTUnwrap(shoppingSource.range(of: "private var storesDestination"))
+        let storesEnd = try XCTUnwrap(shoppingSource.range(of: "private var shoppingLoadingShell", range: storesStart.upperBound..<shoppingSource.endIndex))
+        let storesBlock = String(shoppingSource[storesStart.lowerBound..<storesEnd.lowerBound])
+
+        XCTAssertFalse(searchSource.contains("retailerDirectorySection"))
+        XCTAssertTrue(storesBlock.contains("retailerDirectorySection"))
+        XCTAssertFalse(storesBlock.contains("stylistFeedCard"))
+        XCTAssertFalse(storesBlock.contains("productCard("))
+        XCTAssertFalse(storesBlock.contains("completeLookPreview"))
+        XCTAssertFalse(storesBlock.contains("Catalog Picks"))
+    }
+
+    func testStoreDirectoryUsesCompactRowsAndOneSectionDisclosure() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let disclosure = "Direct store access. StyleMatch Pro does not claim catalog integrations or affiliate relationships for these stores."
+
+        XCTAssertTrue(source.contains("private func retailerDirectoryRow"))
+        XCTAssertTrue(source.contains(".frame(minHeight: 56)"))
+        XCTAssertFalse(source.contains("private func retailerDirectoryCard"))
+        XCTAssertEqual(source.components(separatedBy: disclosure).count - 1, 1)
+        XCTAssertFalse(source.contains("Text(retailer.id)"))
+        XCTAssertTrue(source.contains("ForEach(visibleRetailerDirectory)"))
+        XCTAssertFalse(source.contains("collapsedDirectoryLimit"))
+        XCTAssertFalse(source.contains("showsAllDirectoryStores"))
+    }
+
+    func testStoreDirectoryAccessibilityContractIsPresent() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"shopping.primary-destination\")"))
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"shopping.store-search\")"))
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"shopping.store-scope\")"))
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"shopping.manage-stores\")"))
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"shopping.store-row.\\(retailer.id)\")"))
+        XCTAssertTrue(source.contains(".accessibilityIdentifier(\"shopping.store-action.\\(retailer.id)\")"))
+        XCTAssertTrue(source.contains(".accessibilityValue(availability.coverageLabel)"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(\"Open \\(retailer.name)\")"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(\"View \\(retailer.name) products\")"))
+    }
+
+    func testStoresScopeAndDirectoryActionsDoNotMutatePreferences() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let start = try XCTUnwrap(source.range(of: "private var storesDestination"))
+        let end = try XCTUnwrap(source.range(of: "private var rawBaseSearchProducts", range: start.upperBound..<source.endIndex))
+        let block = String(source[start.lowerBound..<end.lowerBound])
+
+        XCTAssertTrue(block.contains("Picker(\"Store scope\", selection: $directoryStoreScope)"))
+        XCTAssertTrue(block.contains("Label(\"Manage My Stores\", systemImage: \"storefront\")"))
+        XCTAssertFalse(block.contains("setPreferredRetailerIDs"))
+        XCTAssertFalse(block.contains("preferredRetailerIDs ="))
+        XCTAssertTrue(block.contains("retailerIDs: directoryStoreScope == .myStores ? activeDirectoryRetailerIDs : nil"))
+        XCTAssertTrue(block.contains("searchCriteria.storeName = retailer.name"))
+        XCTAssertTrue(block.contains("primaryDestination = .products"))
+    }
+
+    func testNikeMacysAndBestBuySelectionsRemainDistinctFromAmazonSoftFallback() {
+        let stores = [
+            SupportedStore(id: "amazon", name: "Amazon", domains: ["amazon.com"], categories: [.clothing], affiliateNetwork: nil, apiStatus: "approved", isEnabled: true),
+            SupportedStore(id: "nike", name: "Nike", domains: ["nike.com"], categories: [.shoes], affiliateNetwork: nil, apiStatus: "direct", isEnabled: true),
+            SupportedStore(id: "macys", name: "Macy's", domains: ["macys.com"], categories: [.clothing], affiliateNetwork: nil, apiStatus: "direct", isEnabled: true),
+            SupportedStore(id: "best-buy", name: "Best Buy", domains: ["bestbuy.com"], categories: [.electronics], affiliateNetwork: nil, apiStatus: "direct", isEnabled: true)
+        ]
+        let amazonCatalog = [directoryProduct(id: "amazon-one", retailerID: "amazon", retailerName: "Amazon")]
+
+        for selectedID in ["nike", "macys", "best-buy"] {
+            let result = RetailerPreferencePolicy.apply(
+                products: amazonCatalog,
+                preferredRetailerIDs: [selectedID],
+                supportedStores: stores
+            )
+
+            XCTAssertEqual(result.requestedRetailerIDs, [selectedID])
+            XCTAssertTrue(result.usedFallback)
+            XCTAssertEqual(result.products.map(\.retailerID), ["amazon"])
+            XCTAssertFalse(result.products.contains { $0.retailerID == selectedID })
+        }
+    }
+
+    func testDestinationRoundTripKeepsBrowseSwipeAndFilterStateViewLocal() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let pickerStart = try XCTUnwrap(source.range(of: "private var primaryDestinationPicker"))
+        let storesStart = try XCTUnwrap(source.range(of: "private var storesDestination", range: pickerStart.upperBound..<source.endIndex))
+        let destinationBlock = String(source[pickerStart.lowerBound..<storesStart.lowerBound])
+
+        XCTAssertTrue(source.contains("@State private var browseMode: ShoppingBrowseMode = .browse"))
+        XCTAssertTrue(source.contains("@State private var storeScope: ShoppingStoreScope = .myStores"))
+        XCTAssertTrue(source.contains("@State private var searchCriteria = ShoppingSearchCriteria()"))
+        XCTAssertTrue(source.contains("@State private var deckSelectionProductID: String?"))
+        XCTAssertFalse(destinationBlock.contains("browseMode ="))
+        XCTAssertFalse(destinationBlock.contains("storeScope ="))
+        XCTAssertFalse(destinationBlock.contains("searchCriteria ="))
+        XCTAssertFalse(destinationBlock.contains("deckIndex ="))
+    }
+
+    func testSwipeRestorationUsesStableProductIdentityAndRejectsStaleIdentity() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let normalizeStart = try XCTUnwrap(source.range(of: "private func normalizeDeckIndex()"))
+        let normalizeEnd = try XCTUnwrap(source.range(of: "private func deckPriceText", range: normalizeStart.upperBound..<source.endIndex))
+        let normalizeBlock = String(source[normalizeStart.lowerBound..<normalizeEnd.lowerBound])
+
+        XCTAssertTrue(normalizeBlock.contains("currentProductIDs.firstIndex(of: deckSelectionProductID)"))
+        XCTAssertTrue(normalizeBlock.contains("deckIndex = restoredIndex"))
+        XCTAssertTrue(normalizeBlock.contains("deckIndex = min(max(0, deckIndex), currentProductIDs.count)"))
+        XCTAssertTrue(normalizeBlock.contains("deckSelectionProductID = deckIndex < currentProductIDs.count ? currentProductIDs[deckIndex] : nil"))
+        XCTAssertTrue(source.contains("deckSelectionProductID = deck.currentProductID"))
+        XCTAssertFalse(normalizeBlock.contains("products[deckIndex]"))
+    }
+
+    func testDirectoryOpenMountUsesValidatedOpenerAndNoRawUIApplicationOpen() throws {
+        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let start = try XCTUnwrap(source.range(of: "private var retailerDirectorySection"))
+        let end = try XCTUnwrap(source.range(of: "private var rawBaseSearchProducts", range: start.upperBound..<source.endIndex))
+        let directoryBlock = String(source[start.lowerBound..<end.lowerBound])
+
+        XCTAssertTrue(directoryBlock.contains("openStoreDirectly(url, retailer: retailer)"))
+        XCTAssertFalse(directoryBlock.contains("UIApplication.shared.open"))
+        XCTAssertFalse(directoryBlock.contains("setPreferredRetailerIDs"))
+    }
+
     func testStoreSearchUsesSharedWorkerBackedCatalogProvider() throws {
         let source = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
 

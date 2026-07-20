@@ -56,7 +56,7 @@ private enum ShoppingBrowseMode: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .browse: return "Browse"
-        case .deck: return "Deck"
+        case .deck: return "Swipe"
         }
     }
 
@@ -64,6 +64,20 @@ private enum ShoppingBrowseMode: String, CaseIterable, Identifiable {
         switch self {
         case .browse: return "square.grid.2x2"
         case .deck: return "rectangle.stack"
+        }
+    }
+}
+
+private enum ShoppingPrimaryDestination: String, CaseIterable, Identifiable {
+    case products
+    case stores
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .products: return "Products"
+        case .stores: return "Stores"
         }
     }
 }
@@ -138,7 +152,11 @@ struct ShoppingView: View {
     @State private var engagementPath: [ShoppingEngagementDestination] = []
     @State private var browseMode: ShoppingBrowseMode = .browse
     @State private var storeScope: ShoppingStoreScope = .myStores
+    @State private var primaryDestination: ShoppingPrimaryDestination = .products
+    @State private var directoryStoreScope: ShoppingStoreScope = .allStores
+    @State private var directorySearchText = ""
     @State private var deckIndex = 0
+    @State private var deckSelectionProductID: String?
     @State private var recommendationBasis: Set<ShoppingRecommendationBasis> = Set(ShoppingRecommendationBasis.defaultEnabled)
     @State private var derivedCatalogContent = ShoppingDerivedCatalogContent.empty
     @State private var isLoading = true
@@ -169,7 +187,10 @@ struct ShoppingView: View {
         NavigationStack(path: $engagementPath) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if let loadError, products.isEmpty {
+                    primaryDestinationPicker
+                    if primaryDestination == .stores {
+                        storesDestination
+                    } else if let loadError, products.isEmpty {
                         retryState(loadError)
                     } else if products.isEmpty {
                         shoppingLoadingShell
@@ -371,6 +392,59 @@ struct ShoppingView: View {
                 normalizeDeckIndex()
                 reloadRecommendations()
             }
+        }
+    }
+
+    private var primaryDestinationPicker: some View {
+        Picker("Shopping destination", selection: $primaryDestination) {
+            ForEach(ShoppingPrimaryDestination.allCases) { destination in
+                Text(destination.title).tag(destination)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityHint("Choose whether to browse products or stores")
+        .accessibilityIdentifier("shopping.primary-destination")
+    }
+
+    private var storesDestination: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Browse Stores")
+                .font(.title2)
+                .fontWeight(.bold)
+            Text("Choose an approved retailer, view available catalog products, or open the retailer directly.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass")
+                TextField("Search stores", text: $directorySearchText)
+                    .textInputAutocapitalization(.never)
+                    .accessibilityIdentifier("shopping.store-search")
+            }
+            .padding(12)
+            .background(Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            Picker("Store scope", selection: $directoryStoreScope) {
+                ForEach(ShoppingStoreScope.allCases) { scope in
+                    Text(scope.title).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("shopping.store-scope")
+
+            Button {
+                showMyStores = true
+            } label: {
+                Label("Manage My Stores", systemImage: "storefront")
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("shopping.manage-stores")
+
+            retailerDirectorySection
         }
     }
 
@@ -1688,6 +1762,94 @@ struct ShoppingView: View {
         relaxedSearchResult.displayedResults
     }
 
+    private var retailerDirectorySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(directoryStoreScope == .allStores ? "All Stores" : "My Stores")
+                .font(.headline)
+                .fontWeight(.bold)
+            if !isStoreRegistryLoaded {
+                Text("Store directory availability is loading.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("shopping.store-directory-loading")
+            } else if visibleRetailerDirectory.isEmpty {
+                Text("No approved stores match this search.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("shopping.store-directory-empty")
+            } else {
+                ForEach(visibleRetailerDirectory) { availability in
+                    retailerDirectoryRow(availability)
+                    if availability.id != visibleRetailerDirectory.last?.id {
+                        Divider()
+                    }
+                }
+                Text("Direct store access. StyleMatch Pro does not claim catalog integrations or affiliate relationships for these stores.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 4)
+                    .accessibilityIdentifier("shopping.store-directory-disclosure")
+            }
+        }
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("shopping.store-directory")
+    }
+
+    private func retailerDirectoryRow(_ availability: RetailerAvailability) -> some View {
+        let retailer = availability.retailer
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(retailer.name)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(availability.coverageLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(retailer.name)
+            .accessibilityValue(availability.coverageLabel)
+            Spacer()
+            if (availability.productCount ?? 0) > 0 {
+                Button("View") {
+                    searchCriteria.storeName = retailer.name
+                    primaryDestination = .products
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("View \(retailer.name) products")
+                .accessibilityIdentifier("shopping.store-action.\(retailer.id)")
+            } else if availability.integrationStatus == .directAccessOnly,
+                      let url = retailer.searchURL(for: directorySearchText) ?? retailer.directAccessURL {
+                Button("Open") {
+                    openStoreDirectly(url, retailer: retailer)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityLabel("Open \(retailer.name)")
+                .accessibilityIdentifier("shopping.store-action.\(retailer.id)")
+            }
+        }
+        .frame(minHeight: 56)
+        .accessibilityIdentifier("shopping.store-row.\(retailer.id)")
+    }
+
+    private var visibleRetailerDirectory: [RetailerAvailability] {
+        RetailerDirectoryPolicy.availabilities(
+            supportedStores: supportedStores,
+            coverage: currentStoreCoverage,
+            retailerIDs: directoryStoreScope == .myStores ? activeDirectoryRetailerIDs : nil,
+            query: directorySearchText
+        )
+    }
+
+    private var activeDirectoryRetailerIDs: [String] {
+        store.preferredRetailerIDs(
+            supportedStores: supportedStores,
+            registryIsLoaded: isStoreRegistryLoaded
+        )
+    }
+
     private var rawBaseSearchProducts: [AffiliateProduct] {
         liveSearchProducts ?? products
     }
@@ -1945,6 +2107,10 @@ struct ShoppingView: View {
 
     private var currentDeckProduct: AffiliateProduct? {
         let deckProducts = searchCatalogProducts
+        if let deckSelectionProductID,
+           let selectedProduct = deckProducts.first(where: { $0.id == deckSelectionProductID }) {
+            return selectedProduct
+        }
         guard deckIndex < deckProducts.count else {
             return nil
         }
@@ -2065,6 +2231,7 @@ struct ShoppingView: View {
         var deck = ShoppingSwipeDeckState(productIDs: deckProductIDs, currentIndex: deckIndex)
         deck.swipeRight(using: store)
         deckIndex = deck.currentIndex
+        deckSelectionProductID = deck.currentProductID
         reloadRecommendations()
     }
 
@@ -2072,10 +2239,18 @@ struct ShoppingView: View {
         var deck = ShoppingSwipeDeckState(productIDs: deckProductIDs, currentIndex: deckIndex)
         deck.swipeLeft()
         deckIndex = deck.currentIndex
+        deckSelectionProductID = deck.currentProductID
     }
 
     private func normalizeDeckIndex() {
-        deckIndex = min(max(0, deckIndex), searchCatalogProducts.count)
+        let currentProductIDs = deckProductIDs
+        if let deckSelectionProductID,
+           let restoredIndex = currentProductIDs.firstIndex(of: deckSelectionProductID) {
+            deckIndex = restoredIndex
+            return
+        }
+        deckIndex = min(max(0, deckIndex), currentProductIDs.count)
+        deckSelectionProductID = deckIndex < currentProductIDs.count ? currentProductIDs[deckIndex] : nil
     }
 
     private func deckPriceText(for product: AffiliateProduct) -> String {
