@@ -148,6 +148,8 @@ struct ShoppingView: View {
     @State private var catalogSource: ProductCatalogSource = .none
     @State private var catalogDiagnostic = ProductCatalogLoadDiagnostic.empty
     @State private var catalogDisclosure = ShoppingCatalogDisclosure.fallback
+    @State private var productOpenAlert: ShoppingProductOpenAlert?
+    @State private var retailerOpenAlert: ShoppingRetailerOpenAlert?
     @StateObject private var profileStore = ProfileStore()
     @StateObject private var outfitMemoryStore = OutfitMemoryStore()
     @StateObject private var store: ShoppingLocalStore
@@ -318,6 +320,40 @@ struct ShoppingView: View {
             }
             .navigationDestination(for: ShoppingEngagementDestination.self) { destination in
                 shoppingEngagementDestination(destination)
+            }
+            .alert(item: $productOpenAlert) { alert in
+                if alert.allowsRetry {
+                    return Alert(
+                        title: Text("Unable to Open Product"),
+                        message: Text("We couldn’t open this product right now. Please try again."),
+                        primaryButton: .default(Text("Try Again")) {
+                            openProductExternally(alert.product)
+                        },
+                        secondaryButton: .cancel()
+                    )
+                }
+                return Alert(
+                    title: Text("Unable to Open Product"),
+                    message: Text("We couldn’t open this product right now. Please try again."),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+            .alert(item: $retailerOpenAlert) { alert in
+                if alert.allowsRetry {
+                    return Alert(
+                        title: Text("Unable to Open Store"),
+                        message: Text("We couldn’t open this store right now. Please try again."),
+                        primaryButton: .default(Text("Try Again")) {
+                            openStoreDirectly(alert.destinationURL, retailer: alert.retailer)
+                        },
+                        secondaryButton: .cancel()
+                    )
+                }
+                return Alert(
+                    title: Text("Unable to Open Store"),
+                    message: Text("This store destination could not be verified."),
+                    dismissButton: .default(Text("OK"))
+                )
             }
             .onAppear {
                 #if DEBUG
@@ -1438,7 +1474,7 @@ struct ShoppingView: View {
                         Button("Settings") {
                             #if canImport(UIKit)
                             if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
+                                Task { _ = await UIApplicationShoppingSystemOpener().openSystemURL(url) }
                             }
                             #endif
                         }
@@ -2122,9 +2158,9 @@ struct ShoppingView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                if let actionURL {
+                if let actionURL, let directoryStore {
                     Button {
-                        openStoreDirectly(actionURL)
+                        openStoreDirectly(actionURL, retailer: directoryStore)
                     } label: {
                         Label("Open \(storeName)", systemImage: "safari")
                     }
@@ -2188,9 +2224,18 @@ struct ShoppingView: View {
         .accessibilityLabel(isComingSoon ? "\(title), direct store access, catalog integration coming soon" : title)
     }
 
-    private func openStoreDirectly(_ url: URL) {
+    private func openStoreDirectly(_ url: URL, retailer: SupportedStore) {
         #if canImport(UIKit)
-        UIApplication.shared.open(url, options: [:])
+        Task {
+            let result = await ShoppingRetailerDestinationOpener.live().open(url, retailer: retailer)
+            if let failure = result.failure {
+                retailerOpenAlert = ShoppingRetailerOpenAlert(
+                    retailer: retailer,
+                    destinationURL: url,
+                    failure: failure
+                )
+            }
+        }
         #endif
     }
 
@@ -2902,7 +2947,13 @@ struct ShoppingView: View {
     private func openProductExternally(_ product: AffiliateProduct) {
         store.markViewed(product.id)
         #if canImport(UIKit)
-        UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])
+        let candidateURL = AffiliateLinkBuilder.outboundURL(for: product)
+        Task {
+            let result = await ShoppingProductOpener.live().open(product, candidateURL: candidateURL)
+            if let failure = result.failure {
+                productOpenAlert = ShoppingProductOpenAlert(product: product, failure: failure)
+            }
+        }
         #endif
     }
 

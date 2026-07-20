@@ -32,6 +32,8 @@ struct StoreSearchView: View {
     @State private var showMyStores = false
     @State private var hasLoadedCatalog = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var productOpenAlert: ShoppingProductOpenAlert?
+    @State private var retailerOpenAlert: ShoppingRetailerOpenAlert?
     @StateObject private var localStore = ShoppingLocalStore()
 
     var body: some View {
@@ -128,6 +130,40 @@ struct StoreSearchView: View {
                 registryIsLoaded: isStoreRegistryLoaded
             )
         }
+        .alert(item: $productOpenAlert) { alert in
+            if alert.allowsRetry {
+                return Alert(
+                    title: Text("Unable to Open Product"),
+                    message: Text("We couldn’t open this product right now. Please try again."),
+                    primaryButton: .default(Text("Try Again")) {
+                        openProductExternally(alert.product)
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            return Alert(
+                title: Text("Unable to Open Product"),
+                message: Text("We couldn’t open this product right now. Please try again."),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+        .alert(item: $retailerOpenAlert) { alert in
+            if alert.allowsRetry {
+                return Alert(
+                    title: Text("Unable to Open Store"),
+                    message: Text("We couldn’t open this store right now. Please try again."),
+                    primaryButton: .default(Text("Try Again")) {
+                        openStoreDirectly(alert.destinationURL, retailer: alert.retailer)
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            return Alert(
+                title: Text("Unable to Open Store"),
+                message: Text("This store destination could not be verified."),
+                dismissButton: .default(Text("OK"))
+            )
+        }
         .sheet(isPresented: $showDisclosure) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 16) {
@@ -167,13 +203,27 @@ struct StoreSearchView: View {
     private func openProductExternally(_ product: AffiliateProduct) {
         localStore.markViewed(product.id)
         #if canImport(UIKit)
-        UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])
+        Task {
+            let result = await ShoppingProductOpener.live().open(product)
+            if let failure = result.failure {
+                productOpenAlert = ShoppingProductOpenAlert(product: product, failure: failure)
+            }
+        }
         #endif
     }
 
-    private func openStoreDirectly(_ url: URL) {
+    private func openStoreDirectly(_ url: URL, retailer: SupportedStore) {
         #if canImport(UIKit)
-        UIApplication.shared.open(url, options: [:])
+        Task {
+            let result = await ShoppingRetailerDestinationOpener.live().open(url, retailer: retailer)
+            if let failure = result.failure {
+                retailerOpenAlert = ShoppingRetailerOpenAlert(
+                    retailer: retailer,
+                    destinationURL: url,
+                    failure: failure
+                )
+            }
+        }
         #endif
     }
 
@@ -321,9 +371,9 @@ struct StoreSearchView: View {
                 }
                 .buttonStyle(.borderedProminent)
 
-                if let actionURL {
+                if let actionURL, let primaryStore {
                     Button {
-                        openStoreDirectly(actionURL)
+                        openStoreDirectly(actionURL, retailer: primaryStore)
                     } label: {
                         Label("Open \(retailerName)", systemImage: "safari")
                     }

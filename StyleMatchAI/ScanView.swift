@@ -97,6 +97,7 @@ struct ScanView: View {
     @State private var selectedScanOccasion: Occasion = .general
     @State private var dismissedFormalityMismatchSignatures = Set<String>()
     @State private var completeLookAccessoryProducts: [AffiliateProduct] = []
+    @State private var productOpenAlert: ShoppingProductOpenAlert?
     @StateObject private var voiceAssistant = VoiceStylistService()
     
     private var activeTheme: StyleMatchAppTheme {
@@ -653,6 +654,23 @@ struct ScanView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text(selectedScanIDs.isEmpty ? "Delete all saved scans from this phone?" : "Delete \(selectedScanIDs.count) selected scan\(selectedScanIDs.count == 1 ? "" : "s")?")
+        }
+        .alert(item: $productOpenAlert) { alert in
+            if alert.allowsRetry {
+                return Alert(
+                    title: Text("Unable to Open Product"),
+                    message: Text("We couldn’t open this product right now. Please try again."),
+                    primaryButton: .default(Text("Try Again")) {
+                        openCompleteLookProduct(alert.product)
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            return Alert(
+                title: Text("Unable to Open Product"),
+                message: Text("We couldn’t open this product right now. Please try again."),
+                dismissButton: .default(Text("OK"))
+            )
         }
         .sheet(isPresented: $isShowingRenameScanSheet, onDismiss: clearRenameDraftState) {
             NavigationStack {
@@ -3744,9 +3762,12 @@ struct ScanView: View {
     }
 
     private func openCompleteLookProduct(_ product: AffiliateProduct) {
-        #if canImport(UIKit)
-        UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])
-        #endif
+        Task {
+            let result = await ShoppingProductOpener.live().open(product)
+            if let failure = result.failure {
+                productOpenAlert = ShoppingProductOpenAlert(product: product, failure: failure)
+            }
+        }
     }
 
     private func scanCurrency(_ value: Decimal) -> String {

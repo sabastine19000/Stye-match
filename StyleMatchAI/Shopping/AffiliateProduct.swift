@@ -1,4 +1,8 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+import SafariServices
+#endif
 
 enum ProductCategory: String, Codable, CaseIterable, Identifiable {
     case clothing
@@ -609,6 +613,559 @@ enum AffiliateLinkBuilder {
         queryItems.append(URLQueryItem(name: retailer.trackingParamName, value: retailer.trackingID))
         components.queryItems = queryItems
         return components.url ?? product.affiliateURL
+    }
+}
+
+enum ShoppingGatewayPathCategory: String, Equatable {
+    case rootGo = "go"
+    case versionedGo = "v1_go"
+}
+
+enum ShoppingProductOpenFailure: String, Error, Equatable {
+    case invalidURL
+    case unapprovedScheme
+    case unapprovedHost
+    case unapprovedPort
+    case unapprovedPath
+    case invalidProductID
+    case productIDMismatch
+    case cannotOpen
+    case openDeclined
+
+    var isRetryable: Bool {
+        self == .cannotOpen || self == .openDeclined
+    }
+}
+
+enum ShoppingProductOpenResult: Equatable {
+    case openAccepted
+    case failure(ShoppingProductOpenFailure)
+
+    var failure: ShoppingProductOpenFailure? {
+        guard case .failure(let failure) = self else { return nil }
+        return failure
+    }
+}
+
+struct ShoppingProductOpenAlert: Identifiable {
+    let id = UUID()
+    let product: AffiliateProduct
+    let failure: ShoppingProductOpenFailure
+
+    var allowsRetry: Bool { failure.isRetryable }
+}
+
+enum ShoppingRetailerOpenFailure: String, Error, Equatable {
+    case invalidURL
+    case unapprovedScheme
+    case unapprovedHost
+    case unapprovedPort
+    case cannotOpen
+    case openDeclined
+
+    var isRetryable: Bool {
+        self == .cannotOpen || self == .openDeclined
+    }
+}
+
+enum ShoppingRetailerOpenResult: Equatable {
+    case openAccepted
+    case failure(ShoppingRetailerOpenFailure)
+
+    var failure: ShoppingRetailerOpenFailure? {
+        guard case .failure(let failure) = self else { return nil }
+        return failure
+    }
+}
+
+struct ShoppingRetailerOpenAlert: Identifiable {
+    let id = UUID()
+    let retailer: SupportedStore
+    let destinationURL: URL
+    let failure: ShoppingRetailerOpenFailure
+
+    var allowsRetry: Bool { failure.isRetryable }
+}
+
+struct ShoppingValidatedRetailerURL: Equatable {
+    let url: URL
+    let host: String
+}
+
+enum ShoppingRetailerDestinationValidator {
+    static func validate(
+        candidateURL: URL?,
+        retailer: SupportedStore
+    ) -> Result<ShoppingValidatedRetailerURL, ShoppingRetailerOpenFailure> {
+        guard let candidateURL,
+              let components = URLComponents(url: candidateURL, resolvingAgainstBaseURL: false) else {
+            return .failure(.invalidURL)
+        }
+        guard components.scheme?.lowercased() == "https" else {
+            return .failure(.unapprovedScheme)
+        }
+        guard components.user == nil, components.password == nil,
+              let host = components.host?.lowercased(), !host.isEmpty else {
+            return .failure(.unapprovedHost)
+        }
+        guard components.port == nil || components.port == 443 else {
+            return .failure(.unapprovedPort)
+        }
+
+        let approvedHosts = Set(retailer.domains.compactMap(normalizedHost))
+        guard let normalizedCandidateHost = normalizedHost(host),
+              approvedHosts.contains(normalizedCandidateHost) else {
+            return .failure(.unapprovedHost)
+        }
+        return .success(ShoppingValidatedRetailerURL(url: candidateURL, host: host))
+    }
+
+    private static func normalizedHost(_ rawValue: String) -> String? {
+        var host = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while host.hasSuffix(".") { host.removeLast() }
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        guard !host.isEmpty,
+              !host.contains("/"),
+              !host.contains(":"),
+              !host.contains("@") else { return nil }
+        return host
+    }
+}
+
+struct ShoppingValidatedGatewayURL: Equatable {
+    let url: URL
+    let host: String
+    let pathCategory: ShoppingGatewayPathCategory
+}
+
+enum ShoppingProductGatewayValidator {
+    static func validate(
+        candidateURL: URL?,
+        productID: String,
+        approvedBaseURL: URL
+    ) -> Result<ShoppingValidatedGatewayURL, ShoppingProductOpenFailure> {
+        guard isValidProductID(productID) else {
+            return .failure(.invalidProductID)
+        }
+        guard let approved = URLComponents(url: approvedBaseURL, resolvingAgainstBaseURL: false),
+              approved.scheme?.lowercased() == "https",
+              approved.user == nil,
+              approved.password == nil,
+              approved.query == nil,
+              approved.fragment == nil,
+              approved.path.isEmpty || approved.path == "/",
+              approved.port == nil || approved.port == 443,
+              let approvedHost = approved.host?.lowercased(),
+              !approvedHost.isEmpty,
+              let candidateURL,
+              let components = URLComponents(url: candidateURL, resolvingAgainstBaseURL: false) else {
+            return .failure(.invalidURL)
+        }
+        guard components.scheme?.lowercased() == "https" else {
+            return .failure(.unapprovedScheme)
+        }
+        guard components.user == nil, components.password == nil,
+              let candidateHost = components.host?.lowercased(),
+              candidateHost == approvedHost else {
+            return .failure(.unapprovedHost)
+        }
+        guard components.port == nil || components.port == 443 else {
+            return .failure(.unapprovedPort)
+        }
+        guard components.query == nil, components.fragment == nil else {
+            return .failure(.unapprovedPath)
+        }
+
+        let percentEncodedPath = components.percentEncodedPath
+        guard !percentEncodedPath.contains("%") else {
+            return .failure(.unapprovedPath)
+        }
+        let pathComponents = percentEncodedPath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let pathCategory: ShoppingGatewayPathCategory
+        let pathProductID: String
+        if pathComponents.count == 3,
+           pathComponents[0].isEmpty,
+           pathComponents[1] == "go",
+           !pathComponents[2].isEmpty {
+            pathCategory = .rootGo
+            pathProductID = pathComponents[2]
+        } else if pathComponents.count == 4,
+                  pathComponents[0].isEmpty,
+                  pathComponents[1] == "v1",
+                  pathComponents[2] == "go",
+                  !pathComponents[3].isEmpty {
+            pathCategory = .versionedGo
+            pathProductID = pathComponents[3]
+        } else {
+            return .failure(.unapprovedPath)
+        }
+        guard isValidProductID(pathProductID) else {
+            return .failure(.invalidProductID)
+        }
+        guard pathProductID == productID else {
+            return .failure(.productIDMismatch)
+        }
+        return .success(
+            ShoppingValidatedGatewayURL(
+                url: candidateURL,
+                host: candidateHost,
+                pathCategory: pathCategory
+            )
+        )
+    }
+
+    static func isValidProductID(_ productID: String) -> Bool {
+        guard !productID.isEmpty, productID != ".", productID != ".." else { return false }
+        return productID.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 48...57, 65...90, 97...122, 45, 95:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+enum ShoppingProductOpenDiagnosticEvent: String, Equatable {
+    case interactionReceived
+    case validationCompleted
+    case canOpenCompleted
+    case openRequested
+    case completionReceived
+}
+
+struct ShoppingProductOpenDiagnostic: Equatable {
+    let event: ShoppingProductOpenDiagnosticEvent
+    let productID: String
+    let retailerID: String?
+    let validationResult: String?
+    let validatedHost: String?
+    let pathCategory: ShoppingGatewayPathCategory?
+    let canOpen: Bool?
+    let openRequestIssued: Bool
+    let completionAccepted: Bool?
+    let failure: ShoppingProductOpenFailure?
+}
+
+@MainActor
+protocol ShoppingSystemOpening {
+    func canOpenURL(_ url: URL) -> Bool
+    func openUniversalLink(_ url: URL) async -> Bool
+    func presentInAppBrowser(_ url: URL) async -> Bool
+}
+
+#if canImport(UIKit)
+@MainActor
+final class UIApplicationShoppingSystemOpener: ShoppingSystemOpening {
+    private let application = UIApplication.shared
+
+    func canOpenURL(_ url: URL) -> Bool {
+        application.canOpenURL(url)
+    }
+
+    func openUniversalLink(_ url: URL) async -> Bool {
+        await withCheckedContinuation { continuation in
+            application.open(url, options: [.universalLinksOnly: true]) { accepted in
+                continuation.resume(returning: accepted)
+            }
+        }
+    }
+
+    func presentInAppBrowser(_ url: URL) async -> Bool {
+        guard let presenter = Self.topmostViewController() else { return false }
+        let configuration = SFSafariViewController.Configuration()
+        configuration.entersReaderIfAvailable = false
+        let browser = SFSafariViewController(url: url, configuration: configuration)
+        browser.preferredControlTintColor = .systemOrange
+        return await withCheckedContinuation { continuation in
+            presenter.present(browser, animated: true) {
+                continuation.resume(returning: true)
+            }
+        }
+    }
+
+    func openSystemURL(_ url: URL) async -> Bool {
+        await withCheckedContinuation { continuation in
+            application.open(url, options: [:]) { accepted in
+                continuation.resume(returning: accepted)
+            }
+        }
+    }
+
+    private static func topmostViewController() -> UIViewController? {
+        let root = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .filter { $0.activationState == .foregroundActive }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .rootViewController
+        return topmostViewController(from: root)
+    }
+
+    private static func topmostViewController(from viewController: UIViewController?) -> UIViewController? {
+        if let presented = viewController?.presentedViewController {
+            return topmostViewController(from: presented)
+        }
+        if let navigation = viewController as? UINavigationController {
+            return topmostViewController(from: navigation.visibleViewController)
+        }
+        if let tabs = viewController as? UITabBarController {
+            return topmostViewController(from: tabs.selectedViewController)
+        }
+        return viewController
+    }
+}
+#endif
+
+@MainActor
+struct ShoppingProductOpener {
+    typealias DiagnosticSink = @MainActor (ShoppingProductOpenDiagnostic) -> Void
+
+    let approvedBaseURL: URL
+    let systemOpener: ShoppingSystemOpening
+    let diagnosticSink: DiagnosticSink
+
+    init(
+        approvedBaseURL: URL,
+        systemOpener: ShoppingSystemOpening,
+        diagnosticSink: @escaping DiagnosticSink = Self.defaultDiagnosticSink
+    ) {
+        self.approvedBaseURL = approvedBaseURL
+        self.systemOpener = systemOpener
+        self.diagnosticSink = diagnosticSink
+    }
+
+    #if canImport(UIKit)
+    static func live(
+        approvedBaseURL: URL = AppBackendConfiguration.production().apiBaseURL
+    ) -> ShoppingProductOpener {
+        ShoppingProductOpener(
+            approvedBaseURL: approvedBaseURL,
+            systemOpener: UIApplicationShoppingSystemOpener()
+        )
+    }
+    #endif
+
+    func open(
+        _ product: AffiliateProduct,
+        candidateURL: URL? = nil
+    ) async -> ShoppingProductOpenResult {
+        emit(event: .interactionReceived, product: product)
+        let candidateURL = candidateURL ?? AffiliateLinkBuilder.outboundURL(for: product)
+        switch ShoppingProductGatewayValidator.validate(
+            candidateURL: candidateURL,
+            productID: product.id,
+            approvedBaseURL: approvedBaseURL
+        ) {
+        case .failure(let failure):
+            emit(event: .validationCompleted, product: product, validationResult: "rejected", failure: failure)
+            return .failure(failure)
+        case .success(let validated):
+            emit(
+                event: .validationCompleted,
+                product: product,
+                validationResult: "accepted",
+                validated: validated
+            )
+            let canOpen = systemOpener.canOpenURL(validated.url)
+            emit(event: .canOpenCompleted, product: product, validated: validated, canOpen: canOpen)
+            guard canOpen else {
+                emit(event: .completionReceived, product: product, validated: validated, canOpen: false, failure: .cannotOpen)
+                return .failure(.cannotOpen)
+            }
+            emit(event: .openRequested, product: product, validated: validated, canOpen: true, requestIssued: true)
+            let nativeAccepted = await systemOpener.openUniversalLink(validated.url)
+            let accepted: Bool
+            if nativeAccepted {
+                accepted = true
+            } else {
+                accepted = await systemOpener.presentInAppBrowser(validated.url)
+            }
+            let failure: ShoppingProductOpenFailure? = accepted ? nil : .openDeclined
+            emit(
+                event: .completionReceived,
+                product: product,
+                validated: validated,
+                canOpen: true,
+                requestIssued: true,
+                completionAccepted: accepted,
+                failure: failure
+            )
+            return accepted ? .openAccepted : .failure(.openDeclined)
+        }
+    }
+
+    private func emit(
+        event: ShoppingProductOpenDiagnosticEvent,
+        product: AffiliateProduct,
+        validationResult: String? = nil,
+        validated: ShoppingValidatedGatewayURL? = nil,
+        canOpen: Bool? = nil,
+        requestIssued: Bool = false,
+        completionAccepted: Bool? = nil,
+        failure: ShoppingProductOpenFailure? = nil
+    ) {
+        diagnosticSink(
+            ShoppingProductOpenDiagnostic(
+                event: event,
+                productID: product.id,
+                retailerID: product.retailerID,
+                validationResult: validationResult,
+                validatedHost: validated?.host,
+                pathCategory: validated?.pathCategory,
+                canOpen: canOpen,
+                openRequestIssued: requestIssued,
+                completionAccepted: completionAccepted,
+                failure: failure
+            )
+        )
+    }
+
+    private static func defaultDiagnosticSink(_ diagnostic: ShoppingProductOpenDiagnostic) {
+        #if DEBUG
+        print(
+            "[StyleMatch Shopping Open] event=\(diagnostic.event.rawValue) " +
+            "product_id=\(diagnostic.productID) retailer_id=\(diagnostic.retailerID ?? "none") " +
+            "validation=\(diagnostic.validationResult ?? "none") host=\(diagnostic.validatedHost ?? "none") " +
+            "path_category=\(diagnostic.pathCategory?.rawValue ?? "none") " +
+            "can_open=\(diagnostic.canOpen.map(String.init) ?? "none") request_issued=\(diagnostic.openRequestIssued) " +
+            "completion_accepted=\(diagnostic.completionAccepted.map(String.init) ?? "none") " +
+            "failure=\(diagnostic.failure?.rawValue ?? "none")"
+        )
+        #endif
+    }
+}
+
+enum ShoppingRetailerOpenDiagnosticEvent: String, Equatable {
+    case interactionReceived
+    case validationCompleted
+    case canOpenCompleted
+    case openRequested
+    case completionReceived
+}
+
+struct ShoppingRetailerOpenDiagnostic: Equatable {
+    let event: ShoppingRetailerOpenDiagnosticEvent
+    let retailerID: String
+    let validationResult: String?
+    let validatedHost: String?
+    let canOpen: Bool?
+    let openRequestIssued: Bool
+    let completionAccepted: Bool?
+    let failure: ShoppingRetailerOpenFailure?
+}
+
+@MainActor
+struct ShoppingRetailerDestinationOpener {
+    typealias DiagnosticSink = @MainActor (ShoppingRetailerOpenDiagnostic) -> Void
+
+    let systemOpener: ShoppingSystemOpening
+    let diagnosticSink: DiagnosticSink
+
+    init(
+        systemOpener: ShoppingSystemOpening,
+        diagnosticSink: @escaping DiagnosticSink = Self.defaultDiagnosticSink
+    ) {
+        self.systemOpener = systemOpener
+        self.diagnosticSink = diagnosticSink
+    }
+
+    #if canImport(UIKit)
+    static func live() -> ShoppingRetailerDestinationOpener {
+        ShoppingRetailerDestinationOpener(systemOpener: UIApplicationShoppingSystemOpener())
+    }
+    #endif
+
+    func open(_ destinationURL: URL, retailer: SupportedStore) async -> ShoppingRetailerOpenResult {
+        emit(event: .interactionReceived, retailer: retailer)
+        switch ShoppingRetailerDestinationValidator.validate(candidateURL: destinationURL, retailer: retailer) {
+        case .failure(let failure):
+            emit(event: .validationCompleted, retailer: retailer, validationResult: "rejected", failure: failure)
+            return .failure(failure)
+        case .success(let validated):
+            emit(
+                event: .validationCompleted,
+                retailer: retailer,
+                validationResult: "accepted",
+                validatedHost: validated.host
+            )
+            let canOpen = systemOpener.canOpenURL(validated.url)
+            emit(event: .canOpenCompleted, retailer: retailer, validatedHost: validated.host, canOpen: canOpen)
+            guard canOpen else {
+                emit(
+                    event: .completionReceived,
+                    retailer: retailer,
+                    validatedHost: validated.host,
+                    canOpen: false,
+                    failure: .cannotOpen
+                )
+                return .failure(.cannotOpen)
+            }
+            emit(
+                event: .openRequested,
+                retailer: retailer,
+                validatedHost: validated.host,
+                canOpen: true,
+                requestIssued: true
+            )
+            let nativeAccepted = await systemOpener.openUniversalLink(validated.url)
+            let accepted: Bool
+            if nativeAccepted {
+                accepted = true
+            } else {
+                accepted = await systemOpener.presentInAppBrowser(validated.url)
+            }
+            let failure: ShoppingRetailerOpenFailure? = accepted ? nil : .openDeclined
+            emit(
+                event: .completionReceived,
+                retailer: retailer,
+                validatedHost: validated.host,
+                canOpen: true,
+                requestIssued: true,
+                completionAccepted: accepted,
+                failure: failure
+            )
+            return accepted ? .openAccepted : .failure(.openDeclined)
+        }
+    }
+
+    private func emit(
+        event: ShoppingRetailerOpenDiagnosticEvent,
+        retailer: SupportedStore,
+        validationResult: String? = nil,
+        validatedHost: String? = nil,
+        canOpen: Bool? = nil,
+        requestIssued: Bool = false,
+        completionAccepted: Bool? = nil,
+        failure: ShoppingRetailerOpenFailure? = nil
+    ) {
+        diagnosticSink(
+            ShoppingRetailerOpenDiagnostic(
+                event: event,
+                retailerID: retailer.id,
+                validationResult: validationResult,
+                validatedHost: validatedHost,
+                canOpen: canOpen,
+                openRequestIssued: requestIssued,
+                completionAccepted: completionAccepted,
+                failure: failure
+            )
+        )
+    }
+
+    private static func defaultDiagnosticSink(_ diagnostic: ShoppingRetailerOpenDiagnostic) {
+        #if DEBUG
+        print(
+            "[StyleMatch Retailer Open] event=\(diagnostic.event.rawValue) " +
+            "retailer_id=\(diagnostic.retailerID) validation=\(diagnostic.validationResult ?? "none") " +
+            "host=\(diagnostic.validatedHost ?? "none") " +
+            "can_open=\(diagnostic.canOpen.map(String.init) ?? "none") " +
+            "request_issued=\(diagnostic.openRequestIssued) " +
+            "completion_accepted=\(diagnostic.completionAccepted.map(String.init) ?? "none") " +
+            "failure=\(diagnostic.failure?.rawValue ?? "none")"
+        )
+        #endif
     }
 }
 

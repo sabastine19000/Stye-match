@@ -3464,11 +3464,14 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     func testStoreInventoryFixPreservesSafeOutboundRouting() throws {
         let shoppingView = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
         let storeSearchView = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
+        let scanView = try projectSource("StyleMatchAI/ScanView.swift")
 
         XCTAssertTrue(shoppingView.contains("openProductExternally(product)"))
-        XCTAssertTrue(shoppingView.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])"))
         XCTAssertTrue(storeSearchView.contains("onTap: { openProductExternally(ranked.product) }"))
-        XCTAssertTrue(storeSearchView.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])"))
+        for source in [shoppingView, storeSearchView, scanView] {
+            XCTAssertTrue(source.contains("ShoppingProductOpener"))
+            XCTAssertFalse(source.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product)"))
+        }
     }
 
     func testSoftFiltersStillRelaxWhenStoreMatches() {
@@ -4745,8 +4748,10 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
         let storeSearchSource = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
 
-        XCTAssertTrue(shoppingSource.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])"))
-        XCTAssertTrue(storeSearchSource.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product), options: [:])"))
+        XCTAssertTrue(shoppingSource.contains("ShoppingProductOpener"))
+        XCTAssertTrue(storeSearchSource.contains("ShoppingProductOpener"))
+        XCTAssertFalse(shoppingSource.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product)"))
+        XCTAssertFalse(storeSearchSource.contains("UIApplication.shared.open(AffiliateLinkBuilder.outboundURL(for: product)"))
         XCTAssertFalse(shoppingSource.contains("retailerID") && shoppingSource.contains("trackingParamName ="))
         XCTAssertFalse(storeSearchSource.contains("retailerID") && storeSearchSource.contains("trackingParamName ="))
     }
