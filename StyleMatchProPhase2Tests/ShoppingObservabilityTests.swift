@@ -505,6 +505,40 @@ final class ShoppingObservabilityTests: XCTestCase {
         }
     }
 
+    func testO2CScanAndVisionBoundaryContainsNoStdoutDiagnostics() throws {
+        for path in [
+            "StyleMatchAI/ScanView.swift",
+            "StyleMatchAI/GarmentColorPaletteEngine.swift"
+        ] {
+            let source = try projectSource(path)
+            let lines = source.components(separatedBy: .newlines).map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            for prohibitedPrefix in ["print(", "debugPrint(", "dump(", "NSLog("] {
+                XCTAssertFalse(
+                    lines.contains { $0.hasPrefix(prohibitedPrefix) },
+                    "\(path) contains \(prohibitedPrefix)"
+                )
+            }
+            XCTAssertFalse(source.contains("StyleMatchDebugLogEmitter.emit("))
+        }
+    }
+
+    func testO2CRemovedScanPayloadMarkersAreAbsent() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        for removedDiagnostic in [
+            "[ScanGate]",
+            "[StyleMatch Score Debug]",
+            "[StyleMatch Vision Debug]",
+            "[StyleMatch Color Debug]",
+            "[Scan AI Assist]",
+            "[Scan AI Upgrade Prompt]",
+            "[Scan ChatGPT Upgrade]"
+        ] {
+            XCTAssertFalse(source.contains(removedDiagnostic))
+        }
+    }
+
     private func context(_ generation: Int) -> ShoppingDiagnosticContext {
         ShoppingDiagnosticContext(routeID: routeID, loadGeneration: generation)
     }

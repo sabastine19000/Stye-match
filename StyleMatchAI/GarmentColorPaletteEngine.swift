@@ -5,10 +5,7 @@ enum StyleMatchDebugLogEmitter {
     private static let queue = DispatchQueue(label: "com.stylematch.debug-log-emitter")
 
     static func emit(_ message: @autoclosure () -> String) {
-        queue.sync {
-            print(message())
-            fflush(stdout)
-        }
+        _ = message
     }
 }
 #endif
@@ -950,26 +947,16 @@ enum GarmentRegionMasker {
             (.saliencyCrop, saliencyCrop)
         ]
 
-        for (tier, attempt) in attempts {
+        for (_, attempt) in attempts {
             do {
                 if let mask = try attempt(),
                    mask.includedCount >= minimumIncludedPixels {
-                    #if DEBUG
-                    StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(tier.rawValue) succeeded with \(mask.includedCount) included pixels.")
-                    #endif
                     return mask
                 }
             } catch {
-                #if DEBUG
-                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed: \(error.localizedDescription)")
-                #endif
                 continue
             }
         }
-
-        #if DEBUG
-        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] all garment mask tiers failed; returning couldNotIsolateGarment.")
-        #endif
         return GarmentRegionMask.couldNotIsolate(width: width, height: height)
     }
 }
