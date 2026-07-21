@@ -8,8 +8,12 @@ final class Build16PerformanceTests: XCTestCase {
 
         XCTAssertFalse(engine.contains("print(message())"))
         XCTAssertFalse(engine.contains("fflush(stdout)"))
+        XCTAssertFalse(engine.contains("StyleMatchDebugLogEmitter"))
         XCTAssertFalse(engine.contains("StyleMatchDebugLogEmitter.emit("))
         XCTAssertFalse(scan.contains("StyleMatchDebugLogEmitter.emit("))
+        XCTAssertFalse(scan.contains("logScanDebug("))
+        XCTAssertFalse(scan.contains("scanDebugLog("))
+        XCTAssertFalse(scan.contains("[StyleMatch Scan Debug]"))
     }
 
     func testPaletteRuntimeKeepsStageTimingWithoutContentLogging() throws {

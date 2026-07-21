@@ -194,15 +194,6 @@ struct OpenAIStylistClient {
         return !emptyMarkers.contains(normalized)
     }
 
-    #if DEBUG
-    private func debugPromptLog(for messages: [OpenAIChatCompletionRequest.Message], model: String) -> String {
-        let prompt = messages
-            .map { "[\($0.role)] \($0.content)" }
-            .joined(separator: "\n\n")
-        return "[StyleMatch AI Prompt Debug] model=\(model)\n\(prompt)"
-    }
-    #endif
-
     private func resolvedModelName(from rawModel: String) -> String {
         let trimmed = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "gpt-4o-mini" : trimmed

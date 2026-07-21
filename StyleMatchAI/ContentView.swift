@@ -299,12 +299,10 @@ struct ContentView: View {
             .onPreferenceChange(StyleMatchBottomNavigationFramePreferenceKey.self) { frame in
                 guard !frame.isNull, !frame.isEmpty, frame != bottomNavigationFrame else { return }
                 bottomNavigationFrame = frame
-                debugLogRootBottomLayout()
             }
             .onPreferenceChange(StyleMatchRootSafeAreaBottomPreferenceKey.self) { inset in
                 guard inset != rootSafeAreaBottomInset else { return }
                 rootSafeAreaBottomInset = inset
-                debugLogRootBottomLayout()
             }
 #if canImport(UIKit)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
@@ -599,9 +597,6 @@ struct ContentView: View {
             return 0
         }
         return bottomNavigationFrame.height
-    }
-
-    private func debugLogRootBottomLayout() {
     }
 
     private func bottomTab(_ tab: AppTab, title: String, icon: String, badgeCount: Int = 0) -> some View {

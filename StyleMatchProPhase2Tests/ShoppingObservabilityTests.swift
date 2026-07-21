@@ -539,6 +539,37 @@ final class ShoppingObservabilityTests: XCTestCase {
         }
     }
 
+    func testO2ExitGateRejectsDirectAndWrappedDebugOutputAcrossApp() throws {
+        let directSinkPattern = #"\b(?:print|debugPrint|dump|NSLog)\s*\("#
+        let wrapperFunctionPattern = #"\bfunc\s+\w*(?:log\w*debug|debug\w*log|emit\w*debug|debug\w*emit)\w*\s*\("#
+        let wrapperTypePattern = #"\b(?:class|struct|enum|actor)\s+\w*(?:debug\w*(?:log|emit)|(?:log|emit)\w*debug)\w*\b"#
+        let prohibitedMarkers = [
+            "StyleMatchDebugLogEmitter",
+            "[StyleMatch Scan Debug]",
+            "[StyleMatch AI Prompt Debug]",
+            "fingerprintVersion=",
+            "imageDigestPrefix="
+        ]
+
+        for (path, source) in try applicationSwiftSources() {
+            XCTAssertNil(
+                source.range(of: directSinkPattern, options: .regularExpression),
+                "\(path) contains a direct stdout sink"
+            )
+            XCTAssertNil(
+                source.range(of: wrapperFunctionPattern, options: [.regularExpression, .caseInsensitive]),
+                "\(path) contains a debug-output wrapper function"
+            )
+            XCTAssertNil(
+                source.range(of: wrapperTypePattern, options: [.regularExpression, .caseInsensitive]),
+                "\(path) contains a debug-output wrapper type"
+            )
+            for marker in prohibitedMarkers {
+                XCTAssertFalse(source.contains(marker), "\(path) contains prohibited marker \(marker)")
+            }
+        }
+    }
+
     func testO2DAccountProfileAndLifecycleBoundaryContainsNoStdoutDiagnostics() throws {
         for path in [
             "StyleMatchAI/AccountService.swift",
@@ -645,6 +676,29 @@ final class ShoppingObservabilityTests: XCTestCase {
         let testFileURL = URL(fileURLWithPath: #filePath)
         let repositoryRoot = testFileURL.deletingLastPathComponent().deletingLastPathComponent()
         return try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
+    private func applicationSwiftSources() throws -> [(path: String, source: String)] {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let repositoryRoot = testFileURL.deletingLastPathComponent().deletingLastPathComponent()
+        let applicationRoot = repositoryRoot.appendingPathComponent("StyleMatchAI", isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(
+            at: applicationRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+
+        return try enumerator.compactMap { entry in
+            guard let url = entry as? URL,
+                  url.pathExtension == "swift",
+                  try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                return nil
+            }
+            let relativePath = url.path.replacingOccurrences(of: repositoryRoot.path + "/", with: "")
+            return (relativePath, try String(contentsOf: url, encoding: .utf8))
+        }
     }
 }
 

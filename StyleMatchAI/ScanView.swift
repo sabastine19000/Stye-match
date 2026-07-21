@@ -5299,14 +5299,6 @@ struct ScanView: View {
                 }
 
                 guard validation.isAccepted else {
-                    logScanDebug(
-                        source: scanSource,
-                        validation: validation,
-                        labels: validation.labels,
-                        fingerprint: "rejected",
-                        imageDigest: imageDigest,
-                        cacheSource: "rejected"
-                    )
                     preparedAnalysis = nil
                     result = nil
                     let message = ScanMessage(
@@ -5332,15 +5324,6 @@ struct ScanView: View {
                 let imageDigest = preparedFacts.imageDigest
                 activeScanFingerprint = fingerprint
                 activeScanImageDigest = imageDigest
-                logScanDebug(
-                    source: scanSource,
-                    validation: validation,
-                    labels: labels,
-                    fingerprint: fingerprint,
-                    imageDigest: imageDigest,
-                    cacheSource: forceReanalyze ? "reanalyze" : "pending"
-                )
-
                 let savedResult = savedScan(
                     for: imageToAnalyze,
                     validation: validation,
@@ -5542,14 +5525,6 @@ struct ScanView: View {
         if let storedScan = exactStoredScan,
            !forceReanalyze,
            let cachedAnalysis = storedScan.analysis {
-            logScanDebug(
-                source: scanSource,
-                validation: validation,
-                labels: labels,
-                fingerprint: fingerprint,
-                imageDigest: imageDigest,
-                cacheSource: "saved analysis"
-            )
             return SavedScanResult(
                 analysis: cachedAnalysis,
                 isRepeat: true,
@@ -5602,15 +5577,6 @@ struct ScanView: View {
         )
         history[fingerprint] = storedScan
         saveScanHistory(history)
-        logScanDebug(
-            source: scanSource,
-            validation: validation,
-            labels: labels,
-            fingerprint: fingerprint,
-            imageDigest: imageDigest,
-            cacheSource: forceReanalyze ? "reanalyze new score" : "new local score"
-        )
-
         return SavedScanResult(
             analysis: analysis,
             isRepeat: false,
@@ -6549,42 +6515,6 @@ struct ScanView: View {
             return .medium
         }
         return .low
-    }
-
-    private func logScanDebug(
-        source: ScanSource,
-        validation: ScanValidation,
-        labels: [DetectedLabel],
-        fingerprint: String,
-        imageDigest: String?,
-        cacheSource: String
-    ) {
-        _ = source
-        _ = validation
-        _ = labels
-        _ = fingerprint
-        _ = imageDigest
-        _ = cacheSource
-    }
-
-    private func scanDebugLog(
-        source: ScanSource,
-        validation: ScanValidation,
-        labels: [DetectedLabel],
-        fingerprint: String,
-        imageDigest: String?,
-        cacheSource: String
-    ) -> String {
-        let qualityScore = validation.qualityScore
-        let confidence = confidenceLevel(for: validation, labels: labels)
-        let detectedCount = detectedClothingItems(from: labels).prefix(8).count
-        let reason = validation.isAccepted ? cacheSource : validation.rejectionTitle
-        let fingerprintVersion = fingerprint.split(separator: "|").first.map(String.init) ?? "none"
-        let imageDigestPrefix = ScanImageIdentity.debugDigestPrefix(imageDigest)
-
-        return """
-        [StyleMatch Scan Debug] source=\(source.rawValue); normalized=true; quality=\(qualityScore); confidence=\(confidence.label); fingerprintVersion=\(fingerprintVersion); imageDigestPrefix=\(imageDigestPrefix); scoreSource=\(cacheSource); detectedCount=\(detectedCount); reason=\(reason)
-        """
     }
 
     private func scoreFingerprint(for image: UIImage, validation: ScanValidation, labels: [DetectedLabel], colorPalette: [String]) -> String {

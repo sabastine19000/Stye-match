@@ -86,12 +86,6 @@ final class StylistChatService: ObservableObject {
         activeConversation.messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
         activeConversation.updatedAt = Date()
         isStreaming = true
-        debugLogSubmissionLifecycle(
-            localAppend: true,
-            requestStarted: true,
-            requestFailed: false,
-            sendingStateCleared: false
-        )
 
         let context = forcedContext ?? contextProvider()
         let request = ChatRequest(
@@ -149,12 +143,6 @@ final class StylistChatService: ObservableObject {
             requiresSignIn = chatError == .unauthorized
             pendingAssistantID = nil
             conversations = store.conversations
-            debugLogSubmissionLifecycle(
-                localAppend: true,
-                requestStarted: true,
-                requestFailed: true,
-                sendingStateCleared: true
-            )
             return
         }
 
@@ -163,12 +151,6 @@ final class StylistChatService: ObservableObject {
         store.save(activeConversation)
         conversations = store.conversations
         pendingAssistantID = nil
-        debugLogSubmissionLifecycle(
-            localAppend: true,
-            requestStarted: true,
-            requestFailed: false,
-            sendingStateCleared: true
-        )
     }
 
     private func append(_ token: String, to messageID: UUID) {
@@ -188,18 +170,6 @@ final class StylistChatService: ObservableObject {
             return false
         }
         return true
-    }
-
-    private func debugLogSubmissionLifecycle(
-        localAppend: Bool,
-        requestStarted: Bool,
-        requestFailed: Bool,
-        sendingStateCleared: Bool
-    ) {
-        _ = localAppend
-        _ = requestStarted
-        _ = requestFailed
-        _ = sendingStateCleared
     }
 
     private func requestMessages(from messages: [ChatMessage]) -> [ChatRequest.RequestMessage] {

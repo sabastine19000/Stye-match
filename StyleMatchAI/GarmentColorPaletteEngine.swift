@@ -1,15 +1,5 @@
 import Foundation
 
-#if DEBUG
-enum StyleMatchDebugLogEmitter {
-    private static let queue = DispatchQueue(label: "com.stylematch.debug-log-emitter")
-
-    static func emit(_ message: @autoclosure () -> String) {
-        _ = message
-    }
-}
-#endif
-
 enum GarmentPaletteTimedStage {
     case illuminant
     case naming

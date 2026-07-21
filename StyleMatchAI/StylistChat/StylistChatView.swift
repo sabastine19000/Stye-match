@@ -102,7 +102,6 @@ struct StylistChatView: View {
             .onPreferenceChange(StyleMatchComposerFramePreferenceKey.self) { frame in
                 guard !frame.isNull, !frame.isEmpty, frame != composerFrame else { return }
                 composerFrame = frame
-                debugLogComposerLayout()
             }
         }
         .appScreenBackground(.ai)
@@ -305,9 +304,6 @@ struct StylistChatView: View {
             }
     }
 
-    private func debugLogComposerLayout() {
-    }
-
     private var voiceInputButton: some View {
         Group {
             if speechInput.state.isActive {
@@ -408,24 +404,10 @@ struct StylistChatView: View {
             speechInput.stopListening()
         }
         let capturedDraft = preparedDraft
-        debugLogSubmit(
-            tapped: true,
-            textUnits: StylistChatMessageLimit.utf16Length(of: capturedDraft),
-            sendEnabled: !capturedDraft.isEmpty && !draftExceedsLimit && !service.isStreaming,
-            requestCreated: false,
-            blockedReason: submitBlockedReason(for: capturedDraft)
-        )
         guard !capturedDraft.isEmpty, !draftExceedsLimit else { return }
         guard submitQuestion(capturedDraft) else { return }
         draft = ""
         speechInput.clearTranscript()
-        debugLogSubmit(
-            tapped: true,
-            textUnits: StylistChatMessageLimit.utf16Length(of: capturedDraft),
-            sendEnabled: true,
-            requestCreated: true,
-            blockedReason: "none"
-        )
     }
 
     private var preparedDraft: String {
@@ -448,28 +430,6 @@ struct StylistChatView: View {
             return false
         }
         return service.send(question, forcedContext: currentConversationContext)
-    }
-
-    private func submitBlockedReason(for capturedDraft: String) -> String {
-        if capturedDraft.isEmpty { return "empty" }
-        if draftExceedsLimit { return "validation" }
-        if service.isStreaming { return "busy" }
-        if service.authorizationState != .authorized { return "other" }
-        return "none"
-    }
-
-    private func debugLogSubmit(
-        tapped: Bool,
-        textUnits: Int,
-        sendEnabled: Bool,
-        requestCreated: Bool,
-        blockedReason: String
-    ) {
-        _ = tapped
-        _ = textUnits
-        _ = sendEnabled
-        _ = requestCreated
-        _ = blockedReason
     }
 
     private var currentConversationContext: ChatContext {
