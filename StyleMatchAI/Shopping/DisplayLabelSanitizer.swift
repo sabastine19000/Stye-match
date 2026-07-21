@@ -29,7 +29,6 @@ enum DisplayColorProvenance {
 }
 
 enum DisplayLabelSanitizer {
-    private static var reportedLabels = Set<String>()
 
     private static let blocklistedTerms: [String] = [
         "person wearing outfit",
@@ -115,7 +114,6 @@ enum DisplayLabelSanitizer {
         }
 
         if isBlocked(normalized) {
-            report(normalized, reason: "blocked")
             return nil
         }
 
@@ -132,7 +130,6 @@ enum DisplayLabelSanitizer {
             return tokenMatch
         }
 
-        report(normalized, reason: "allowlist_miss")
         return nil
     }
 
@@ -199,10 +196,4 @@ enum DisplayLabelSanitizer {
         return clean
     }
 
-    private static func report(_ label: String, reason: String) {
-        #if DEBUG
-        guard reportedLabels.insert("\(reason):\(label)").inserted else { return }
-        print("[StyleMatch Shopping LabelSanitizer] \(reason): \(label)")
-        #endif
-    }
 }

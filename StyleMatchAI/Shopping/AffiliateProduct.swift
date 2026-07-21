@@ -1023,17 +1023,7 @@ struct ShoppingProductOpener {
     }
 
     private static func defaultDiagnosticSink(_ diagnostic: ShoppingProductOpenDiagnostic) {
-        #if DEBUG
-        print(
-            "[StyleMatch Shopping Open] event=\(diagnostic.event.rawValue) " +
-            "product_id=\(diagnostic.productID) retailer_id=\(diagnostic.retailerID ?? "none") " +
-            "validation=\(diagnostic.validationResult ?? "none") host=\(diagnostic.validatedHost ?? "none") " +
-            "path_category=\(diagnostic.pathCategory?.rawValue ?? "none") " +
-            "can_open=\(diagnostic.canOpen.map(String.init) ?? "none") request_issued=\(diagnostic.openRequestIssued) " +
-            "completion_accepted=\(diagnostic.completionAccepted.map(String.init) ?? "none") " +
-            "failure=\(diagnostic.failure?.rawValue ?? "none")"
-        )
-        #endif
+        _ = diagnostic
     }
 }
 
@@ -1155,17 +1145,7 @@ struct ShoppingRetailerDestinationOpener {
     }
 
     private static func defaultDiagnosticSink(_ diagnostic: ShoppingRetailerOpenDiagnostic) {
-        #if DEBUG
-        print(
-            "[StyleMatch Retailer Open] event=\(diagnostic.event.rawValue) " +
-            "retailer_id=\(diagnostic.retailerID) validation=\(diagnostic.validationResult ?? "none") " +
-            "host=\(diagnostic.validatedHost ?? "none") " +
-            "can_open=\(diagnostic.canOpen.map(String.init) ?? "none") " +
-            "request_issued=\(diagnostic.openRequestIssued) " +
-            "completion_accepted=\(diagnostic.completionAccepted.map(String.init) ?? "none") " +
-            "failure=\(diagnostic.failure?.rawValue ?? "none")"
-        )
-        #endif
+        _ = diagnostic
     }
 }
 

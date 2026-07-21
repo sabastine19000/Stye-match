@@ -148,9 +148,6 @@ struct SaleWatcher {
         do {
             catalog = try await catalogProvider.products()
         } catch {
-            #if DEBUG
-            print("[StyleMatch SaleWatcher] Catalog refresh failed: \(error.localizedDescription)")
-            #endif
             return []
         }
 
@@ -218,9 +215,6 @@ struct SaleWatcher {
                 remainingWeekSlots -= 1
                 history.append(currentDate)
             }
-            #if DEBUG
-            print("[StyleMatch SaleWatcher] event product=\(event.productName) reason=\(event.reason.rawValue) status=\(canNotify ? "delivered" : "capped-or-in-app-only")")
-            #endif
             return updated
         }
 

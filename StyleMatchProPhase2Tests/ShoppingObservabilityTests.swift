@@ -429,6 +429,49 @@ final class ShoppingObservabilityTests: XCTestCase {
         )
     }
 
+    func testO2AShoppingBoundaryContainsNoDirectStdoutDiagnostics() throws {
+        for path in [
+            "StyleMatchAI/Shopping/ShoppingSearchProviders.swift",
+            "StyleMatchAI/Shopping/AffiliateProduct.swift",
+            "StyleMatchAI/Shopping/DisplayLabelSanitizer.swift",
+            "StyleMatchAI/Shopping/SaleWatcher.swift",
+            "StyleMatchAI/Shopping/StoreSearchView.swift"
+        ] {
+            let source = try projectSource(path)
+            for prohibited in ["print(", "debugPrint(", "dump(", "NSLog("] {
+                XCTAssertFalse(source.contains(prohibited), "\(path) contains \(prohibited)")
+            }
+        }
+    }
+
+    func testO2ARemovedDiagnosticPayloadsCannotEnterUnifiedLogging() throws {
+        let sources = try [
+            "StyleMatchAI/Shopping/ShoppingSearchProviders.swift",
+            "StyleMatchAI/Shopping/AffiliateProduct.swift",
+            "StyleMatchAI/Shopping/DisplayLabelSanitizer.swift",
+            "StyleMatchAI/Shopping/SaleWatcher.swift",
+            "StyleMatchAI/Shopping/StoreSearchView.swift"
+        ].map(projectSource)
+        let combined = sources.joined(separator: "\n")
+
+        for removedDiagnostic in [
+            "[StyleMatch Shopping Adapter Request]",
+            "[StyleMatch Shopping Search]",
+            "[StyleMatch Shopping Open]",
+            "[StyleMatch Retailer Open]",
+            "[StyleMatch Shopping LabelSanitizer]",
+            "[StyleMatch SaleWatcher]",
+            "[StyleMatch Store Search]"
+        ] {
+            XCTAssertFalse(combined.contains(removedDiagnostic))
+        }
+
+        let diagnosticsSource = try projectSource("StyleMatchAI/Shopping/ShoppingDiagnostics.swift")
+        XCTAssertFalse(diagnosticsSource.contains("absoluteString"))
+        XCTAssertFalse(diagnosticsSource.contains("localizedDescription"))
+        XCTAssertFalse(diagnosticsSource.contains("debugDescription"))
+    }
+
     private func context(_ generation: Int) -> ShoppingDiagnosticContext {
         ShoppingDiagnosticContext(routeID: routeID, loadGeneration: generation)
     }
@@ -487,6 +530,12 @@ final class ShoppingObservabilityTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)
         return defaults
+    }
+
+    private func projectSource(_ relativePath: String) throws -> String {
+        let testFileURL = URL(fileURLWithPath: #filePath)
+        let repositoryRoot = testFileURL.deletingLastPathComponent().deletingLastPathComponent()
+        return try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 }
 

@@ -4961,7 +4961,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(source.contains("SharedProductCatalogLoader.shared.loadResult()"))
         XCTAssertTrue(source.contains("catalogResult.source != .none"))
         XCTAssertTrue(source.contains("ShoppingSearchEngine.relaxedFilter(products: policyResult.products, query: currentQuery())"))
-        XCTAssertTrue(source.contains("[StyleMatch Store Search] Search failed:"))
+        XCTAssertTrue(source.contains("errorMessage = \"We could not search right now. Please try again.\""))
+        XCTAssertFalse(source.contains("[StyleMatch Store Search] Search failed:"))
     }
 
     func testShoppingSurfacesConsumeSharedRetailerPreferencePolicy() throws {
