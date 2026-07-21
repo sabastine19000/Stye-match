@@ -47,16 +47,6 @@ struct OpenAIStylistClient {
         }
         let requestMessages = Array(recentMessages.suffix(19))
             + [ChatRequest.RequestMessage(role: "user", content: preparedQuestion)]
-        #if DEBUG
-        for (index, message) in requestMessages.enumerated() {
-            let sourceOffset = max(0, debugMessageSources.count - requestMessages.count)
-            let sourceIndex = index + sourceOffset
-            let source = debugMessageSources.indices.contains(sourceIndex)
-                ? debugMessageSources[sourceIndex]
-                : (index == requestMessages.count - 1 ? "latest_user_or_generated_context" : "history")
-            print("[AI Insight Outbound] index=\(index) role=\(message.role) utf16_count=\(message.content.utf16.count) source=\(source)")
-        }
-        #endif
         if let validationError = StylistChatMessageLimit.validationError(for: requestMessages) {
             throw validationError
         }
@@ -71,17 +61,8 @@ struct OpenAIStylistClient {
         )
         let request = ChatRequest(messages: requestMessages, context: context, stream: true)
         #if DEBUG
-        print(
-            "[AI Insight Context] active_scan_utf16=\(context.activeScan.utf16.count) "
-            + "historical_scan_utf16=\(context.historicalOutfits.utf16.count) "
-            + "score_utf16=\(context.scoreBreakdown?.utf16.count ?? 0) "
-            + "weather_constraint_utf16=\(context.weatherConstraint.utf16.count) "
-            + "screen_context=\(context.screenContext?.currentTab.rawValue ?? "none")/\(context.screenContext?.activeScanState.rawValue ?? "none")"
-        )
         if let debugRequestLabel {
-            let bodyBytes = (try? JSONEncoder().encode(request).count) ?? -1
-            let maximumMessageUTF16 = requestMessages.map { $0.content.utf16.count }.max() ?? 0
-            print("[Stylist Request Size] label=\(debugRequestLabel) final_utf16_count=\(maximumMessageUTF16) encoded_body_bytes=\(bodyBytes) message_count=\(requestMessages.count)")
+            _ = debugRequestLabel
             assert(requestMessages.allSatisfy { $0.content.utf16.count <= 2_000 })
         }
         #endif

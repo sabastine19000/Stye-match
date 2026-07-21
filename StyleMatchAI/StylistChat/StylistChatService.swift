@@ -196,13 +196,10 @@ final class StylistChatService: ObservableObject {
         requestFailed: Bool,
         sendingStateCleared: Bool
     ) {
-        #if DEBUG
-        print(
-            "[Stylist Submit] local_append=\(localAppend) request_started=\(requestStarted) " +
-            "request_failed=\(requestFailed) draft_restored=false " +
-            "sending_state_cleared=\(sendingStateCleared)"
-        )
-        #endif
+        _ = localAppend
+        _ = requestStarted
+        _ = requestFailed
+        _ = sendingStateCleared
     }
 
     private func requestMessages(from messages: [ChatMessage]) -> [ChatRequest.RequestMessage] {

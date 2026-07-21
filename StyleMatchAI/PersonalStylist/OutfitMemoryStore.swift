@@ -342,9 +342,6 @@ final class OutfitMemoryStore: ObservableObject {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(memories) else {
-            #if DEBUG
-            print("[StyleMatch PersonalStylist] Could not encode OutfitMemoryStore.")
-            #endif
             return
         }
         PersonalStylistSnapshotStore.saveData(data, store: "OutfitMemoryStore", userID: userID)
@@ -372,9 +369,6 @@ final class OutfitMemoryStore: ObservableObject {
                   let memories = decodeMemories(recoveredData) {
             decoded = memories
         } else {
-            #if DEBUG
-            print("[StyleMatch PersonalStylist] Could not decode OutfitMemoryStore for \(userID).")
-            #endif
             return []
         }
         return decoded

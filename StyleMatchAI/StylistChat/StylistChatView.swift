@@ -306,20 +306,6 @@ struct StylistChatView: View {
     }
 
     private func debugLogComposerLayout() {
-#if DEBUG
-        let frame = composerFrame
-        guard !frame.isNull, !frame.isEmpty else { return }
-        print(
-            String(
-                format: "[StyleMatch Layout Debug] composerFrame={x=%.1f y=%.1f width=%.1f height=%.1f} bottomNavigationClearance=%.1f",
-                frame.minX,
-                frame.minY,
-                frame.width,
-                frame.height,
-                bottomNavigationClearance
-            )
-        )
-#endif
     }
 
     private var voiceInputButton: some View {
@@ -433,9 +419,6 @@ struct StylistChatView: View {
         guard submitQuestion(capturedDraft) else { return }
         draft = ""
         speechInput.clearTranscript()
-        #if DEBUG
-        print("[Stylist Submit] composer_cleared=true draft_restored=false")
-        #endif
         debugLogSubmit(
             tapped: true,
             textUnits: StylistChatMessageLimit.utf16Length(of: capturedDraft),
@@ -482,13 +465,11 @@ struct StylistChatView: View {
         requestCreated: Bool,
         blockedReason: String
     ) {
-        #if DEBUG
-        print(
-            "[Stylist Submit] tapped=\(tapped) text_units=\(textUnits) " +
-            "send_enabled=\(sendEnabled) is_sending=\(service.isStreaming) " +
-            "request_created=\(requestCreated) blocked_reason=\(blockedReason)"
-        )
-        #endif
+        _ = tapped
+        _ = textUnits
+        _ = sendEnabled
+        _ = requestCreated
+        _ = blockedReason
     }
 
     private var currentConversationContext: ChatContext {
@@ -497,13 +478,6 @@ struct StylistChatView: View {
             hasAuthoritativeScanHandoff: activeConversationContext != nil,
             savedScanIDs: StylistSavedScanAvailability.savedScanIDs()
         )
-#if DEBUG
-        print(
-            "[Stylist Screen Context] supplied_state=\(screenContext.activeScanState.rawValue) "
-                + "resolved_state=\(currentScreenContext.activeScanState.rawValue) "
-                + "authoritative_handoff=\(activeConversationContext != nil)"
-        )
-#endif
         let context = activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext(
             screenContext: currentScreenContext
         )

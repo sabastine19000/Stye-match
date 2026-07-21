@@ -108,9 +108,6 @@ final class LiveChatTransport: StylistChatTransport {
                         if diagnostic.category == .unauthorized {
                             StyleMatchAccountSessionStore.delete()
                         }
-                        #if DEBUG
-                        print("[Stylist Chat HTTP] \(diagnostic.debugDescription)")
-                        #endif
                         throw diagnostic
                     }
 
@@ -127,11 +124,6 @@ final class LiveChatTransport: StylistChatTransport {
                     continuation.finish()
                 } catch {
                     let mapped = Self.mappedError(error, endpoint: endpoint)
-                    #if DEBUG
-                    if let diagnostic = mapped as? StylistChatDiagnosticError {
-                        print("[Stylist Chat Transport] \(diagnostic.debugDescription)")
-                    }
-                    #endif
                     continuation.finish(throwing: mapped)
                 }
             }

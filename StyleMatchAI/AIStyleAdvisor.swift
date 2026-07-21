@@ -464,9 +464,6 @@ struct AIStyleInsightCard: View {
                 )
             )
         } catch {
-            #if DEBUG
-            print("[AI Insight Chat] \(error.localizedDescription)")
-            #endif
             statusText = AIInsightChatErrorPresentation.message(for: error)
             return
         }
@@ -489,9 +486,6 @@ struct AIStyleInsightCard: View {
                     saveMessages()
             }
         } catch {
-            #if DEBUG
-            print("[AI Insight Chat] \(error.localizedDescription)")
-            #endif
             await MainActor.run {
                 let failureMessage = AIInsightChatErrorPresentation.message(for: error)
                 let lastStylistReply = messages.last?.role == .stylist ? messages.last?.text : nil
@@ -598,9 +592,6 @@ struct AIStyleInsightCard: View {
                     isLoading = false
                 }
             } catch {
-                #if DEBUG
-                print("[AI Designer] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     advice = fallbackAdvice
                     statusText = "AI Stylist is having trouble connecting right now. Showing saved guidance."

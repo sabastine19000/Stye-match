@@ -337,10 +337,6 @@ struct PersonalizationContextBuilder {
         - Keep the reason to one short sentence.
         """
 
-        #if DEBUG
-        print("[StyleMatch Shopping ReasonFacts Debug]\n\(payload)")
-        #endif
-
         return payload
     }
 

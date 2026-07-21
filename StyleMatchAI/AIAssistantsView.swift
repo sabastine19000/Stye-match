@@ -2948,9 +2948,6 @@ struct AIAssistantsView: View {
                     isTestingChatGPT = false
                 }
             } catch {
-                #if DEBUG
-                print("[AI Assistant] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     liveStatus = "AI Stylist is having trouble connecting right now. Please try again."
                     chatMessages.append(AIChatMessage(role: .assistant, text: "AI Stylist is having trouble connecting right now. Please try again."))

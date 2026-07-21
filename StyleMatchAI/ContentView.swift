@@ -419,10 +419,6 @@ struct ContentView: View {
                         selectedTab: $selectedTab,
                         onStylistScanHandoffChanged: { handoff in
                             scanStylistHandoff = handoff
-#if DEBUG
-                            let state = handoff?.screenContext.activeScanState.rawValue ?? "none"
-                            print("[Stylist Scan Handoff] received_state=\(state)")
-#endif
                         }
                     )
                 }
@@ -2242,9 +2238,9 @@ struct StableAIFallbackView: View {
     }
 
     private func logStylistChatFailure(_ error: Error, prompt: String, retryAttempt: Int) {
-        #if DEBUG
-        print("[AI Stylist Chat] failure=\(stylistFailureReason(error)); retryAttempt=\(retryAttempt); promptLength=\(prompt.count); detail=\(error.localizedDescription)")
-        #endif
+        _ = error
+        _ = prompt
+        _ = retryAttempt
     }
 
     private func stylistFailureReason(_ error: Error) -> String {
@@ -2828,9 +2824,6 @@ struct StableAIFallbackView: View {
             betaAIStatus = openAIKeyIsSaved ? "Testing StyleMatch Pro AI connection..." : "Paste your key and tap Activate StyleMatch Pro AI."
             verifyBetaOpenAIConnection()
         } catch {
-            #if DEBUG
-            print("[Founder Beta AI Save] \(error.localizedDescription)")
-            #endif
             openAIKeyIsSaved = false
             betaAIConnectionVerified = false
             betaAIStatus = "Could not activate StyleMatch Pro AI right now. Please check the key and try again."
@@ -2879,9 +2872,6 @@ struct StableAIFallbackView: View {
                     betaAIStatus = "StyleMatch Pro AI tested successfully. Ask My Stylist is ready."
                 }
             } catch {
-                #if DEBUG
-                print("[Founder Beta AI Verify] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     betaAIConnectionVerified = false
                     betaAIStatus = "Key saved, but StyleMatch Pro AI could not answer yet. Please try again."

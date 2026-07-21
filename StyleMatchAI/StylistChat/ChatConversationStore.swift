@@ -58,11 +58,7 @@ final class ChatConversationStore: ObservableObject {
                 try? FileManager.default.copyItem(at: fileURL, to: backupURL)
             }
             try atomicWrite(data, to: fileURL)
-        } catch {
-            #if DEBUG
-            print("[StyleMatch Chat] Conversation save failed: \(error.localizedDescription)")
-            #endif
-        }
+        } catch {}
     }
 
     private func atomicWrite(_ data: Data, to url: URL) throws {
@@ -81,16 +77,8 @@ final class ChatConversationStore: ObservableObject {
             return Array(conversations.sorted { $0.updatedAt > $1.updatedAt }.prefix(10))
         }
         if let conversations = decode(backupURL) {
-            #if DEBUG
-            print("[StyleMatch Chat] Recovered conversations from backup.")
-            #endif
             return Array(conversations.sorted { $0.updatedAt > $1.updatedAt }.prefix(10))
         }
-        #if DEBUG
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            print("[StyleMatch Chat] Conversation store corrupt; recovered to empty.")
-        }
-        #endif
         return []
     }
 

@@ -472,6 +472,39 @@ final class ShoppingObservabilityTests: XCTestCase {
         XCTAssertFalse(diagnosticsSource.contains("debugDescription"))
     }
 
+    func testO2BStylistAndChatBoundaryContainsNoDirectStdoutDiagnostics() throws {
+        for path in [
+            "StyleMatchAI/AIAssistantsView.swift",
+            "StyleMatchAI/AIStyleAdvisor.swift",
+            "StyleMatchAI/OpenAIStylistClient.swift",
+            "StyleMatchAI/PersonalStylist/OutfitMemoryStore.swift",
+            "StyleMatchAI/PersonalStylist/PersonalStylistSnapshotStore.swift",
+            "StyleMatchAI/PersonalStylist/ProfileStore.swift",
+            "StyleMatchAI/PersonalStylist/StylistContextBuilder.swift",
+            "StyleMatchAI/StylistChat/ChatConversationStore.swift",
+            "StyleMatchAI/StylistChat/StylistChatService.swift",
+            "StyleMatchAI/StylistChat/StylistChatTransport.swift",
+            "StyleMatchAI/StylistChat/StylistChatView.swift"
+        ] {
+            let source = try projectSource(path)
+            for prohibited in ["print(", "debugPrint(", "dump(", "NSLog("] {
+                XCTAssertFalse(source.contains(prohibited), "\(path) contains \(prohibited)")
+            }
+        }
+    }
+
+    func testO2BContentViewContainsNoStylistPayloadDiagnostics() throws {
+        let source = try projectSource("StyleMatchAI/ContentView.swift")
+        for removedDiagnostic in [
+            "[Stylist Scan Handoff]",
+            "[AI Stylist Chat]",
+            "[Founder Beta AI Save]",
+            "[Founder Beta AI Verify]"
+        ] {
+            XCTAssertFalse(source.contains(removedDiagnostic))
+        }
+    }
+
     private func context(_ generation: Int) -> ShoppingDiagnosticContext {
         ShoppingDiagnosticContext(routeID: routeID, loadGeneration: generation)
     }
