@@ -23,6 +23,8 @@ final class ShoppingLocalStore: ObservableObject {
 
     let defaults: UserDefaults
     let userID: String
+    private let diagnostics: any ShoppingDiagnosticsRecording
+    private let diagnosticContext: ShoppingDiagnosticContext
 
     @Published private var recentlyViewedStorage: [String]
     @Published private var dismissedStorage: Set<String>
@@ -42,8 +44,16 @@ final class ShoppingLocalStore: ObservableObject {
     @Published private var recentSaleEventsStorage: [SaleEvent]
     @Published private var viewedSaleEventIDStorage: Set<String>
 
-    init(defaults: UserDefaults = .standard, userID: String? = nil, supportedStores: [SupportedStore]? = nil) {
+    init(
+        defaults: UserDefaults = .standard,
+        userID: String? = nil,
+        supportedStores: [SupportedStore]? = nil,
+        diagnostics: any ShoppingDiagnosticsRecording = ShoppingDiagnostics.live,
+        diagnosticContext: ShoppingDiagnosticContext = ShoppingDiagnosticContext()
+    ) {
         self.defaults = defaults
+        self.diagnostics = diagnostics
+        self.diagnosticContext = diagnosticContext
         let normalizedUserID = PersonalStylistStorage.normalizedUserID(userID ?? Self.defaultUserID(defaults: defaults))
         self.userID = normalizedUserID
 
@@ -58,6 +68,7 @@ final class ShoppingLocalStore: ObservableObject {
         self.cartStorage = Array((defaults.stringArray(forKey: scoped(Self.cartBaseKey)) ?? []).prefix(100))
         self.shoppingCardStorage = Array((defaults.stringArray(forKey: scoped(Self.shoppingCardsBaseKey)) ?? []).prefix(200))
         let preferredRetailerKey = scoped(Self.preferredRetailerIDsBaseKey)
+        let hadPersistedPreferredRetailers = defaults.stringArray(forKey: preferredRetailerKey) != nil
         let storedPreferredRetailerIDs = Self.storedPreferredRetailerIDs(
             defaults: defaults,
             primaryKey: preferredRetailerKey,
@@ -90,14 +101,18 @@ final class ShoppingLocalStore: ObservableObject {
            preferredRetailerIDStorage != RetailerPreferencePolicy.normalizedCandidateRetailerIDs(storedPreferredRetailerIDs) {
             defaults.set(preferredRetailerIDStorage, forKey: preferredRetailerKey)
         }
-        Self.debugLog(
-            "init",
-            defaults: defaults,
-            userID: normalizedUserID,
-            key: preferredRetailerKey,
-            loadedIDs: storedPreferredRetailerIDs,
-            normalizedIDs: preferredRetailerIDStorage,
-            supportedStores: supportedStores
+        let preferenceSource: ShoppingPreferenceSource = hadPersistedPreferredRetailers
+            ? .persisted
+            : (storedPreferredRetailerIDs.isEmpty ? .defaultValue : .migrated)
+        diagnostics.record(
+            ShoppingDiagnosticEvent(
+                context: diagnosticContext,
+                payload: .preferencesInitialized(
+                    selectedCount: preferredRetailerIDStorage.count,
+                    source: preferenceSource,
+                    registryReady: !(supportedStores?.isEmpty ?? true)
+                )
+            )
         )
     }
 
@@ -152,23 +167,18 @@ final class ShoppingLocalStore: ObservableObject {
     var preferredRetailerIDs: [String] {
         get { preferredRetailerIDStorage }
         set {
+            let before = preferredRetailerIDStorage
             preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedCandidateRetailerIDs(newValue)
             defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
+            recordPreferenceChange(from: before, to: preferredRetailerIDStorage)
         }
     }
 
     func setPreferredRetailerIDs(_ ids: [String], supportedStores: [SupportedStore]) {
+        let before = preferredRetailerIDStorage
         preferredRetailerIDStorage = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(ids, supportedStores: supportedStores)
         defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
-        Self.debugLog(
-            "setPreferredRetailerIDs",
-            defaults: defaults,
-            userID: userID,
-            key: key(Self.preferredRetailerIDsBaseKey),
-            loadedIDs: ids,
-            normalizedIDs: preferredRetailerIDStorage,
-            supportedStores: supportedStores
-        )
+        recordPreferenceChange(from: before, to: preferredRetailerIDStorage)
     }
 
     @discardableResult
@@ -178,42 +188,18 @@ final class ShoppingLocalStore: ObservableObject {
     ) -> [String] {
         let candidates = RetailerPreferencePolicy.normalizedCandidateRetailerIDs(preferredRetailerIDStorage)
         guard registryIsLoaded, !supportedStores.isEmpty else {
-            Self.debugLog(
-                "normalizePreferredRetailerIDs",
-                defaults: defaults,
-                userID: userID,
-                key: key(Self.preferredRetailerIDsBaseKey),
-                loadedIDs: candidates,
-                normalizedIDs: candidates,
-                supportedStores: supportedStores,
-                registryIsLoaded: registryIsLoaded,
-                persistenceAction: "skipped"
-            )
             return candidates
         }
         let normalized = RetailerPreferencePolicy.normalizedPreferredRetailerIDs(
             candidates,
             supportedStores: supportedStores
         )
-        let persistenceAction: String
         if normalized != preferredRetailerIDStorage {
+            let before = preferredRetailerIDStorage
             preferredRetailerIDStorage = normalized
             defaults.set(preferredRetailerIDStorage, forKey: key(Self.preferredRetailerIDsBaseKey))
-            persistenceAction = "written"
-        } else {
-            persistenceAction = "skipped"
+            recordPreferenceChange(from: before, to: normalized, action: .normalize)
         }
-        Self.debugLog(
-            "normalizePreferredRetailerIDs",
-            defaults: defaults,
-            userID: userID,
-            key: key(Self.preferredRetailerIDsBaseKey),
-            loadedIDs: preferredRetailerIDStorage,
-            normalizedIDs: normalized,
-            supportedStores: supportedStores,
-            registryIsLoaded: registryIsLoaded,
-            persistenceAction: persistenceAction
-        )
         return normalized
     }
 
@@ -385,18 +371,10 @@ final class ShoppingLocalStore: ObservableObject {
     }
 
     func deleteAll() {
+        let preferredRetailerCountBeforeDelete = preferredRetailerIDStorage.count
         for baseKey in Self.allPersistedBaseKeys {
             defaults.removeObject(forKey: key(baseKey))
         }
-        Self.debugLog(
-            "deleteAll",
-            defaults: defaults,
-            userID: userID,
-            key: key(Self.preferredRetailerIDsBaseKey),
-            loadedIDs: preferredRetailerIDStorage,
-            normalizedIDs: [],
-            supportedStores: nil
-        )
         recentlyViewedStorage = []
         dismissedStorage = []
         savedFavoritesStorage = []
@@ -414,6 +392,18 @@ final class ShoppingLocalStore: ObservableObject {
         saleNotificationHistoryStorage = []
         recentSaleEventsStorage = []
         viewedSaleEventIDStorage = []
+        if preferredRetailerCountBeforeDelete > 0 {
+            diagnostics.record(
+                ShoppingDiagnosticEvent(
+                    context: diagnosticContext,
+                    payload: .preferencesSelectionChanged(
+                        action: .clear,
+                        beforeCount: preferredRetailerCountBeforeDelete,
+                        afterCount: 0
+                    )
+                )
+            )
+        }
     }
 
     static func deleteShoppingData(for userID: String, defaults: UserDefaults = .standard) {
@@ -469,35 +459,37 @@ final class ShoppingLocalStore: ObservableObject {
         }
 
         defaults.set(legacy, forKey: primaryKey)
-        #if DEBUG
-        print("[StyleMatch My Stores Storage] event=legacy_migration from_key=\(redactedKey(legacyKey, userID: legacyUserID)) to_key=\(redactedKey(primaryKey, userID: normalizedUserID)) migrated_count=\(legacy.count)")
-        #endif
         return legacy
     }
 
-    private static func debugLog(
-        _ event: String,
-        defaults: UserDefaults,
-        userID: String,
-        key: String,
-        loadedIDs: [String],
-        normalizedIDs: [String],
-        supportedStores: [SupportedStore]?,
-        registryIsLoaded: Bool? = nil,
-        persistenceAction: String? = nil
+    private func recordPreferenceChange(
+        from before: [String],
+        to after: [String],
+        action explicitAction: ShoppingPreferenceAction? = nil
     ) {
-        #if DEBUG
-        let supportedIDs = supportedStores?.map(\.id).joined(separator: ",") ?? "not-provided"
-        let activeMode = defaults.string(forKey: "customerAccountMode") ?? "unset"
-        let activeEnvironment = AccountScopedStorage.activeEnvironment(defaults: defaults).rawValue
-        let readiness = registryIsLoaded.map(String.init) ?? "not-provided"
-        let persistence = persistenceAction ?? "not-provided"
-        print("[StyleMatch My Stores Storage] event=\(event) namespace_present=\(!userID.isEmpty) key=\(redactedKey(key, userID: userID)) registry_ready=\(readiness) candidate_ids=\(loadedIDs.joined(separator: ",")) normalized_ids=\(normalizedIDs.joined(separator: ",")) persistence=\(persistence) supported_ids=\(supportedIDs) account_mode=\(activeMode) account_environment=\(activeEnvironment)")
-        #endif
-    }
-
-    private static func redactedKey(_ key: String, userID: String) -> String {
-        key.replacingOccurrences(of: PersonalStylistStorage.normalizedUserID(userID), with: "<user>")
+        guard before != after else { return }
+        let action: ShoppingPreferenceAction
+        if let explicitAction {
+            action = explicitAction
+        } else if after.isEmpty {
+            action = .clear
+        } else if before.allSatisfy(after.contains), after.count > before.count {
+            action = .add
+        } else if after.allSatisfy(before.contains), after.count < before.count {
+            action = .remove
+        } else {
+            action = .replace
+        }
+        diagnostics.record(
+            ShoppingDiagnosticEvent(
+                context: diagnosticContext,
+                payload: .preferencesSelectionChanged(
+                    action: action,
+                    beforeCount: before.count,
+                    afterCount: after.count
+                )
+            )
+        )
     }
 
     private func encode<T: Encodable>(_ value: T, baseKey: String) {
@@ -650,27 +642,68 @@ enum RetailerPreferencePolicy {
     static func apply(
         products: [AffiliateProduct],
         preferredRetailerIDs: [String],
-        supportedStores: [SupportedStore]
+        supportedStores: [SupportedStore],
+        diagnosticContext: ShoppingDiagnosticContext? = nil,
+        diagnostics: (any ShoppingDiagnosticsRecording)? = nil
     ) -> RetailerPreferenceResult {
         let requestedIDs = normalizedPreferredRetailerIDs(
             preferredRetailerIDs,
             supportedStores: supportedStores
         )
-        guard !requestedIDs.isEmpty else {
-            return RetailerPreferenceResult(products: products, usedFallback: false, requestedRetailerIDs: [])
+        let matched: [AffiliateProduct]
+        let result: RetailerPreferenceResult
+        if requestedIDs.isEmpty {
+            matched = products
+            result = RetailerPreferenceResult(products: products, usedFallback: false, requestedRetailerIDs: [])
+        } else {
+            let requestedSet = Set(requestedIDs)
+            matched = products.filter { product in
+                guard let retailerID = canonicalID(product.retailerID) else { return false }
+                return requestedSet.contains(retailerID)
+            }
+            if matched.isEmpty {
+                result = RetailerPreferenceResult(products: products, usedFallback: !products.isEmpty, requestedRetailerIDs: requestedIDs)
+            } else {
+                result = RetailerPreferenceResult(products: matched, usedFallback: false, requestedRetailerIDs: requestedIDs)
+            }
         }
-
-        let requestedSet = Set(requestedIDs)
-        let matched = products.filter { product in
-            guard let retailerID = canonicalID(product.retailerID) else { return false }
-            return requestedSet.contains(retailerID)
+        if let diagnosticContext, let diagnostics {
+            let mode: ShoppingRetailerPolicyMode = requestedIDs.isEmpty ? .allApproved : .preferredRetailers
+            diagnostics.record(
+                ShoppingDiagnosticEvent(
+                    context: diagnosticContext,
+                    payload: .retailerSelectionSnapshot(
+                        retailerIDs: requestedIDs,
+                        selectedCount: requestedIDs.count,
+                        mode: mode
+                    )
+                )
+            )
+            diagnostics.record(
+                ShoppingDiagnosticEvent(
+                    context: diagnosticContext,
+                    payload: .retailerFilterCompleted(
+                        inputCount: products.count,
+                        matchedCount: matched.count,
+                        selectedCount: requestedIDs.count,
+                        mode: mode
+                    )
+                )
+            )
+            if result.usedFallback {
+                diagnostics.record(
+                    ShoppingDiagnosticEvent(
+                        context: diagnosticContext,
+                        payload: .fallbackActivated(
+                            reason: .selectedRetailersZeroInventorySoftFallback,
+                            inputCount: products.count,
+                            fallbackCount: result.products.count
+                        )
+                    )
+                )
+            }
         }
-
-        if matched.isEmpty {
-            return RetailerPreferenceResult(products: products, usedFallback: !products.isEmpty, requestedRetailerIDs: requestedIDs)
-        }
-
-        return RetailerPreferenceResult(products: matched, usedFallback: false, requestedRetailerIDs: requestedIDs)
+        return result
     }
 
     static func canonicalID(_ id: String?) -> String? {

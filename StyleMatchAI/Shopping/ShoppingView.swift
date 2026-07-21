@@ -1,4 +1,5 @@
 import SwiftUI
+import OSLog
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -100,12 +101,17 @@ private struct ShoppingDerivedCatalogContent {
 
 #if DEBUG
 private enum ShoppingPerformanceLog {
+    private static let logger = Logger(
+        subsystem: OSLogShoppingDiagnostics.subsystem,
+        category: ShoppingDiagnosticEvent.Category.display.rawValue
+    )
+
     static func mark(_ event: String, startedAt: CFAbsoluteTime? = nil) {
         if let startedAt {
             let elapsed = CFAbsoluteTimeGetCurrent() - startedAt
-            print("[StyleMatch Shop Perf] \(event) elapsed=\(String(format: "%.3fs", elapsed))")
+            logger.debug("performance event=\(event, privacy: .public) elapsed_seconds=\(elapsed, privacy: .public)")
         } else {
-            print("[StyleMatch Shop Perf] \(event)")
+            logger.debug("performance event=\(event, privacy: .public)")
         }
     }
 }
@@ -169,6 +175,8 @@ struct ShoppingView: View {
     @State private var catalogDisclosure = ShoppingCatalogDisclosure.fallback
     @State private var productOpenAlert: ShoppingProductOpenAlert?
     @State private var retailerOpenAlert: ShoppingRetailerOpenAlert?
+    @State private var diagnosticContext: ShoppingDiagnosticContext
+    @State private var impressionTracker: ShoppingImpressionTracker
     @StateObject private var profileStore = ProfileStore()
     @StateObject private var outfitMemoryStore = OutfitMemoryStore()
     @StateObject private var store: ShoppingLocalStore
@@ -176,8 +184,16 @@ struct ShoppingView: View {
     private let companionRecommender = CatalogProductComplementaryPieceRecommender()
 
     init(selectedTab: Binding<AppTab>) {
+        let diagnosticContext = ShoppingDiagnosticContext()
         self._selectedTab = selectedTab
-        self._store = StateObject(wrappedValue: ShoppingLocalStore())
+        self._diagnosticContext = State(initialValue: diagnosticContext)
+        self._impressionTracker = State(initialValue: ShoppingImpressionTracker())
+        self._store = StateObject(
+            wrappedValue: ShoppingLocalStore(
+                diagnostics: ShoppingDiagnostics.live,
+                diagnosticContext: diagnosticContext
+            )
+        )
         #if DEBUG
         ShoppingPerformanceLog.mark("ShoppingView init")
         #endif
@@ -1332,6 +1348,9 @@ struct ShoppingView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(productAccessibilitySummary(product, action: "Like or skip product"))
         .accessibilityHint("Use the Like and Skip buttons, or swipe right to like and left to skip")
+        .onAppear {
+            recordProductImpression(product, surface: .swipeDeck, position: deckIndex)
+        }
     }
 
     private var feedbackRecommendedSection: some View {
@@ -1439,6 +1458,9 @@ struct ShoppingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onAppear {
+            recordProductImpression(product, surface: .compactCard, position: rank ?? 0)
+        }
     }
 
     private var disclosureSummary: some View {
@@ -2566,6 +2588,31 @@ struct ShoppingView: View {
         }
         .padding()
         .appCard(.shop, radius: 10)
+        .onAppear {
+            recordProductImpression(product, surface: .productCard, position: rank ?? 0)
+        }
+    }
+
+    private func recordProductImpression(
+        _ product: AffiliateProduct,
+        surface: ShoppingImpressionSurface,
+        position: Int
+    ) {
+        let approvedRetailerIDs = Set(
+            supportedStores
+                .filter(\.isEnabled)
+                .compactMap { RetailerPreferencePolicy.canonicalID($0.id) }
+        )
+        _ = impressionTracker.recordIfNeeded(
+            productID: product.id,
+            retailerID: product.retailerID,
+            approvedRetailerIDs: approvedRetailerIDs,
+            surface: surface,
+            position: position,
+            source: catalogSource,
+            context: diagnosticContext.withLoadGeneration(catalogLoadGeneration),
+            diagnostics: ShoppingDiagnostics.live
+        )
     }
 
     private func productMetadata(_ viewModel: AffiliateProductViewModel) -> some View {
@@ -2889,6 +2936,7 @@ struct ShoppingView: View {
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         catalogLoadGeneration += 1
         let loadGeneration = catalogLoadGeneration
+        let loadContext = diagnosticContext.withLoadGeneration(loadGeneration)
         #if DEBUG
         ShoppingPerformanceLog.mark("catalog load start existingProducts=\(products.count)")
         #endif
@@ -2896,12 +2944,13 @@ struct ShoppingView: View {
         isLoading = products.isEmpty
         loadError = nil
         let providerStartedAt = CFAbsoluteTimeGetCurrent()
-        async let loadedCatalog = SharedProductCatalogLoader.shared.loadResult()
+        async let loadedCatalog = SharedProductCatalogLoader.shared.loadResult(
+            diagnosticContext: loadContext,
+            diagnostics: ShoppingDiagnostics.live,
+            trigger: products.isEmpty ? .routeEntry : .refresh
+        )
         async let loadedStores = BundledStoreDirectoryProvider().stores()
         let catalogResult = await loadedCatalog
-        #if DEBUG
-        print("[StyleMatch Shopping Catalog] \(catalogResult.diagnostic.debugSummary)")
-        #endif
         guard catalogResult.source != .none else {
             let stores = (try? await loadedStores) ?? []
             await MainActor.run {
@@ -2940,7 +2989,9 @@ struct ShoppingView: View {
             let retailerPolicyResult = RetailerPreferencePolicy.apply(
                 products: loaded,
                 preferredRetailerIDs: normalizedPreferredRetailerIDs,
-                supportedStores: stores
+                supportedStores: stores,
+                diagnosticContext: loadContext,
+                diagnostics: ShoppingDiagnostics.live
             )
             let scopedCatalog = retailerPolicyResult.products
             let eligibleCatalog = RecommendationRationaleBuilder.budgetFiltered(
@@ -2978,6 +3029,17 @@ struct ShoppingView: View {
             let alertList = makeSaleAlerts(from: scopedCatalog)
             let watcher = SaleWatcher()
             let favoriteSales = watcher.currentFavoriteSaleEvents(catalog: scopedCatalog)
+            let catalogObservation = ShoppingCatalogObservation.make(
+                source: catalogResult.source,
+                selectedRetailerIDs: normalizedPreferredRetailerIDs,
+                supportedStores: stores,
+                inputProducts: loaded,
+                policyResult: retailerPolicyResult,
+                eligibleCount: eligibleCatalog.count,
+                recommendationCount: visibleRecommendations.count,
+                displayedCount: visibleRecommendations.count,
+                destination: .products
+            )
             #if DEBUG
             ShoppingPerformanceLog.mark("deal and favorite-sale filtering", startedAt: dealStartedAt)
             #endif
@@ -3001,27 +3063,30 @@ struct ShoppingView: View {
                 normalizeDeckIndex()
                 isCatalogLoadInFlight = false
                 isLoading = false
+                catalogObservation.recordDisplay(
+                    context: loadContext,
+                    diagnostics: ShoppingDiagnostics.live
+                )
                 #if DEBUG
-                logCatalogDisplayInvariant(
-                    providerCount: loaded.count,
-                    eligibleCount: eligibleCatalog.count,
-                    source: catalogResult.source,
-                    diagnostic: catalogResult.diagnostic
-                )
-                logRetailerPreferenceDiagnostics(
-                    generation: loadGeneration,
-                    source: catalogResult.source,
-                    selectedRetailerIDs: normalizedPreferredRetailerIDs,
-                    loadedProducts: loaded,
-                    filteredProducts: scopedCatalog,
-                    fallbackUsed: retailerPolicyResult.usedFallback,
-                    displayedProducts: visibleRecommendations.map(\.product)
-                )
                 ShoppingPerformanceLog.mark("Shop final ready state", startedAt: loadStartedAt)
                 #endif
             }
             await checkPendingProductRoute()
         } catch {
+            let nsError = error as NSError
+            ShoppingDiagnostics.live.record(
+                ShoppingDiagnosticEvent(
+                    context: loadContext,
+                    payload: .shoppingError(
+                        stage: .displayDerivation,
+                        severity: .fatal,
+                        recoverability: .retryable,
+                        classification: nil,
+                        errorDomain: nsError.domain,
+                        errorCode: nsError.code
+                    )
+                )
+            )
             await MainActor.run {
                 catalogSource = .none
                 catalogDiagnostic = catalogResult.diagnostic
@@ -3063,27 +3128,6 @@ struct ShoppingView: View {
             }
         }
     }
-
-    #if DEBUG
-    private func logCatalogDisplayInvariant(
-        providerCount: Int,
-        eligibleCount: Int,
-        source: ProductCatalogSource,
-        diagnostic: ProductCatalogLoadDiagnostic
-    ) {
-        let filteredCount = searchCatalogProducts.count
-        let displayedCount = searchResults.count
-        let allSelected = selectedCategory == nil && searchCriteria.isEmpty
-        let summary = "source=\(source.rawValue) provider_count=\(providerCount) shopping_state_count=\(products.count) eligible_count=\(eligibleCount) filtered_count=\(filteredCount) displayed_count=\(displayedCount) all_selected=\(allSelected) in_flight=\(isCatalogLoadInFlight) final_source=\(diagnostic.finalSource.rawValue)"
-        print("[StyleMatch Shopping Display] \(summary)")
-        if source == .remote,
-           diagnostic.remoteProductCount ?? 0 > 0,
-           displayedCount == 0,
-           allSelected {
-            print("[StyleMatch Shopping Display Invariant Failure] remote decoded products but displayed zero with All selected: \(summary)")
-        }
-    }
-    #endif
 
     private func refreshSaleAlerts() {
         saleAlerts = makeSaleAlerts(from: products)
@@ -3162,44 +3206,6 @@ struct ShoppingView: View {
         return retailerIDs.map { namesByID[$0] ?? $0 }
     }
 
-    #if DEBUG
-    private func logRetailerPreferenceDiagnostics(
-        generation: Int,
-        source: ProductCatalogSource,
-        selectedRetailerIDs: [String],
-        loadedProducts: [AffiliateProduct],
-        filteredProducts: [AffiliateProduct],
-        fallbackUsed: Bool,
-        displayedProducts: [AffiliateProduct]
-    ) {
-        let loadedCounts = Self.countsByRetailerID(loadedProducts)
-        let selectedSet = Set(selectedRetailerIDs)
-        let matchedBeforeFallback = loadedProducts.filter { product in
-            guard let retailerID = RetailerPreferencePolicy.canonicalID(product.retailerID) else { return false }
-            return selectedSet.contains(retailerID)
-        }
-        let filteredCounts = Self.countsByRetailerID(
-            fallbackUsed ? matchedBeforeFallback : filteredProducts
-        )
-        let displayedCounts = Self.countsByRetailerID(displayedProducts)
-        let fallbackReason: String
-        if fallbackUsed {
-            fallbackReason = "selected_retailers_matched_zero_products_soft_fallback"
-        } else {
-            fallbackReason = "none"
-        }
-        print(
-            "[StyleMatch Shopping Retailers] generation=\(generation) source=\(source.rawValue) before_filter=\(loadedCounts) selected=\(selectedRetailerIDs) after_filter=\(filteredCounts) displayed=\(displayedCounts) fallback_reason=\(fallbackReason)"
-        )
-    }
-
-    private static func countsByRetailerID(_ products: [AffiliateProduct]) -> [String: Int] {
-        Dictionary(
-            grouping: products.compactMap { RetailerPreferencePolicy.canonicalID($0.retailerID) },
-            by: { $0 }
-        ).mapValues(\.count)
-    }
-    #endif
 }
 
 struct MyStoresManagementView: View {

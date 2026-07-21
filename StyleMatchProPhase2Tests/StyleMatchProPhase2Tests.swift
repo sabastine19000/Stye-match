@@ -2605,11 +2605,15 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     }
 
     func testShoppingDisplayInvariantLogsLoadedRemoteButZeroDisplayedState() throws {
-        let source = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let viewSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
+        let observationSource = try projectSource("StyleMatchAI/Shopping/ShoppingCatalogObservation.swift")
+        let diagnosticsSource = try projectSource("StyleMatchAI/Shopping/ShoppingDiagnostics.swift")
 
-        XCTAssertTrue(source.contains("logCatalogDisplayInvariant"))
-        XCTAssertTrue(source.contains("[StyleMatch Shopping Display Invariant Failure]"))
-        XCTAssertTrue(source.contains("displayed zero with All selected"))
+        XCTAssertTrue(viewSource.contains("ShoppingCatalogObservation.make("))
+        XCTAssertTrue(viewSource.contains("catalogObservation.recordDisplay("))
+        XCTAssertTrue(observationSource.contains("let displayedCount: Int"))
+        XCTAssertTrue(diagnosticsSource.contains("case displayFinalized("))
+        XCTAssertFalse(viewSource.contains("[StyleMatch Shopping Display Invariant Failure]"))
     }
 
     func testShoppingDisclosureDoesNotExposeTrackingIds() throws {
@@ -4310,7 +4314,9 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let searchSource = try projectSource("StyleMatchAI/Shopping/StoreSearchView.swift")
 
         XCTAssertTrue(source.contains("@StateObject private var store: ShoppingLocalStore"))
-        XCTAssertTrue(source.contains("self._store = StateObject(wrappedValue: ShoppingLocalStore())"))
+        XCTAssertTrue(source.contains("self._store = StateObject("))
+        XCTAssertTrue(source.contains("diagnostics: ShoppingDiagnostics.live"))
+        XCTAssertTrue(source.contains("diagnosticContext: diagnosticContext"))
         XCTAssertTrue(searchSource.contains("@StateObject private var localStore = ShoppingLocalStore()"))
         XCTAssertFalse(source.contains("shoppingActionRevision"))
     }
@@ -5643,7 +5649,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     func testShoppingSourceStatesSeparateTransportFailureFromNarrowFilters() throws {
         let shoppingSource = try projectSource("StyleMatchAI/Shopping/ShoppingView.swift")
 
-        XCTAssertTrue(shoppingSource.contains("SharedProductCatalogLoader.shared.loadResult()"))
+        XCTAssertTrue(shoppingSource.contains("SharedProductCatalogLoader.shared.loadResult("))
+        XCTAssertTrue(shoppingSource.contains("diagnosticContext: loadContext"))
         XCTAssertTrue(shoppingSource.contains("catalogResult.source != .none"))
         XCTAssertTrue(shoppingSource.contains("live catalog, cache, or bundled fallback"))
         XCTAssertTrue(shoppingSource.contains("catalogSource == .bundled"))
