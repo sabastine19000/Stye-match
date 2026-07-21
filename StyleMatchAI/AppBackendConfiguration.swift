@@ -119,14 +119,6 @@ enum StyleMatchRuntimeEndpoint {
 
     #if DEBUG
     static func logLaunchConfiguration() {
-        guard let resolution = chatResolution() else {
-            print("[StyleMatch Runtime Backend] effective_base_url=missing override_active=false scope=chat+account configuration=Debug")
-            return
-        }
-        print(
-            "[StyleMatch Runtime Backend] effective_base_url=\(resolution.baseURL.absoluteString) " +
-            "override_active=\(resolution.overrideActive) scope=chat+account configuration=Debug"
-        )
     }
     #endif
 

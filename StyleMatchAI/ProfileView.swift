@@ -993,12 +993,7 @@ struct ProfileView: View {
     }
 
     private func logPantsPickerChange(_ newValue: String) {
-        #if DEBUG
-        let measurements = PantsSizeSync.measurements(from: newValue)
-        let parsedWaist = measurements?.waist ?? "nil"
-        let parsedInseam = measurements?.inseam ?? "nil"
-        print("[ProfilePantsSize] PICKER changed pantsSize='\(newValue)' waist='\(profileDraft.waistSize)' inseam='\(profileDraft.inseamLength)' parsedWaist='\(parsedWaist)' parsedInseam='\(parsedInseam)' source='\(pantsSizeLastEditSource.rawValue)'")
-        #endif
+        _ = newValue
     }
 
     private func profileDraftField(
@@ -1754,9 +1749,7 @@ struct ProfileView: View {
     }
 
     private func logPantsSave(_ draft: ProfileEditDraft) {
-        #if DEBUG
-        print("[ProfilePantsSize] SAVE pantsSize='\(draft.pantsSize)' waist='\(draft.waistSize)' inseam='\(draft.inseamLength)' source='\(pantsSizeLastEditSource.rawValue)'")
-        #endif
+        _ = draft
     }
 
 
@@ -1767,9 +1760,11 @@ struct ProfileView: View {
         localNamePresent: Bool,
         storedNamePresent: Bool
     ) {
-        #if DEBUG
-        print("[ProfileName] \(stage) source=\(source.rawValue) appleNameProvided=\(appleNameProvided) localNamePresent=\(localNamePresent) storedNamePresent=\(storedNamePresent)")
-        #endif
+        _ = stage
+        _ = source
+        _ = appleNameProvided
+        _ = localNamePresent
+        _ = storedNamePresent
     }
 
     private func syncPersonalStylistProfile(from draft: ProfileEditDraft) {

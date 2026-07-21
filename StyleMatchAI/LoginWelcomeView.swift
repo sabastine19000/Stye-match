@@ -196,9 +196,11 @@ struct LoginWelcomeView: View {
         localNamePresent: Bool,
         storedNamePresent: Bool
     ) {
-        #if DEBUG
-        print("[ProfileName] welcome-\(stage) source=\(source.rawValue) appleNameProvided=\(appleNameProvided) localNamePresent=\(localNamePresent) storedNamePresent=\(storedNamePresent)")
-        #endif
+        _ = stage
+        _ = source
+        _ = appleNameProvided
+        _ = localNamePresent
+        _ = storedNamePresent
     }
 
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {

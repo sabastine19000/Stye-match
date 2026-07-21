@@ -539,6 +539,48 @@ final class ShoppingObservabilityTests: XCTestCase {
         }
     }
 
+    func testO2DAccountProfileAndLifecycleBoundaryContainsNoStdoutDiagnostics() throws {
+        for path in [
+            "StyleMatchAI/AccountService.swift",
+            "StyleMatchAI/AppBackendConfiguration.swift",
+            "StyleMatchAI/ContentView.swift",
+            "StyleMatchAI/LoginWelcomeView.swift",
+            "StyleMatchAI/ProfileView.swift",
+            "StyleMatchAI/StyleMatchAIApp.swift"
+        ] {
+            let source = try projectSource(path)
+            let lines = source.components(separatedBy: .newlines).map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            for prohibitedPrefix in ["print(", "debugPrint(", "dump(", "NSLog("] {
+                XCTAssertFalse(
+                    lines.contains { $0.hasPrefix(prohibitedPrefix) },
+                    "\(path) contains \(prohibitedPrefix)"
+                )
+            }
+        }
+    }
+
+    func testO2DRemovedIdentityMeasurementAndURLMarkersAreAbsent() throws {
+        let combined = try [
+            "StyleMatchAI/AccountService.swift",
+            "StyleMatchAI/AppBackendConfiguration.swift",
+            "StyleMatchAI/LoginWelcomeView.swift",
+            "StyleMatchAI/ProfileView.swift",
+            "StyleMatchAI/StyleMatchAIApp.swift"
+        ].map(projectSource).joined(separator: "\n")
+
+        for removedDiagnostic in [
+            "[ProfilePantsSize]",
+            "[ProfileName]",
+            "[StyleMatch Build Identity]",
+            "[StyleMatch Account]",
+            "[StyleMatch Runtime Backend]"
+        ] {
+            XCTAssertFalse(combined.contains(removedDiagnostic))
+        }
+    }
+
     private func context(_ generation: Int) -> ShoppingDiagnosticContext {
         ShoppingDiagnosticContext(routeID: routeID, loadGeneration: generation)
     }

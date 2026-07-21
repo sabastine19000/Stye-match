@@ -602,25 +602,6 @@ struct ContentView: View {
     }
 
     private func debugLogRootBottomLayout() {
-#if DEBUG
-        let frame = bottomNavigationFrame
-        let frameText = frame.isNull
-            ? "null"
-            : String(
-                format: "x=%.1f y=%.1f width=%.1f height=%.1f",
-                frame.minX,
-                frame.minY,
-                frame.width,
-                frame.height
-            )
-        let safeAreaText = String(format: "%.1f", rootSafeAreaBottomInset)
-        let clearanceText = String(format: "%.1f", chatBottomNavigationClearance)
-        print(
-            "[StyleMatch Layout Debug] bottomNavigationFrame={\(frameText)} " +
-            "hitTestFrame={\(frameText)} safeAreaBottom=\(safeAreaText) " +
-            "keyboardVisible=\(isSoftwareKeyboardVisible) chatClearance=\(clearanceText)"
-        )
-#endif
     }
 
     private func bottomTab(_ tab: AppTab, title: String, icon: String, badgeCount: Int = 0) -> some View {

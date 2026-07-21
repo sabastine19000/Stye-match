@@ -49,8 +49,7 @@ private struct StyleMatchBuildIdentity {
     }
 
     static func logLaunch(at timestamp: Date = Date()) {
-        let identity = current
-        print("[StyleMatch Build Identity] bundle_id=\(identity.bundleIdentifier) version=\(identity.version) build=\(identity.build) git_commit=\(identity.gitCommit) configuration=\(identity.buildConfiguration) target=\(identity.targetName) scheme=\(identity.schemeName) build_date=\(dateText(identity.buildDate)) launch_timestamp=\(dateText(timestamp)) api_base_url=\(identity.apiBaseURL) share_domain=\(identity.shareDomain)")
+        _ = timestamp
     }
 
     static func dateText(_ date: Date?) -> String {
@@ -240,10 +239,6 @@ final class StyleMatchAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
         }
 
         ASAuthorizationAppleIDProvider().getCredentialState(forUserID: userID) { state, _ in
-            #if DEBUG
-            let userHash = String(StylistChatAuthHeaders.sha256Hex(userID).prefix(8))
-            print("[StyleMatch Account] stage=apple_credential_checked apple_user_hash=\(userHash) credential_state=\(state.rawValue)")
-            #endif
             guard state == .revoked || state == .notFound else { return }
             DispatchQueue.main.async {
                 self.moveRevokedAppleSessionToGuest()
@@ -338,10 +333,6 @@ private struct AppLaunchFlowView: View {
             }
         }
         .onAppear {
-            #if DEBUG
-            let destination = hasChosenAccessMode ? "ContentView" : "LoginWelcomeView"
-            print("[StyleMatch UI Route] root=AppLaunchFlowView splash=SplashScreenView destination=\(destination) has_chosen_access_mode=\(hasChosenAccessMode)")
-            #endif
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
                 withAnimation(.easeInOut(duration: 0.32)) {
                     isShowingSplash = false
