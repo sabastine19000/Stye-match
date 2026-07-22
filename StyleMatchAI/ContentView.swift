@@ -295,12 +295,10 @@ struct ContentView: View {
             .onPreferenceChange(StyleMatchBottomNavigationFramePreferenceKey.self) { frame in
                 guard !frame.isNull, !frame.isEmpty, frame != bottomNavigationFrame else { return }
                 bottomNavigationFrame = frame
-                debugLogRootBottomLayout()
             }
             .onPreferenceChange(StyleMatchRootSafeAreaBottomPreferenceKey.self) { inset in
                 guard inset != rootSafeAreaBottomInset else { return }
                 rootSafeAreaBottomInset = inset
-                debugLogRootBottomLayout()
             }
 #if canImport(UIKit)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
@@ -550,28 +548,6 @@ struct ContentView: View {
             return 0
         }
         return bottomNavigationFrame.height
-    }
-
-    private func debugLogRootBottomLayout() {
-#if DEBUG
-        let frame = bottomNavigationFrame
-        let frameText = frame.isNull
-            ? "null"
-            : String(
-                format: "x=%.1f y=%.1f width=%.1f height=%.1f",
-                frame.minX,
-                frame.minY,
-                frame.width,
-                frame.height
-            )
-        let safeAreaText = String(format: "%.1f", rootSafeAreaBottomInset)
-        let clearanceText = String(format: "%.1f", chatBottomNavigationClearance)
-        print(
-            "[StyleMatch Layout Debug] bottomNavigationFrame={\(frameText)} " +
-            "hitTestFrame={\(frameText)} safeAreaBottom=\(safeAreaText) " +
-            "keyboardVisible=\(isSoftwareKeyboardVisible) chatClearance=\(clearanceText)"
-        )
-#endif
     }
 
     private func bottomTab(_ tab: AppTab, title: String, icon: String, badgeCount: Int = 0) -> some View {
@@ -1078,34 +1054,38 @@ struct StableAIFallbackView: View {
 
     private var aiWeatherStylingCard: some View {
         WeatherStylingButton {
-            HStack(alignment: .center, spacing: 14) {
-                Image(systemName: "cloud.sun.fill")
-                    .font(.title2)
-                    .foregroundStyle(.white)
-                    .frame(width: 50, height: 50)
-                    .background(AppTab.ai.palette.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 14) {
+                    Image(systemName: "cloud.sun.fill")
+                        .font(.title2)
+                        .foregroundStyle(.white)
+                        .frame(width: 50, height: 50)
+                        .background(AppTab.ai.palette.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Weather Styling")
-                        .font(.title3)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.primary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Weather Styling")
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.primary)
 
-                    Text("\(weatherTemperatureText) • \(weatherConditionText)")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
+                        Text("\(weatherTemperatureText) • \(weatherConditionText)")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.primary)
 
-                    Text("Tap to refresh live weather and outfit advice.")
-                        .font(.caption)
+                        Text("Tap to refresh live weather and outfit advice.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(.secondary)
+                AppleWeatherAttributionView()
             }
             .padding()
             .appCard(.ai)
@@ -2054,8 +2034,6 @@ struct StableAIFallbackView: View {
                 saveChatMessages()
             }
         } catch {
-            logStylistChatFailure(error, prompt: text, retryAttempt: retryAttempt)
-
             if retryAttempt == 0 {
                 try? await Task.sleep(nanoseconds: 750_000_000)
                 await requestStylistReply(for: text, conversation: conversation, retryAttempt: 1)
@@ -2186,12 +2164,6 @@ struct StableAIFallbackView: View {
             return []
         }
         return archives
-    }
-
-    private func logStylistChatFailure(_ error: Error, prompt: String, retryAttempt: Int) {
-        #if DEBUG
-        print("[AI Stylist Chat] failure=\(stylistFailureReason(error)); retryAttempt=\(retryAttempt); promptLength=\(prompt.count); detail=\(error.localizedDescription)")
-        #endif
     }
 
     private func stylistFailureReason(_ error: Error) -> String {
@@ -2775,9 +2747,6 @@ struct StableAIFallbackView: View {
             betaAIStatus = openAIKeyIsSaved ? "Testing StyleMatch Pro AI connection..." : "Paste your key and tap Activate StyleMatch Pro AI."
             verifyBetaOpenAIConnection()
         } catch {
-            #if DEBUG
-            print("[Founder Beta AI Save] \(error.localizedDescription)")
-            #endif
             openAIKeyIsSaved = false
             betaAIConnectionVerified = false
             betaAIStatus = "Could not activate StyleMatch Pro AI right now. Please check the key and try again."
@@ -2826,9 +2795,6 @@ struct StableAIFallbackView: View {
                     betaAIStatus = "StyleMatch Pro AI tested successfully. Ask My Stylist is ready."
                 }
             } catch {
-                #if DEBUG
-                print("[Founder Beta AI Verify] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     betaAIConnectionVerified = false
                     betaAIStatus = "Key saved, but StyleMatch Pro AI could not answer yet. Please try again."
@@ -3113,6 +3079,8 @@ struct WeatherStylingPanel: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+
+            AppleWeatherAttributionView()
         }
         .padding()
         .appCard(.ai)
@@ -3298,11 +3266,7 @@ struct WeatherStylingPanel: View {
     }
 
     private var isWeatherStale: Bool {
-        guard liveWeatherUpdatedAt > 0 else {
-            return true
-        }
-
-        return Date().timeIntervalSince(Date(timeIntervalSince1970: liveWeatherUpdatedAt)) > 3600
+        AppleWeatherDataPolicy.isStale(updatedAt: liveWeatherUpdatedAt)
     }
 
     private var statusMessage: String {
@@ -3397,7 +3361,7 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
                 guard let location = placemarks.first?.location else {
                     throw CLError(.geocodeFoundNoResult)
                 }
-                await loadOpenMeteoWeather(for: location, locationName: trimmed)
+                await loadWeatherKitWeather(for: location, locationName: trimmed)
             } catch {
                 await markUnavailable("Live weather is unavailable. Showing last updated weather.")
             }
@@ -3419,7 +3383,7 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
         }
 
         Task {
-            await loadOpenMeteoWeather(for: location, locationName: nil)
+            await loadWeatherKitWeather(for: location, locationName: nil)
             await loadCity(for: location)
         }
     }
@@ -3428,7 +3392,7 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
         DispatchQueue.main.async {
             self.isLive = false
             self.isRefreshing = false
-            UserDefaults.standard.set("Saved", forKey: "weatherSource")
+            UserDefaults.standard.set("Saved Apple Weather", forKey: "weatherSource")
             UserDefaults.standard.set("Live weather is unavailable. Showing last updated weather.", forKey: "weatherErrorMessage")
         }
     }
@@ -3464,42 +3428,19 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
         isRefreshing = false
     }
 
-    private func loadOpenMeteoWeather(for location: CLLocation, locationName: String?) async {
-        var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")
-        components?.queryItems = [
-            URLQueryItem(name: "latitude", value: String(location.coordinate.latitude)),
-            URLQueryItem(name: "longitude", value: String(location.coordinate.longitude)),
-            URLQueryItem(name: "current", value: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m"),
-            URLQueryItem(name: "hourly", value: "temperature_2m,precipitation_probability,weather_code"),
-            URLQueryItem(name: "daily", value: "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max"),
-            URLQueryItem(name: "temperature_unit", value: "fahrenheit"),
-            URLQueryItem(name: "wind_speed_unit", value: "mph"),
-            URLQueryItem(name: "forecast_days", value: "3"),
-            URLQueryItem(name: "timezone", value: "auto")
-        ]
-
-        guard let url = components?.url else {
-            await markUnavailable("Live weather is unavailable. Showing last updated weather.")
-            return
-        }
-
+    private func loadWeatherKitWeather(for location: CLLocation, locationName: String?) async {
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  (200...299).contains(httpResponse.statusCode) else {
-                throw URLError(.badServerResponse)
-            }
-
-            let decoded = try JSONDecoder().decode(OpenMeteoWeatherResponse.self, from: data)
-            let temperature = Int(decoded.current.temperature.rounded())
-            let condition = conditionText(forOpenMeteoCode: decoded.current.weatherCode)
-            let feelsLike = Int(decoded.current.apparentTemperature.rounded())
-            let rainChance = decoded.hourly?.precipitationProbability.prefix(6).max()
-            let humidity = decoded.current.relativeHumidity
-            let windSpeed = decoded.current.windSpeed
-            let uvIndex = decoded.daily?.uvIndexMax.first
-            let hourly = hourlySummary(from: decoded)
-            let daily = dailySummary(from: decoded)
+            let weather = try await WeatherService.shared.weather(for: location)
+            let current = weather.currentWeather
+            let temperature = Int(current.temperature.converted(to: .fahrenheit).value.rounded())
+            let condition = current.condition.description.capitalized
+            let feelsLike = Int(current.apparentTemperature.converted(to: .fahrenheit).value.rounded())
+            let rainChance = weather.hourlyForecast.prefix(6).map { Int(($0.precipitationChance * 100).rounded()) }.max()
+            let humidity = Int((current.humidity * 100).rounded())
+            let windSpeed = current.wind.speed.converted(to: .milesPerHour).value
+            let uvIndex = Double(current.uvIndex.value)
+            let hourly = hourlySummary(from: weather)
+            let daily = dailySummary(from: weather)
             let alert = alertSummary(condition: condition, rainChance: rainChance, windSpeed: windSpeed, uvIndex: uvIndex)
 
             await saveWeather(
@@ -3513,7 +3454,7 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
                 hourly: hourly,
                 daily: daily,
                 alert: alert,
-                source: "Live"
+                source: "Live Apple Weather"
             )
 
             if let locationName, !locationName.isEmpty {
@@ -3529,7 +3470,7 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
     private func loadSavedCityOrMarkUnavailable() {
         let city = UserDefaults.standard.string(forKey: "weatherCity")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !city.isEmpty else {
-            UserDefaults.standard.set("Saved", forKey: "weatherSource")
+            UserDefaults.standard.set("Saved Apple Weather", forKey: "weatherSource")
             UserDefaults.standard.set("Add a city to receive weather-based outfit advice.", forKey: "weatherErrorMessage")
             return
         }
@@ -3541,33 +3482,26 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
     private func markUnavailable(_ message: String) {
         isLive = false
         isRefreshing = false
-        UserDefaults.standard.set("Saved", forKey: "weatherSource")
+        UserDefaults.standard.set("Saved Apple Weather", forKey: "weatherSource")
         UserDefaults.standard.set(message, forKey: "weatherErrorMessage")
     }
 
-    private func hourlySummary(from response: OpenMeteoWeatherResponse) -> String {
-        guard let hourly = response.hourly,
-              !hourly.temperature.isEmpty else {
-            return ""
+    private func hourlySummary(from weather: Weather) -> String {
+        let parts = weather.hourlyForecast.prefix(4).map { hour in
+            let temperature = Int(hour.temperature.converted(to: .fahrenheit).value.rounded())
+            let rain = Int((hour.precipitationChance * 100).rounded())
+            return "\(temperature)°F, rain \(rain)%"
         }
-
-        let parts = hourly.temperature.prefix(4).enumerated().map { index, temp in
-            let rain = hourly.precipitationProbability.indices.contains(index) ? hourly.precipitationProbability[index] : 0
-            return "\(Int(temp.rounded()))°F, rain \(rain)%"
-        }
+        guard !parts.isEmpty else { return "" }
         return "Next hours: " + parts.joined(separator: " | ")
     }
 
-    private func dailySummary(from response: OpenMeteoWeatherResponse) -> String {
-        guard let daily = response.daily,
-              let high = daily.temperatureMax.first,
-              let low = daily.temperatureMin.first else {
-            return ""
-        }
-
-        let rain = daily.precipitationProbabilityMax.first ?? 0
-        let uv = daily.uvIndexMax.first.map { String(format: "%.0f", $0) } ?? "N/A"
-        return "Today: high \(Int(high.rounded()))°F, low \(Int(low.rounded()))°F, rain \(rain)%, UV \(uv)."
+    private func dailySummary(from weather: Weather) -> String {
+        guard let day = weather.dailyForecast.first else { return "" }
+        let high = Int(day.highTemperature.converted(to: .fahrenheit).value.rounded())
+        let low = Int(day.lowTemperature.converted(to: .fahrenheit).value.rounded())
+        let rain = Int((day.precipitationChance * 100).rounded())
+        return "Today: high \(high)°F, low \(low)°F, rain \(rain)%."
     }
 
     private func alertSummary(condition: String, rainChance: Int?, windSpeed: Double?, uvIndex: Double?) -> String {
@@ -3586,29 +3520,6 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
         return ""
     }
 
-    private func conditionText(forOpenMeteoCode code: Int) -> String {
-        switch code {
-        case 0:
-            return "Clear"
-        case 1, 2:
-            return "Partly Cloudy"
-        case 3:
-            return "Cloudy"
-        case 45, 48:
-            return "Foggy"
-        case 51, 53, 55, 56, 57:
-            return "Drizzle"
-        case 61, 63, 65, 66, 67, 80, 81, 82:
-            return "Rainy"
-        case 71, 73, 75, 77, 85, 86:
-            return "Snowy"
-        case 95, 96, 99:
-            return "Stormy"
-        default:
-            return "Mild"
-        }
-    }
-
     private func loadCity(for location: CLLocation) async {
         guard let placemark = try? await geocoder.reverseGeocodeLocation(location).first else {
             return
@@ -3621,56 +3532,6 @@ final class StyleMatchLiveWeatherManager: NSObject, ObservableObject, CLLocation
 
         await MainActor.run {
             UserDefaults.standard.set(city, forKey: "weatherCity")
-        }
-    }
-}
-
-private struct OpenMeteoWeatherResponse: Decodable {
-    let current: Current
-    let hourly: Hourly?
-    let daily: Daily?
-
-    struct Current: Decodable {
-        let temperature: Double
-        let relativeHumidity: Int?
-        let apparentTemperature: Double
-        let weatherCode: Int
-        let windSpeed: Double?
-
-        enum CodingKeys: String, CodingKey {
-            case temperature = "temperature_2m"
-            case relativeHumidity = "relative_humidity_2m"
-            case apparentTemperature = "apparent_temperature"
-            case weatherCode = "weather_code"
-            case windSpeed = "wind_speed_10m"
-        }
-    }
-
-    struct Hourly: Decodable {
-        let temperature: [Double]
-        let precipitationProbability: [Int]
-        let weatherCode: [Int]
-
-        enum CodingKeys: String, CodingKey {
-            case temperature = "temperature_2m"
-            case precipitationProbability = "precipitation_probability"
-            case weatherCode = "weather_code"
-        }
-    }
-
-    struct Daily: Decodable {
-        let weatherCode: [Int]
-        let temperatureMax: [Double]
-        let temperatureMin: [Double]
-        let uvIndexMax: [Double]
-        let precipitationProbabilityMax: [Int]
-
-        enum CodingKeys: String, CodingKey {
-            case weatherCode = "weather_code"
-            case temperatureMax = "temperature_2m_max"
-            case temperatureMin = "temperature_2m_min"
-            case uvIndexMax = "uv_index_max"
-            case precipitationProbabilityMax = "precipitation_probability_max"
         }
     }
 }

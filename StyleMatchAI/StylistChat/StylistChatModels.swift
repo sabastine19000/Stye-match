@@ -144,21 +144,13 @@ enum StylistChatError: LocalizedError, Equatable {
 struct StylistChatDiagnosticError: LocalizedError, Equatable, CustomDebugStringConvertible {
     let category: StylistChatError
     let statusCode: Int?
-    let responseBody: String?
-    let requestID: String?
-    let endpoint: URL
-    let underlyingErrorDescription: String?
 
     var errorDescription: String? { category.errorDescription }
 
     var debugDescription: String {
         [
             "category=\(category)",
-            statusCode.map { "status=\($0)" },
-            responseBody.map { "body=\($0)" },
-            requestID.map { "request_id=\($0)" },
-            "endpoint=\(endpoint.absoluteString)",
-            underlyingErrorDescription.map { "underlying=\($0)" }
+            statusCode.map { "status=\($0)" }
         ]
         .compactMap { $0 }
         .joined(separator: " ")

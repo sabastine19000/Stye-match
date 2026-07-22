@@ -386,9 +386,6 @@ struct StoreSearchView: View {
                 isLoading = false
             }
         } catch {
-            #if DEBUG
-            print("[StyleMatch Store Search] Search failed: \(type(of: error)) \(error.localizedDescription)")
-            #endif
             await MainActor.run {
                 errorMessage = "We could not search right now. Please try again."
                 isLoading = false

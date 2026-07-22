@@ -91,6 +91,9 @@ final class LiveChatTransport: StylistChatTransport {
             let task = Task {
                 let endpoint = configuration.baseURL.appendingPathComponent("v1/chat")
                 do {
+                    guard ThirdPartyAIConsentStore.isGranted() else {
+                        throw ThirdPartyAIConsentError.required
+                    }
                     if let validationError = StylistChatMessageLimit.validationError(for: request.messages) {
                         throw validationError
                     }
@@ -99,18 +102,14 @@ final class LiveChatTransport: StylistChatTransport {
                     let (bytes, response) = try await session.bytes(for: urlRequest)
                     if let http = response as? HTTPURLResponse,
                        Self.error(forHTTPStatusCode: http.statusCode) != nil {
-                        let body = try await Self.responseBody(from: bytes)
                         let diagnostic = Self.diagnosticError(
                             forHTTPResponse: http,
-                            responseBody: body,
+                            responseBody: nil,
                             endpoint: endpoint
                         )
                         if diagnostic.category == .unauthorized {
                             StyleMatchAccountSessionStore.delete()
                         }
-                        #if DEBUG
-                        print("[Stylist Chat HTTP] \(diagnostic.debugDescription)")
-                        #endif
                         throw diagnostic
                     }
 
@@ -127,11 +126,6 @@ final class LiveChatTransport: StylistChatTransport {
                     continuation.finish()
                 } catch {
                     let mapped = Self.mappedError(error, endpoint: endpoint)
-                    #if DEBUG
-                    if let diagnostic = mapped as? StylistChatDiagnosticError {
-                        print("[Stylist Chat Transport] \(diagnostic.debugDescription)")
-                    }
-                    #endif
                     continuation.finish(throwing: mapped)
                 }
             }
@@ -140,6 +134,9 @@ final class LiveChatTransport: StylistChatTransport {
     }
 
     private func makeURLRequest(for request: ChatRequest) throws -> URLRequest {
+        guard ThirdPartyAIConsentStore.isGranted() else {
+            throw ThirdPartyAIConsentError.required
+        }
         let url = configuration.baseURL.appendingPathComponent("v1/chat")
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
@@ -170,35 +167,13 @@ final class LiveChatTransport: StylistChatTransport {
         endpoint: URL,
         underlyingErrorDescription: String? = nil
     ) -> StylistChatDiagnosticError {
-        StylistChatDiagnosticError(
+        _ = responseBody
+        _ = endpoint
+        _ = underlyingErrorDescription
+        return StylistChatDiagnosticError(
             category: error(forHTTPStatusCode: response.statusCode) ?? .providerError,
-            statusCode: response.statusCode,
-            responseBody: responseBody,
-            requestID: requestID(from: response),
-            endpoint: endpoint,
-            underlyingErrorDescription: underlyingErrorDescription
+            statusCode: response.statusCode
         )
-    }
-
-    private static func requestID(from response: HTTPURLResponse) -> String? {
-        for header in ["x-request-id", "request-id", "openai-request-id", "cf-ray"] {
-            if let value = response.value(forHTTPHeaderField: header)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !value.isEmpty {
-                return value
-            }
-        }
-        return nil
-    }
-
-    private static func responseBody(from bytes: URLSession.AsyncBytes, limit: Int = 8_192) async throws -> String? {
-        var data = Data()
-        data.reserveCapacity(limit)
-        for try await byte in bytes {
-            guard data.count < limit else { break }
-            data.append(byte)
-        }
-        guard !data.isEmpty else { return nil }
-        return String(data: data, encoding: .utf8)
     }
 
     private static func payload(from line: String) -> String? {
@@ -217,16 +192,12 @@ final class LiveChatTransport: StylistChatTransport {
     }
 
     private static func mappedError(_ error: Error, endpoint: URL) -> Error {
-        if error is StylistChatError || error is StylistChatDiagnosticError {
+        if error is StylistChatError || error is StylistChatDiagnosticError || error is ThirdPartyAIConsentError {
             return error
         }
         return StylistChatDiagnosticError(
             category: .network,
-            statusCode: nil,
-            responseBody: nil,
-            requestID: nil,
-            endpoint: endpoint,
-            underlyingErrorDescription: String(describing: error)
+            statusCode: nil
         )
     }
 }

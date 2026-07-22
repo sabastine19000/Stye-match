@@ -159,9 +159,6 @@ final class ProfileStore: ObservableObject {
 
     private func saveProfile(_ profile: StylistProfile) {
         guard let data = try? JSONEncoder().encode(profile) else {
-            #if DEBUG
-            print("[StyleMatch PersonalStylist] Could not encode StylistProfile.")
-            #endif
             return
         }
         PersonalStylistSnapshotStore.saveData(data, store: "StylistProfile", userID: userID)

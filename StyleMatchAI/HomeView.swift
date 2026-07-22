@@ -506,6 +506,8 @@ struct HomeView: View {
                     styleBriefRow(icon: "bag.fill", title: "Shopping", detail: shoppingBriefText)
                 }
             }
+
+            AppleWeatherAttributionView()
         }
         .padding()
         .appCard(.home, radius: 16)

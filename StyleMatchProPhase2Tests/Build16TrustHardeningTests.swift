@@ -284,8 +284,8 @@ final class Build16TrustHardeningTests: XCTestCase {
                 of: "if let regionValidation = regionClothingValidation(",
                 range: rejectedReturn.upperBound..<source.endIndex
               ),
-              let unknownVerdict = source.range(
-                of: "[ScanGate] VERDICT: unknown",
+              let unknownReturn = source.range(
+                of: "return .unknown",
                 range: unknownRegionPath.upperBound..<source.endIndex
               ) else {
             return XCTFail("Expected scene-qualified pre-reject and ordinary unknown region fallbacks.")
@@ -295,8 +295,8 @@ final class Build16TrustHardeningTests: XCTestCase {
         XCTAssertLessThan(sceneGuard.lowerBound, preRejectRegionPath.lowerBound)
         XCTAssertLessThan(preRejectRegionPath.lowerBound, rejectedReturn.lowerBound)
         XCTAssertLessThan(rejectedReturn.lowerBound, unknownRegionPath.lowerBound)
-        XCTAssertLessThan(unknownRegionPath.lowerBound, unknownVerdict.lowerBound)
-        XCTAssertTrue(source.contains("[ScanGate] REGION-BEFORE-REJECT: attempting regions before rejectedLabel="))
+        XCTAssertLessThan(unknownRegionPath.lowerBound, unknownReturn.lowerBound)
+        XCTAssertFalse(source.contains("[ScanGate] REGION-BEFORE-REJECT:"))
     }
 
     func testRejectedLabelWithoutEligibleSceneStillRejectsWithoutRegionAttempt() throws {
@@ -312,9 +312,7 @@ final class Build16TrustHardeningTests: XCTestCase {
         let rejectedBlock = String(source[rejectedPath.lowerBound..<rejectedReturn.upperBound])
         XCTAssertTrue(rejectedBlock.contains("if flatLayRegionScene(in: labels) != nil"))
         XCTAssertTrue(rejectedBlock.contains("if let regionValidation = regionClothingValidation("))
-        XCTAssertTrue(rejectedBlock.contains(
-            "            }\n\n            #if DEBUG\n            print(\"[ScanGate] FAIL: rejectedLabel"
-        ))
+        XCTAssertFalse(rejectedBlock.contains("print("))
         XCTAssertTrue(rejectedBlock.hasSuffix("return .rejected(rejectedLabel)"))
     }
 
@@ -334,28 +332,13 @@ final class Build16TrustHardeningTests: XCTestCase {
         XCTAssertTrue(function.contains("strongestMatch.label.confidence >= acceptanceThreshold"))
     }
 
-    func testRegionDiagnosticLoggingIsDebugOnly() throws {
+    func testRegionDiagnosticContentIsNotEmitted() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
-        var debugDepth = 0
-        var regionLogCount = 0
 
-        for line in source.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed == "#if DEBUG" {
-                debugDepth += 1
-            }
-            if line.contains("print(\"[ScanGate] REGION") {
-                regionLogCount += 1
-                XCTAssertGreaterThan(debugDepth, 0, "Region diagnostics must be DEBUG-only: \(trimmed)")
-            }
-            if trimmed == "#endif" {
-                debugDepth = max(0, debugDepth - 1)
-            }
-        }
-
-        XCTAssertGreaterThan(regionLogCount, 0)
-        XCTAssertTrue(source.contains("[ScanGate] REGION:"))
-        XCTAssertTrue(source.contains("[ScanGate] REGION-VERDICT:"))
+        XCTAssertFalse(source.contains("[ScanGate] REGION:"))
+        XCTAssertFalse(source.contains("[ScanGate] REGION-VERDICT:"))
+        XCTAssertFalse(source.contains("print(\"[ScanGate]"))
+        XCTAssertTrue(source.contains("private func regionClothingValidation("))
     }
 
     func testRegionGenerationUsesObjectnessAndSixCandidateCap() throws {

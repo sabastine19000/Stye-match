@@ -253,11 +253,12 @@ final class Build16FingerprintIntegrityTests: XCTestCase {
         XCTAssertFalse(scoreBlock.contains("confidenceLevel"), "Confidence must not enter score math.")
     }
 
-    func testScanDebugUsesStableDigestPrefixAndVersion() throws {
+    func testScanDebugDigestAndFingerprintContentIsNotEmitted() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
-        XCTAssertTrue(source.contains("fingerprintVersion=\\(fingerprintVersion)"))
-        XCTAssertTrue(source.contains("imageDigestPrefix=\\(imageDigestPrefix)"))
+        XCTAssertFalse(source.contains("fingerprintVersion=\\(fingerprintVersion)"))
+        XCTAssertFalse(source.contains("imageDigestPrefix=\\(imageDigestPrefix)"))
+        XCTAssertFalse(source.contains("logScanDebug("))
         XCTAssertFalse(source.contains("abs(fingerprint.hashValue % 100_000)"))
     }
 }

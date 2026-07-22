@@ -87,6 +87,7 @@ struct ProfileView: View {
     @State private var pantsSizeLastEditSource: PantsSizeEditSource = .manual
     @State private var showsAdditionalMeasurements = false
     @State private var showUndertoneHelp = false
+    @State private var thirdPartyAIConsentRecord = ThirdPartyAIConsentStore.record()
     @StateObject private var voiceAssistant = VoiceStylistService()
 
     init(selectedTab: Binding<AppTab>, voiceControlsEnabled: Bool = true) {
@@ -187,6 +188,10 @@ struct ProfileView: View {
             .onAppear {
                 updateSizeProfileSummary()
                 loadProfileDraftIfNeeded()
+                thirdPartyAIConsentRecord = ThirdPartyAIConsentStore.record()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: ThirdPartyAIConsentStore.didChangeNotification)) { _ in
+                thirdPartyAIConsentRecord = ThirdPartyAIConsentStore.record()
             }
             .alert("Profile saved successfully.", isPresented: $showProfileSavedConfirmation) {
                 Button("OK", role: .cancel) {
@@ -715,9 +720,7 @@ struct ProfileView: View {
                         Label("Terms of Use", systemImage: "doc.text")
                     }
 
-                    Button {
-                        dataDeletionMessage = "Privacy Policy will open here when the public release page is connected."
-                    } label: {
+                    Link(destination: URL(string: "https://stylematchpro.com/privacy")!) {
                         Label("Privacy Policy", systemImage: "hand.raised.fill")
                     }
 
@@ -725,6 +728,31 @@ struct ProfileView: View {
                         isShowingSupport = true
                     } label: {
                         Label("Contact Support", systemImage: "questionmark.circle.fill")
+                    }
+                }
+
+                Section("AI Data Sharing") {
+                    LabeledContent("Status", value: thirdPartyAIConsentStatusText)
+
+                    Text("AI Stylist sends your messages and relevant styling information through StyleMatch Pro’s service to OpenAI. Outfit photos stay on your device and are not sent to OpenAI.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Text("Without permission, scanning, saved results, Closet and Shopping remain available; AI Stylist and AI explanations remain unavailable.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if thirdPartyAIConsentRecord.status == .granted {
+                        Button(role: .destructive) {
+                            ThirdPartyAIConsentStore.withdraw()
+                            thirdPartyAIConsentRecord = ThirdPartyAIConsentStore.record()
+                            dataDeletionMessage = "Third-party AI data sharing is off."
+                        } label: {
+                            Label("Withdraw AI Data Sharing Permission", systemImage: "hand.raised.slash")
+                        }
+                    } else {
+                        Text("Use an AI Stylist feature to review the disclosure and choose whether to allow it.")
+                            .font(.caption)
                     }
                 }
 
@@ -977,12 +1005,7 @@ struct ProfileView: View {
     }
 
     private func logPantsPickerChange(_ newValue: String) {
-        #if DEBUG
-        let measurements = PantsSizeSync.measurements(from: newValue)
-        let parsedWaist = measurements?.waist ?? "nil"
-        let parsedInseam = measurements?.inseam ?? "nil"
-        print("[ProfilePantsSize] PICKER changed pantsSize='\(newValue)' waist='\(profileDraft.waistSize)' inseam='\(profileDraft.inseamLength)' parsedWaist='\(parsedWaist)' parsedInseam='\(parsedInseam)' source='\(pantsSizeLastEditSource.rawValue)'")
-        #endif
+        _ = newValue
     }
 
     private func profileDraftField(
@@ -1321,6 +1344,14 @@ struct ProfileView: View {
         }
     }
 
+    private var thirdPartyAIConsentStatusText: String {
+        switch thirdPartyAIConsentRecord.status {
+        case .unknown: "Not decided"
+        case .declined: "Not allowed"
+        case .granted: "Allowed"
+        }
+    }
+
     private func useGuestMode(message: String = "Guest mode is active. Your data stays on this phone.") {
         AccountScopedStorage.switchUser(
             from: AccountScopedStorage.activePresentationUserID(),
@@ -1541,14 +1572,6 @@ struct ProfileView: View {
             appleFamilyName: payload.familyName,
             localDisplayName: restoredLocalName
         )
-        logProfileNameEvent(
-            stage: "sign-in",
-            source: appliedProfile.source,
-            appleNameProvided: payload.givenName != nil || payload.familyName != nil,
-            localNamePresent: StyleMatchAccountNameResolver.clean(restoredLocalName) != nil,
-            storedNamePresent: appliedProfile.givenName != nil
-        )
-
         customerAccountEmail = appliedProfile.email ?? ""
         name = appliedProfile.displayName ?? restoredLocalName ?? ""
 
@@ -1595,13 +1618,6 @@ struct ProfileView: View {
         let resolvedName = StyleMatchAccountNameResolver.resolveStoredProfileThenLocal(
             storedProfileGivenName: profileStore.currentProfile.givenName,
             localDisplayName: name
-        )
-        logProfileNameEvent(
-            stage: "draft-load",
-            source: resolvedName.source,
-            appleNameProvided: false,
-            localNamePresent: StyleMatchAccountNameResolver.clean(name) != nil,
-            storedNamePresent: profileStore.currentProfile.givenName != nil
         )
         if let displayName = resolvedName.displayName,
            StyleMatchAccountNameResolver.clean(name) != displayName {
@@ -1663,15 +1679,6 @@ struct ProfileView: View {
             draft.name,
             storedProfileGivenName: profileStoreForName.currentProfile.givenName
         )
-        logProfileNameEvent(
-            stage: "save",
-            source: StyleMatchAccountNameResolver.clean(draft.name) == nil ? .unavailable : .localDisplayName,
-            appleNameProvided: false,
-            localNamePresent: StyleMatchAccountNameResolver.clean(draft.name) != nil,
-            storedNamePresent: profileStoreForName.currentProfile.givenName != nil
-        )
-        logPantsSave(draft)
-
         name = draft.name
         favoriteColors = draft.favoriteColors
         favoriteBrands = draft.favoriteBrands
@@ -1722,25 +1729,6 @@ struct ProfileView: View {
         if effectiveVoiceControlsEnabled, voiceAssistantEnabled {
             voiceAssistant.speak(VoiceScriptBuilder.profileSaved())
         }
-    }
-
-    private func logPantsSave(_ draft: ProfileEditDraft) {
-        #if DEBUG
-        print("[ProfilePantsSize] SAVE pantsSize='\(draft.pantsSize)' waist='\(draft.waistSize)' inseam='\(draft.inseamLength)' source='\(pantsSizeLastEditSource.rawValue)'")
-        #endif
-    }
-
-
-    private func logProfileNameEvent(
-        stage: String,
-        source: StyleMatchAccountNameResolver.Source,
-        appleNameProvided: Bool,
-        localNamePresent: Bool,
-        storedNamePresent: Bool
-    ) {
-        #if DEBUG
-        print("[ProfileName] \(stage) source=\(source.rawValue) appleNameProvided=\(appleNameProvided) localNamePresent=\(localNamePresent) storedNamePresent=\(storedNamePresent)")
-        #endif
     }
 
     private func syncPersonalStylistProfile(from draft: ProfileEditDraft) {

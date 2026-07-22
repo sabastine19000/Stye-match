@@ -2,31 +2,27 @@ import XCTest
 @testable import StyleMatchPro
 
 final class Build16PerformanceTests: XCTestCase {
-    func testDebugLogEmitterRetainsTagsAndFlushesSerializedOutput() throws {
+    func testSensitivePaletteAndScanStdoutEmitterIsRemoved() throws {
         let engine = try source(named: "GarmentColorPaletteEngine.swift")
         let scan = try scanViewSource()
 
-        XCTAssertTrue(engine.contains("DispatchQueue(label: \"com.stylematch.debug-log-emitter\")"))
-        XCTAssertTrue(engine.contains("queue.sync"))
-        XCTAssertTrue(engine.contains("print(message())"))
-        XCTAssertTrue(engine.contains("fflush(stdout)"))
-        XCTAssertTrue(engine.contains("StyleMatchDebugLogEmitter.emit(\"[StyleMatch Color Debug]"))
-        XCTAssertTrue(scan.contains("StyleMatchDebugLogEmitter.emit(scanDebugLog("))
+        XCTAssertFalse(engine.contains("com.stylematch.debug-log-emitter"))
+        XCTAssertFalse(engine.contains("print(message())"))
+        XCTAssertFalse(engine.contains("fflush(stdout)"))
+        XCTAssertFalse(engine.contains("StyleMatchDebugLogEmitter"))
+        XCTAssertFalse(scan.contains("StyleMatchDebugLogEmitter"))
+        XCTAssertFalse(scan.contains("logScanDebug("))
     }
 
-    func testPaletteRuntimeInstrumentationIncludesCallerCounterAndStageTiming() throws {
+    func testPaletteRuntimeKeepsInternalStageTimingWithoutContentEmission() throws {
         let scan = try scanViewSource()
 
-        XCTAssertTrue(scan.contains("Thread.callStackSymbols.prefix(5)"))
-        XCTAssertTrue(scan.contains("StyleMatchPaletteExtractionTracker.nextInvocation(for: self)"))
-        XCTAssertTrue(scan.contains("[StyleMatch Color Debug] extractionEntry caller="))
-        XCTAssertTrue(scan.contains("regionBoxes=\\(regionBoxes.count) invocation=\\(invocation)"))
-        XCTAssertTrue(scan.contains("[StyleMatch Color Debug] timing totalMs="))
-        XCTAssertTrue(scan.contains("sourcesMs="))
-        XCTAssertTrue(scan.contains("illuminantMs="))
-        XCTAssertTrue(scan.contains("namingMs="))
-        XCTAssertTrue(scan.contains("rankingMs="))
-        XCTAssertTrue(scan.contains("confidenceMs="))
+        XCTAssertTrue(scan.contains("let debugTiming = GarmentPaletteStageTiming()"))
+        XCTAssertTrue(scan.contains("debugTiming.add("))
+        XCTAssertTrue(scan.contains("debugTiming: debugTiming"))
+        XCTAssertFalse(scan.contains("Thread.callStackSymbols"))
+        XCTAssertFalse(scan.contains("StyleMatchPaletteExtractionTracker"))
+        XCTAssertFalse(scan.contains("[StyleMatch Color Debug]"))
     }
 
     func testSharedCatalogLoaderCoalescesConcurrentRequests() async throws {

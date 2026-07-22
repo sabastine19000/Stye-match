@@ -2,6 +2,16 @@ import XCTest
 @testable import StyleMatchPro
 
 final class StylistChatServiceTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        ThirdPartyAIConsentStore.setStatus(.granted)
+    }
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: ThirdPartyAIConsentStore.storageKey)
+        super.tearDown()
+    }
+
     func testMessageLimitAcceptsExactlyTwoThousandUTF16CodeUnits() {
         let text = String(repeating: "a", count: 2_000)
 
@@ -79,7 +89,7 @@ final class StylistChatServiceTests: XCTestCase {
         )
     }
 
-    func testHTTP413RetainsStatusBodyRequestIDAndEndpointDiagnostically() throws {
+    func testHTTP413RetainsOnlyPrivacySafeStatusDiagnostic() throws {
         let endpoint = try XCTUnwrap(URL(string: "https://api.stylematchpro.com/v1/chat"))
         let response = try XCTUnwrap(HTTPURLResponse(
             url: endpoint,
@@ -95,15 +105,15 @@ final class StylistChatServiceTests: XCTestCase {
 
         XCTAssertEqual(diagnostic.category, .payloadTooLarge)
         XCTAssertEqual(diagnostic.statusCode, 413)
-        XCTAssertEqual(diagnostic.responseBody, "{\"error\":\"payload_too_large\"}")
-        XCTAssertEqual(diagnostic.requestID, "request-413-ATL")
-        XCTAssertEqual(diagnostic.endpoint, endpoint)
-        XCTAssertNil(diagnostic.underlyingErrorDescription)
+        XCTAssertEqual(diagnostic.debugDescription, "category=payloadTooLarge status=413")
+        XCTAssertFalse(diagnostic.debugDescription.contains("payload_too_large"))
+        XCTAssertFalse(diagnostic.debugDescription.contains("request-413-ATL"))
+        XCTAssertFalse(diagnostic.debugDescription.contains(endpoint.absoluteString))
         XCTAssertEqual(diagnostic.localizedDescription, StylistChatMessageLimit.limitMessage)
     }
 
     func testOversizedGeneratedPayloadIsRejectedBeforeTransportStarts() async throws {
-        NoNetworkURLProtocol.requestCount = 0
+        NoNetworkURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [NoNetworkURLProtocol.self]
         let session = URLSession(configuration: configuration)
@@ -129,6 +139,81 @@ final class StylistChatServiceTests: XCTestCase {
             XCTAssertEqual(error as? StylistChatError, .payloadTooLarge)
         }
         XCTAssertEqual(NoNetworkURLProtocol.requestCount, 0)
+    }
+
+    func testLiveTransportUnknownConsentCreatesNoURLRequest() async {
+        ThirdPartyAIConsentStore.setStatus(.unknown)
+        let transport = consentTestTransport()
+
+        await consume(transport.send(consentTestRequest()))
+
+        XCTAssertEqual(NoNetworkURLProtocol.requests.count, 0)
+    }
+
+    func testLiveTransportDeclinedConsentCreatesNoURLRequest() async {
+        ThirdPartyAIConsentStore.setStatus(.declined)
+        let transport = consentTestTransport()
+
+        await consume(transport.send(consentTestRequest()))
+
+        XCTAssertEqual(NoNetworkURLProtocol.requests.count, 0)
+    }
+
+    func testLiveTransportWithdrawnConsentCreatesNoURLRequest() async {
+        ThirdPartyAIConsentStore.setStatus(.granted)
+        ThirdPartyAIConsentStore.withdraw()
+        let transport = consentTestTransport()
+
+        await consume(transport.send(consentTestRequest()))
+
+        XCTAssertEqual(NoNetworkURLProtocol.requests.count, 0)
+    }
+
+    func testLiveTransportOutdatedDisclosureCreatesNoURLRequest() async throws {
+        let outdated = ThirdPartyAIConsentRecord(
+            disclosureVersion: ThirdPartyAIConsentStore.disclosureVersion - 1,
+            status: .granted,
+            decidedAt: Date()
+        )
+        UserDefaults.standard.set(
+            try JSONEncoder().encode(outdated),
+            forKey: ThirdPartyAIConsentStore.storageKey
+        )
+        let transport = consentTestTransport()
+
+        await consume(transport.send(consentTestRequest()))
+
+        XCTAssertEqual(NoNetworkURLProtocol.requests.count, 0)
+    }
+
+    func testLiveTransportGrantedConsentCreatesOneSanitizedBackendRequest() async throws {
+        ThirdPartyAIConsentStore.setStatus(.granted)
+        let transport = consentTestTransport()
+
+        await consume(transport.send(consentTestRequest()))
+
+        XCTAssertEqual(NoNetworkURLProtocol.requests.count, 1)
+        let request = try XCTUnwrap(NoNetworkURLProtocol.requests.first)
+        XCTAssertEqual(request.url?.absoluteString, "https://api.stylematchpro.com/v1/chat")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-session-token")
+        let body = try XCTUnwrap(request.httpBody)
+        let bodyText = try XCTUnwrap(String(data: body, encoding: .utf8))
+        XCTAssertFalse(bodyText.contains("test-session-token"))
+        XCTAssertFalse(bodyText.localizedCaseInsensitiveContains("base64"))
+        XCTAssertFalse(bodyText.localizedCaseInsensitiveContains("data:image"))
+        XCTAssertFalse(bodyText.localizedCaseInsensitiveContains("image_url"))
+        XCTAssertFalse(bodyText.localizedCaseInsensitiveContains("https://images"))
+    }
+
+    func testConcurrentUnknownConsentAttemptsCreateNoURLRequests() async {
+        ThirdPartyAIConsentStore.setStatus(.unknown)
+        let transport = consentTestTransport()
+
+        async let first: Void = consume(transport.send(consentTestRequest()))
+        async let second: Void = consume(transport.send(consentTestRequest()))
+        _ = await (first, second)
+
+        XCTAssertEqual(NoNetworkURLProtocol.requests.count, 0)
     }
 
     func testPayloadValidationRejectsWhitespaceOnlyGeneratedMessage() {
@@ -909,6 +994,47 @@ final class StylistChatServiceTests: XCTestCase {
         XCTAssertTrue(ChatConversationStore(fileURL: url).conversations.isEmpty)
     }
 
+    private func consentTestTransport() -> LiveChatTransport {
+        NoNetworkURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NoNetworkURLProtocol.self]
+        return LiveChatTransport(
+            configuration: StylistChatConfiguration(
+                baseURL: URL(string: "https://api.stylematchpro.com")!
+            ),
+            session: URLSession(configuration: configuration),
+            accountSession: {
+                StyleMatchAccountSession(token: "test-session-token", expiresAt: .distantFuture)
+            },
+            appleAccountIsConnected: { true }
+        )
+    }
+
+    private func consentTestRequest() -> ChatRequest {
+        ChatRequest(
+            messages: [
+                ChatRequest.RequestMessage(
+                    role: "user",
+                    content: "Recommend a navy outfit from my closet."
+                )
+            ],
+            context: ChatContext(
+                profileSummary: "Prefers neutral colors",
+                recentOutfits: "Navy shirt and sand trousers",
+                scoreBreakdown: "Overall score is authoritative and unchanged"
+            ),
+            stream: true
+        )
+    }
+
+    private func consume(_ stream: AsyncThrowingStream<String, Error>) async {
+        do {
+            for try await _ in stream {}
+        } catch {
+            // These tests assert the intercepted request boundary, not the mock response.
+        }
+    }
+
     private func temporaryStoreURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("StyleMatchChatTests-\(UUID().uuidString)")
@@ -984,13 +1110,43 @@ private struct ThrowingChatTransport: StylistChatTransport {
 }
 
 private final class NoNetworkURLProtocol: URLProtocol {
-    static var requestCount = 0
+    private static let lock = NSLock()
+    private static var capturedRequests: [URLRequest] = []
+
+    static var requests: [URLRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return capturedRequests
+    }
+
+    static var requestCount: Int { requests.count }
+
+    static func reset() {
+        lock.lock()
+        capturedRequests = []
+        lock.unlock()
+    }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.requestCount += 1
+        var captured = request
+        if captured.httpBody == nil, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var data = Data()
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                data.append(contentsOf: buffer.prefix(count))
+            }
+            captured.httpBody = data
+        }
+        Self.lock.lock()
+        Self.capturedRequests.append(captured)
+        Self.lock.unlock()
         client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
     }
 

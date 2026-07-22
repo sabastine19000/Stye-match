@@ -24,21 +24,13 @@ enum PersonalStylistSnapshotStore {
             do {
                 try rotateSnapshots(store: store, userID: userID)
                 try existing.write(to: snapshotURL(store: store, userID: userID, index: 1), options: .atomic)
-            } catch {
-                #if DEBUG
-                print("[StyleMatch PersonalStylist] Snapshot failed for \(store): \(error.localizedDescription)")
-                #endif
-            }
+            } catch {}
         }
 
         do {
             try ensureDirectory()
             try data.write(to: main, options: .atomic)
-        } catch {
-            #if DEBUG
-            print("[StyleMatch PersonalStylist] Save failed for \(store): \(error.localizedDescription)")
-            #endif
-        }
+        } catch {}
     }
 
     static func restoreFromSnapshot(store: String, userID: String) -> Data? {
@@ -58,11 +50,7 @@ enum PersonalStylistSnapshotStore {
             do {
                 try ensureDirectory()
                 try data.write(to: mainURL(store: store, userID: userID), options: .atomic)
-            } catch {
-                #if DEBUG
-                print("[StyleMatch PersonalStylist] Restore failed for \(store): \(error.localizedDescription)")
-                #endif
-            }
+            } catch {}
             return data
         }
 
@@ -79,9 +67,6 @@ enum PersonalStylistSnapshotStore {
                 try fm.removeItem(at: url)
             } catch {
                 guard fm.fileExists(atPath: url.path) else { continue }
-                #if DEBUG
-                print("[StyleMatch PersonalStylist] Delete failed for \(store): \(error.localizedDescription)")
-                #endif
             }
         }
     }

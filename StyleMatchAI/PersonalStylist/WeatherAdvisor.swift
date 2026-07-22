@@ -2,9 +2,6 @@ import Foundation
 #if canImport(CoreLocation)
 import CoreLocation
 #endif
-#if canImport(WeatherKit)
-import WeatherKit
-#endif
 
 struct WeatherAdvisorInput: Equatable {
     let feelsLikeTemperature: Int?
@@ -173,27 +170,6 @@ enum WeatherAdvisor {
     }
     #endif
 
-    #if canImport(WeatherKit) && canImport(CoreLocation)
-    @available(iOS 16.0, macOS 13.0, *)
-    static func fetchAdvice(for location: CLLocation) async -> WeatherAdvisorAdvice? {
-        do {
-            let weather = try await WeatherService.shared.weather(for: location)
-            let current = weather.currentWeather
-            let input = WeatherAdvisorInput(
-                feelsLikeTemperature: Int(current.apparentTemperature.converted(to: .fahrenheit).value.rounded()),
-                humidityPercent: Int((current.humidity * 100).rounded()),
-                rainChancePercent: nil,
-                windMph: Int(current.wind.speed.converted(to: .milesPerHour).value.rounded()),
-                uvIndex: current.uvIndex.value,
-                condition: current.condition.description,
-                confidence: 95
-            )
-            return advice(for: input)
-        } catch {
-            return nil
-        }
-    }
-    #endif
 }
 
 #if canImport(CoreLocation)

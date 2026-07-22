@@ -357,6 +357,8 @@ struct ClosetView: View {
                 summaryPill("Closet score", "\(closetHealthScore)", "star.fill")
             }
 
+            AppleWeatherAttributionView()
+
             VStack(alignment: .leading, spacing: 8) {
                 Text("Today's recommended outfit")
                     .font(.headline)
@@ -538,6 +540,7 @@ struct ClosetView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
+            AppleWeatherAttributionView()
         }
         .padding()
         .appCard(.closet)

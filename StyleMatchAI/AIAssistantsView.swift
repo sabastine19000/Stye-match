@@ -1,7 +1,5 @@
-import CoreLocation
 import SwiftUI
 import UIKit
-import WeatherKit
 
 struct AIAssistantsView: View {
     @Environment(\.openURL) private var openURL
@@ -13,6 +11,7 @@ struct AIAssistantsView: View {
     @AppStorage("weather") private var weather = ""
     @AppStorage("weatherCity") private var weatherCity = ""
     @AppStorage("weatherCondition") private var weatherCondition = ""
+    @AppStorage("weatherSource") private var weatherSource = ""
     @AppStorage("openAIModel") private var openAIModel = "gpt-4o-mini"
     @AppStorage("fitPreference") private var fitPreference = ""
     @AppStorage("profileName") private var name = ""
@@ -43,7 +42,6 @@ struct AIAssistantsView: View {
     @State private var cachedRecentScans: [AIContextStoredScan] = []
     @State private var activePersonalInsight: String?
     @State private var showAdvancedAISections = false
-    @StateObject private var liveWeather = StyleWeatherManager()
     @State private var chatMessages: [AIChatMessage] = [
         AIChatMessage(role: .assistant, text: "Hi, I am your Style Match Pro AI stylist. Ask me what to wear, what to buy, how to match colors, or how to improve an outfit.")
     ]
@@ -404,13 +402,13 @@ struct AIAssistantsView: View {
 
                 Spacer()
 
-                Text(liveWeather.isLive ? "Live" : "Saved")
+                Text(weatherSource.localizedCaseInsensitiveContains("live apple weather") ? "Live" : "Saved")
                     .font(.caption)
                     .fontWeight(.bold)
-                    .foregroundStyle(liveWeather.isLive ? .green : .secondary)
+                    .foregroundStyle(weatherSource.localizedCaseInsensitiveContains("live apple weather") ? .green : .secondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background((liveWeather.isLive ? Color.green : Color.secondary).opacity(0.12))
+                    .background((weatherSource.localizedCaseInsensitiveContains("live apple weather") ? Color.green : Color.secondary).opacity(0.12))
                     .clipShape(Capsule())
             }
 
@@ -428,6 +426,8 @@ struct AIAssistantsView: View {
                     activePersonalInsight = shoppingNeededSummaryText == "None" ? "No urgent shopping is needed. Your closet has enough to build today's look." : "The stylist sees a possible closet gap and can help you shop only for what improves your outfits."
                 }
             }
+
+            AppleWeatherAttributionView()
         }
         .padding()
         .background(Color(.secondarySystemBackground))
@@ -1983,15 +1983,11 @@ struct AIAssistantsView: View {
     }
 
     private var todaysSummaryWeatherText: String {
-        if let summary = liveWeather.summaryText {
-            return summary
-        }
-
-        let text = weatherLocationText
-            .replacingOccurrences(of: "Mild weather", with: "")
-            .trimmingCharacters(in: CharacterSet(charactersIn: " ,"))
-
-        return text.isEmpty ? "83°F" : text
+        AppleWeatherDataPolicy.stylistContext(
+            temperature: weather,
+            condition: weatherCondition,
+            city: weatherCity
+        ) ?? "Weather unavailable"
     }
 
     private var recommendedStyleSummaryText: String {
@@ -2948,9 +2944,6 @@ struct AIAssistantsView: View {
                     isTestingChatGPT = false
                 }
             } catch {
-                #if DEBUG
-                print("[AI Assistant] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     liveStatus = "AI Stylist is having trouble connecting right now. Please try again."
                     chatMessages.append(AIChatMessage(role: .assistant, text: "AI Stylist is having trouble connecting right now. Please try again."))
@@ -3478,73 +3471,4 @@ private struct StyleMemoryItem: Identifiable {
     let value: String
     let icon: String
     let tint: Color
-}
-
-private final class StyleWeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published var summaryText: String?
-    @Published var isLive = false
-
-    private let locationManager = CLLocationManager()
-
-    override init() {
-        super.init()
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
-    }
-
-    func refresh() {
-        switch locationManager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            locationManager.requestLocation()
-        case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
-        case .denied, .restricted:
-            isLive = false
-        @unknown default:
-            isLive = false
-        }
-    }
-
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
-        case .authorizedAlways, .authorizedWhenInUse:
-            manager.requestLocation()
-        default:
-            isLive = false
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else {
-            return
-        }
-
-        Task {
-            await loadWeather(for: location)
-        }
-    }
-
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        DispatchQueue.main.async {
-            self.isLive = false
-        }
-    }
-
-    private func loadWeather(for location: CLLocation) async {
-        do {
-            let weather = try await WeatherService.shared.weather(for: location)
-            let temperature = weather.currentWeather.temperature.converted(to: .fahrenheit).value
-            let roundedTemperature = Int(temperature.rounded())
-            let condition = weather.currentWeather.condition.description.capitalized
-
-            await MainActor.run {
-                summaryText = "\(roundedTemperature)°F \(condition)"
-                isLive = true
-            }
-        } catch {
-            await MainActor.run {
-                isLive = false
-            }
-        }
-    }
 }

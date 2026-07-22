@@ -116,19 +116,8 @@ enum StyleMatchAccountSessionStore {
 
 enum StyleMatchAccountSessionDiagnostics {
     static func log(stage: String, defaults: UserDefaults = .standard) {
-        #if DEBUG
-        let userID = defaults.string(forKey: "customerAppleUserID") ?? ""
-        let userHash = userID.isEmpty ? "none" : String(StylistChatAuthHeaders.sha256Hex(userID).prefix(8))
-        let session = StyleMatchAccountSessionStore.load()
-        let expiration: String
-        if let session {
-            expiration = session.expiresAt > Date() ? "valid" : "expired"
-        } else {
-            expiration = "missing"
-        }
-        let mode = defaults.string(forKey: "customerAccountMode") ?? "unset"
-        print("[StyleMatch Account] stage=\(stage) mode=\(mode) apple_user_hash=\(userHash) token_present=\(session != nil) expiration=\(expiration)")
-        #endif
+        _ = stage
+        _ = defaults
     }
 }
 

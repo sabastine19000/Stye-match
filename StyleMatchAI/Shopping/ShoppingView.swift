@@ -87,12 +87,8 @@ private struct ShoppingDerivedCatalogContent {
 #if DEBUG
 private enum ShoppingPerformanceLog {
     static func mark(_ event: String, startedAt: CFAbsoluteTime? = nil) {
-        if let startedAt {
-            let elapsed = CFAbsoluteTimeGetCurrent() - startedAt
-            print("[StyleMatch Shop Perf] \(event) elapsed=\(String(format: "%.3fs", elapsed))")
-        } else {
-            print("[StyleMatch Shop Perf] \(event)")
-        }
+        _ = event
+        _ = startedAt
     }
 }
 #endif
@@ -1714,9 +1710,9 @@ struct ShoppingView: View {
 
     private var styleMilestoneRows: [String] {
         [
-            styleLevel >= 5 ? "Unlocked: Fashion Expert" : "Locked: Fashion Expert at level 5",
-            styleLevel >= 12 ? "Unlocked: Advanced wardrobe signals" : "Locked: Advanced wardrobe signals at level 12",
-            styleLevel >= 20 ? "Unlocked: Trendsetter" : "Locked: Trendsetter at level 20"
+            styleLevel >= 5 ? "Fashion Expert milestone reached" : "Complete more activity to reach Fashion Expert at level 5",
+            styleLevel >= 12 ? "Advanced wardrobe signals available" : "Complete more activity to view advanced wardrobe signals at level 12",
+            styleLevel >= 20 ? "Trendsetter milestone reached" : "Complete more activity to reach Trendsetter at level 20"
         ]
     }
 

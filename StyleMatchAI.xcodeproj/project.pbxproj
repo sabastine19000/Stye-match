@@ -84,6 +84,9 @@
 		AA0000000000000000000164 /* ShareableScoreCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000166 /* ShareableScoreCard.swift */; };
 		AA0000000000000000000165 /* ShareableScoreCardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000167 /* ShareableScoreCardViews.swift */; };
 		AA0000000000000000000168 /* AppBackendConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000169 /* AppBackendConfiguration.swift */; };
+		AA0000000000000000000176 /* ThirdPartyAIConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000177 /* ThirdPartyAIConsent.swift */; };
+		AA0000000000000000000178 /* AppleWeatherAttributionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000179 /* AppleWeatherAttributionView.swift */; };
+		AA0000000000000000000180 /* AppleWeatherDataPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000181 /* AppleWeatherDataPolicy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -108,6 +111,9 @@
 		AA0000000000000000000025 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000027 /* OpenAIKeychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIKeychain.swift; sourceTree = "<group>"; };
 		AA0000000000000000000029 /* OpenAIStylistClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIStylistClient.swift; sourceTree = "<group>"; };
+		AA0000000000000000000177 /* ThirdPartyAIConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThirdPartyAIConsent.swift; sourceTree = "<group>"; };
+		AA0000000000000000000179 /* AppleWeatherAttributionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleWeatherAttributionView.swift; sourceTree = "<group>"; };
+		AA0000000000000000000181 /* AppleWeatherDataPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleWeatherDataPolicy.swift; sourceTree = "<group>"; };
 		AA000000000000000000002B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA000000000000000000002D /* AIStyleAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStyleAdvisor.swift; sourceTree = "<group>"; };
 		AA0000000000000000000039 /* ShoppingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingView.swift; sourceTree = "<group>"; };
@@ -224,6 +230,9 @@
 				AA00000000000000000000A0 /* FashionKnowledgeBase.swift */,
 				AA0000000000000000000027 /* OpenAIKeychain.swift */,
 				AA0000000000000000000029 /* OpenAIStylistClient.swift */,
+				AA0000000000000000000177 /* ThirdPartyAIConsent.swift */,
+				AA0000000000000000000179 /* AppleWeatherAttributionView.swift */,
+				AA0000000000000000000181 /* AppleWeatherDataPolicy.swift */,
 				AA00000000000000000000C0 /* AIProviderAdapters.swift */,
 				AA000000000000000000001D /* FeatureGate.swift */,
 				AA000000000000000000001F /* BackendFeaturePlan.swift */,
@@ -448,6 +457,9 @@
 				AA0000000000000000000024 /* OnboardingView.swift in Sources */,
 				AA0000000000000000000026 /* OpenAIKeychain.swift in Sources */,
 				AA0000000000000000000028 /* OpenAIStylistClient.swift in Sources */,
+				AA0000000000000000000176 /* ThirdPartyAIConsent.swift in Sources */,
+				AA0000000000000000000178 /* AppleWeatherAttributionView.swift in Sources */,
+				AA0000000000000000000180 /* AppleWeatherDataPolicy.swift in Sources */,
 				AA000000000000000000002C /* AIStyleAdvisor.swift in Sources */,
 				AA00000000000000000000A1 /* FashionKnowledgeBase.swift in Sources */,
 				AA00000000000000000000B1 /* LoginWelcomeView.swift in Sources */,

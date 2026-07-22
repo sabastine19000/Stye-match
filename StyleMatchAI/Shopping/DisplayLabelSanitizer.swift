@@ -199,10 +199,5 @@ enum DisplayLabelSanitizer {
         return clean
     }
 
-    private static func report(_ label: String, reason: String) {
-        #if DEBUG
-        guard reportedLabels.insert("\(reason):\(label)").inserted else { return }
-        print("[StyleMatch Shopping LabelSanitizer] \(reason): \(label)")
-        #endif
-    }
+    private static func report(_ label: String, reason: String) {}
 }

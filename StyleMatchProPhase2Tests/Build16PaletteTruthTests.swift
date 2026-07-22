@@ -126,7 +126,8 @@ final class Build16PaletteTruthTests: XCTestCase {
 
         XCTAssertTrue(source.contains("foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount"))
         XCTAssertTrue(source.contains("strongForegroundMask = rawForegroundMask?.adaptivelyErodedStrongMask()"))
-        XCTAssertTrue(source.contains("garmentCrop sampling=skipped reason=noUsableForegroundIntersection"))
+        XCTAssertTrue(source.contains("guard let foregroundMask,"))
+        XCTAssertTrue(source.contains("return nil"))
         XCTAssertFalse(source.contains("centerCropMask(width: width, height: height, fraction: 0.60)"))
     }
 
@@ -164,7 +165,7 @@ final class Build16PaletteTruthTests: XCTestCase {
 
         XCTAssertTrue(candidateBody.contains("rawMask.adaptivelyErodedStrongMask()"))
         XCTAssertTrue(candidateBody.contains("strongForegroundMask: strongForegroundMask"))
-        XCTAssertTrue(candidateBody.contains("strongCoverage="))
+        XCTAssertFalse(candidateBody.contains("print("))
     }
 
     func testUnsupportedChromaticFamilyCannotDethroneEvidencedNeutralLeader() {
@@ -454,9 +455,9 @@ final class Build16PaletteTruthTests: XCTestCase {
 
         let source = try projectSource("StyleMatchAI/ScanView.swift")
         XCTAssertTrue(source.contains("forceLowConfidence: !selection.hasConfidenceEvidence"))
-        XCTAssertTrue(source.contains("candidatesRanked=["))
-        XCTAssertTrue(source.contains("familyShares=["))
-        XCTAssertTrue(source.contains("disagreement=\\(selection.disagreement)"))
+        XCTAssertTrue(source.contains("corroboratedFamilies: selection.corroboratedFamilies"))
+        XCTAssertTrue(source.contains("confidenceReason: selection.confidenceReason"))
+        XCTAssertFalse(source.contains("candidatesRanked=["))
     }
 
     func testTealTurquoiseAndAquaAggregateIntoBlueFamily() {
@@ -496,7 +497,7 @@ final class Build16PaletteTruthTests: XCTestCase {
     func testMasklessGarmentCropIsSkippedInsteadOfSamplingCenterSixtyPercent() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
-        XCTAssertTrue(source.contains("garmentCrop sampling=skipped reason=noUsableForegroundIntersection"))
+        XCTAssertTrue(source.contains("foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount"))
         XCTAssertFalse(source.contains("garmentCrop sampling=center60"))
         XCTAssertFalse(source.contains("private func centerCropMask("))
     }
@@ -543,8 +544,8 @@ final class Build16PaletteTruthTests: XCTestCase {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
         XCTAssertTrue(source.contains("private func paletteRegionBoxes("))
         XCTAssertTrue(source.contains("guard !validation.isPersonScan else"))
-        XCTAssertTrue(source.contains("paletteRegionDiscovery=flatLayAlways"))
         XCTAssertTrue(source.contains("let paletteBoxes = paletteRegionBoxes("))
+        XCTAssertFalse(source.contains("paletteRegionDiscovery=flatLayAlways"))
     }
 
     func testConfidenceRequiresCorroborationOrStrongStandaloneEvidence() {
@@ -1071,7 +1072,7 @@ final class Build16PaletteTruthTests: XCTestCase {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
         XCTAssertTrue(source.contains("let backgroundSamples = prefersPersonMask ? [] : paletteBackgroundSamples"))
         XCTAssertTrue(source.contains("illuminantReferenceSamples: backgroundSamples"))
-        XCTAssertTrue(source.contains("namingCalibration="))
+        XCTAssertFalse(source.contains("namingCalibration="))
     }
 
     @discardableResult

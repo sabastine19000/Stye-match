@@ -101,6 +101,209 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         XCTAssertTrue(publicAppSource.contains("StyleMatch Pro"), "The product name remains valid branding")
     }
 
+    func testThirdPartyAIConsentDefaultsAndMigratesToUnknown() throws {
+        XCTAssertEqual(ThirdPartyAIConsentStore.record(defaults: defaults).status, .unknown)
+        defaults.set(true, forKey: "shareAppContextWithChatGPT")
+        XCTAssertEqual(ThirdPartyAIConsentStore.record(defaults: defaults).status, .unknown)
+
+        let obsolete = ThirdPartyAIConsentRecord(disclosureVersion: 0, status: .granted, decidedAt: Date())
+        defaults.set(try JSONEncoder().encode(obsolete), forKey: ThirdPartyAIConsentStore.storageKey)
+        XCTAssertEqual(ThirdPartyAIConsentStore.record(defaults: defaults).status, .unknown)
+    }
+
+    func testThirdPartyAIConsentGrantDeclineAndWithdrawalAreFailClosed() {
+        ThirdPartyAIConsentStore.setStatus(.granted, defaults: defaults)
+        XCTAssertTrue(ThirdPartyAIConsentStore.isGranted(defaults: defaults))
+
+        ThirdPartyAIConsentStore.withdraw(defaults: defaults)
+        XCTAssertEqual(ThirdPartyAIConsentStore.record(defaults: defaults).status, .declined)
+        XCTAssertFalse(ThirdPartyAIConsentStore.isGranted(defaults: defaults))
+    }
+
+    @MainActor
+    func testConcurrentFirstUseActionsShareOneConsentDecision() async {
+        UserDefaults.standard.removeObject(forKey: ThirdPartyAIConsentStore.storageKey)
+        defer { UserDefaults.standard.removeObject(forKey: ThirdPartyAIConsentStore.storageKey) }
+        let coordinator = ThirdPartyAIConsentCoordinator()
+
+        async let first = coordinator.authorizeExternalAIRequest()
+        async let second = coordinator.authorizeExternalAIRequest()
+        await Task.yield()
+        coordinator.allow()
+
+        let firstResult = await first
+        let secondResult = await second
+        XCTAssertEqual([firstResult, secondResult], [true, true])
+        XCTAssertFalse(coordinator.isPresentingDisclosure)
+    }
+
+    func testAIConsentTransportAndPhotoLocalitySourceContracts() throws {
+        let client = try projectSource("StyleMatchAI/OpenAIStylistClient.swift")
+        let transport = try projectSource("StyleMatchAI/StylistChat/StylistChatTransport.swift")
+        let adapters = try projectSource("StyleMatchAI/AIProviderAdapters.swift")
+        let disclosure = try projectSource("StyleMatchAI/ThirdPartyAIConsent.swift")
+
+        XCTAssertTrue(client.contains("authorizeExternalAIRequest"))
+        XCTAssertTrue(transport.contains("ThirdPartyAIConsentStore.isGranted()"))
+        XCTAssertTrue(disclosure.contains("OpenAI"))
+        XCTAssertTrue(disclosure.contains("Outfit photos are analyzed on your device and are not sent to OpenAI"))
+        XCTAssertFalse(adapters.contains("api.openai.com"))
+        XCTAssertFalse(adapters.contains("api.anthropic.com"))
+        XCTAssertFalse(adapters.contains("generativelanguage.googleapis.com"))
+        XCTAssertFalse(adapters.contains("data:image"))
+        XCTAssertFalse(adapters.contains("URLSession.shared.data"))
+    }
+
+    func testProductionSourceContainsNoAppOwnedStdoutOrSensitiveDiagnosticFormatting() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("StyleMatchAI")
+        let swiftFiles = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: nil
+            )?.allObjects as? [URL]
+        ).filter { $0.pathExtension == "swift" }
+        let source = try swiftFiles
+            .map { try String(contentsOf: $0, encoding: .utf8) }
+            .joined(separator: "\n")
+
+        for forbidden in [#"\bprint\s*\("#, #"\bdebugPrint\s*\("#, #"\bdump\s*\("#, #"\bNSLog\s*\("#] {
+            let expression = try NSRegularExpression(pattern: forbidden)
+            let range = NSRange(source.startIndex..<source.endIndex, in: source)
+            XCTAssertNil(
+                expression.firstMatch(in: source, range: range),
+                "App-owned stdout remains: \(forbidden)"
+            )
+        }
+
+        for forbidden in ["request_id=", "voice_id=", "voice_language=", "StyleMatch AI Prompt Debug"] {
+            XCTAssertFalse(source.contains(forbidden), "Sensitive app diagnostic remains: \(forbidden)")
+        }
+
+        let chatModels = try projectSource("StyleMatchAI/StylistChat/StylistChatModels.swift")
+        for forbidden in ["body=\\(", "request_id=\\(", "endpoint=\\(", "underlying=\\("] {
+            XCTAssertFalse(chatModels.contains(forbidden), "Sensitive chat diagnostic remains: \(forbidden)")
+        }
+    }
+
+    func testAppReviewWeatherAndPrivacyContracts() throws {
+        let entitlements = try projectSource("StyleMatchAI/StyleMatchAI.entitlements")
+        let content = try projectSource("StyleMatchAI/ContentView.swift")
+        let assistant = try projectSource("StyleMatchAI/AIAssistantsView.swift")
+        let weatherAdvisor = try projectSource("StyleMatchAI/PersonalStylist/WeatherAdvisor.swift")
+        let attribution = try projectSource("StyleMatchAI/AppleWeatherAttributionView.swift")
+        let home = try projectSource("StyleMatchAI/HomeView.swift")
+        let closet = try projectSource("StyleMatchAI/ClosetView.swift")
+        let scan = try projectSource("StyleMatchAI/ScanView.swift")
+        let profile = try projectSource("StyleMatchAI/ProfileView.swift")
+
+        XCTAssertTrue(entitlements.contains("com.apple.developer.weatherkit"))
+        XCTAssertTrue(content.contains("import WeatherKit"))
+        XCTAssertFalse(assistant.contains("import WeatherKit"))
+        XCTAssertFalse(weatherAdvisor.contains("import WeatherKit"))
+        XCTAssertFalse(weatherAdvisor.contains("WeatherService.shared"))
+        XCTAssertTrue(content.contains("WeatherService.shared.weather"))
+        XCTAssertFalse(assistant.contains("WeatherService.shared.weather"))
+        XCTAssertFalse(assistant.contains("StyleWeatherManager"))
+        XCTAssertTrue(attribution.contains("WeatherService.shared.attribution"))
+        XCTAssertTrue(attribution.contains("combinedMarkLightURL"))
+        XCTAssertTrue(attribution.contains("combinedMarkDarkURL"))
+        XCTAssertTrue(attribution.contains("legalPageURL"))
+        XCTAssertTrue(attribution.contains("Link(destination: legalPageURL)"))
+        XCTAssertTrue(attribution.contains("Apple Weather legal attribution"))
+        XCTAssertFalse(attribution.contains("systemImage: \"apple.logo\""))
+        XCTAssertTrue(content.contains("AppleWeatherAttributionView()"))
+        XCTAssertTrue(assistant.contains("AppleWeatherAttributionView()"))
+        XCTAssertTrue(home.contains("AppleWeatherAttributionView()"))
+        XCTAssertTrue(closet.contains("AppleWeatherAttributionView()"))
+        XCTAssertTrue(scan.contains("AppleWeatherAttributionView()"))
+        XCTAssertFalse(content.localizedCaseInsensitiveContains("open-meteo"))
+        XCTAssertFalse(assistant.localizedCaseInsensitiveContains("open-meteo"))
+        XCTAssertTrue(profile.contains("https://stylematchpro.com/privacy"))
+        XCTAssertTrue(profile.contains("Withdraw AI Data Sharing Permission"))
+    }
+
+    func testAppleWeatherPermissionDenialUsesSavedCityOrPreservesLastKnownData() {
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.recovery(for: .locationDenied, hasSavedCity: true, hasLastKnownWeather: true),
+            .useSavedCity
+        )
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.recovery(for: .locationDenied, hasSavedCity: false, hasLastKnownWeather: true),
+            .preserveLastKnown
+        )
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.recovery(for: .locationDenied, hasSavedCity: false, hasLastKnownWeather: false),
+            .unavailable
+        )
+    }
+
+    func testAppleWeatherUnavailableAndOfflinePreserveLastKnownData() {
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.recovery(for: .serviceUnavailable, hasSavedCity: true, hasLastKnownWeather: true),
+            .preserveLastKnown
+        )
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.recovery(for: .offline, hasSavedCity: false, hasLastKnownWeather: true),
+            .preserveLastKnown
+        )
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.recovery(for: .offline, hasSavedCity: false, hasLastKnownWeather: false),
+            .unavailable
+        )
+    }
+
+    func testAppleWeatherStalenessBoundary() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        XCTAssertTrue(AppleWeatherDataPolicy.isStale(updatedAt: 0, now: now))
+        XCTAssertFalse(AppleWeatherDataPolicy.isStale(updatedAt: 6_400, now: now))
+        XCTAssertTrue(AppleWeatherDataPolicy.isStale(updatedAt: 6_399, now: now))
+    }
+
+    func testAppleWeatherContextHandoffUsesOnlyAvailableWeatherFacts() {
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.stylistContext(
+                temperature: "74°F",
+                condition: "Partly Cloudy",
+                city: "New York"
+            ),
+            "74°F Partly Cloudy in New York"
+        )
+        XCTAssertEqual(
+            AppleWeatherDataPolicy.stylistContext(temperature: "", condition: "Rain", city: ""),
+            "Rain"
+        )
+        XCTAssertNil(AppleWeatherDataPolicy.stylistContext(temperature: "", condition: "", city: "New York"))
+    }
+
+    func testAppleWeatherFailurePathsAndStylistHandoffAreWired() throws {
+        let content = try projectSource("StyleMatchAI/ContentView.swift")
+        let assistant = try projectSource("StyleMatchAI/AIAssistantsView.swift")
+
+        XCTAssertTrue(content.contains("case .denied, .restricted:"))
+        XCTAssertTrue(content.contains("loadSavedCityOrMarkUnavailable()"))
+        XCTAssertTrue(content.contains("await markUnavailable(\"Live weather is unavailable. Showing last updated weather.\")"))
+        XCTAssertTrue(content.contains("AppleWeatherDataPolicy.isStale"))
+        XCTAssertTrue(content.contains("Saved Apple Weather"))
+        XCTAssertTrue(assistant.contains("AppleWeatherDataPolicy.stylistContext"))
+        XCTAssertFalse(assistant.contains("83°F"))
+    }
+
+    func testWeatherKitIsTheSingleWeatherProvider() throws {
+        let providerSources = [
+            try projectSource("StyleMatchAI/ContentView.swift"),
+            try projectSource("StyleMatchAI/AIAssistantsView.swift"),
+            try projectSource("StyleMatchAI/PersonalStylist/WeatherAdvisor.swift")
+        ]
+        let joined = providerSources.joined(separator: "\n")
+
+        XCTAssertEqual(joined.components(separatedBy: "WeatherService.shared.weather").count - 1, 1)
+        XCTAssertFalse(joined.localizedCaseInsensitiveContains("open-meteo"))
+        XCTAssertFalse(joined.contains("StyleWeatherManager"))
+    }
+
     // MARK: - Profile pants size sync tests
 
     func testMenPantsSizeParserExtractsWaistAndInseam() {
@@ -1501,10 +1704,11 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertFalse(FeatureFlags.alternateAIProvidersEnabled)
         XCTAssertTrue(source.contains("static func isProviderReachable(_ provider: StyleMatchAIProvider) -> Bool"))
-        XCTAssertTrue(source.contains("return FeatureFlags.alternateAIProvidersEnabled"))
-        XCTAssertTrue(source.contains("guard isProviderReachable(preferredProvider)"))
-        XCTAssertTrue(source.contains("guard isProviderReachable(.perplexity)"))
-        XCTAssertTrue(source.contains("guard isProviderReachable(provider)"))
+        XCTAssertTrue(source.contains("provider == .chatGPT"))
+        XCTAssertFalse(source.contains("FeatureFlags.alternateAIProvidersEnabled"))
+        XCTAssertFalse(source.contains("api.anthropic.com"))
+        XCTAssertFalse(source.contains("generativelanguage.googleapis.com"))
+        XCTAssertFalse(source.contains("api.perplexity.ai"))
     }
 
     func testPersonalizationContextCapsMemoryDigest() {
@@ -4105,7 +4309,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
 
         XCTAssertTrue(source.contains("SharedProductCatalogLoader.shared.products()"))
         XCTAssertTrue(source.contains("ShoppingSearchEngine.relaxedFilter(products: safeProducts, query: currentQuery())"))
-        XCTAssertTrue(source.contains("[StyleMatch Store Search] Search failed:"))
+        XCTAssertTrue(source.contains("errorMessage = \"We could not search right now. Please try again.\""))
+        XCTAssertFalse(source.contains("[StyleMatch Store Search] Search failed:"))
     }
 
     func testLiveSearchFlagDefaultsOffAndResolverStaysDormant() throws {
@@ -5931,7 +6136,7 @@ final class StyleMatchProPhase2Tests: XCTestCase {
     func testProfileEditsStayLocalAndDoNotCauseBackendRequests() throws {
         let profileSource = try projectSource("StyleMatchAI/ProfileView.swift")
         guard let saveStart = profileSource.range(of: "private func saveProfileDraft()"),
-              let saveEnd = profileSource.range(of: "private func logPantsSave", range: saveStart.upperBound..<profileSource.endIndex) else {
+              let saveEnd = profileSource.range(of: "private func syncPersonalStylistProfile", range: saveStart.upperBound..<profileSource.endIndex) else {
             XCTFail("Expected saveProfileDraft block")
             return
         }

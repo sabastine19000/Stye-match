@@ -1194,6 +1194,8 @@ struct ScanView: View {
                     .foregroundStyle(.white)
                     .lineSpacing(3)
             }
+
+            AppleWeatherAttributionView()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
@@ -2615,8 +2617,6 @@ struct ScanView: View {
                 isScanAIThinking = false
             }
         } catch {
-            logScanAIChatFailure(error, prompt: text, retryAttempt: retryAttempt)
-
             if retryAttempt == 0 {
                 try? await Task.sleep(nanoseconds: 750_000_000)
                 await requestScanAIReply(for: text, analysis: analysis, conversation: conversation, retryAttempt: 1)
@@ -2690,12 +2690,6 @@ struct ScanView: View {
             formatter.dateFormat = "MMM d, h:mm a"
         }
         return formatter.string(from: date)
-    }
-
-    private func logScanAIChatFailure(_ error: Error, prompt: String, retryAttempt: Int) {
-        #if DEBUG
-        print("[Scan AI Assist] failure=\(scanAIFailureReason(error)); retryAttempt=\(retryAttempt); promptLength=\(prompt.count); detail=\(error.localizedDescription)")
-        #endif
     }
 
     private func scanAIFailureReason(_ error: Error) -> String {
@@ -5224,14 +5218,6 @@ struct ScanView: View {
                 }
 
                 guard validation.isAccepted else {
-                    logScanDebug(
-                        source: scanSource,
-                        validation: validation,
-                        labels: validation.labels,
-                        fingerprint: "rejected",
-                        imageDigest: imageDigest,
-                        cacheSource: "rejected"
-                    )
                     preparedAnalysis = nil
                     result = nil
                     let message = ScanMessage(
@@ -5257,15 +5243,6 @@ struct ScanView: View {
                 let imageDigest = preparedFacts.imageDigest
                 activeScanFingerprint = fingerprint
                 activeScanImageDigest = imageDigest
-                logScanDebug(
-                    source: scanSource,
-                    validation: validation,
-                    labels: labels,
-                    fingerprint: fingerprint,
-                    imageDigest: imageDigest,
-                    cacheSource: forceReanalyze ? "reanalyze" : "pending"
-                )
-
                 let savedResult = savedScan(
                     for: imageToAnalyze,
                     validation: validation,
@@ -5357,23 +5334,11 @@ struct ScanView: View {
     private func validateFashionImage(_ image: UIImage) -> ScanValidation {
         let detectedAttributes = detectGarmentAttributes(for: image)
 
-        #if DEBUG
-        debugLogScanGateInputs(image: image, detectedAttributes: detectedAttributes)
-        #endif
-
         if let qualityIssue = detectedAttributes.qualityIssue {
-            #if DEBUG
-            print("[ScanGate] FAIL: imageQuality - \(qualityIssue.rawValue)")
-            print("[ScanGate] VERDICT: poorQuality(\(qualityIssue.rawValue)); thresholds: averageBrightness<35 tooDark, averageBrightness>226 tooBright, contrast<28 lowContrast, contrast<38 with image larger than 600x600 blurry")
-            #endif
             return .poorQuality(qualityIssue)
         }
 
         guard detectedAttributes.canAnalyze else {
-            #if DEBUG
-            print("[ScanGate] FAIL: analyzableSignal - labels=\(detectedAttributes.labels.count), hasHuman=\(detectedAttributes.hasHuman)")
-            print("[ScanGate] VERDICT: unknown; threshold requires qualityIssue=nil and at least one classifier label or human signal")
-            #endif
             return .unknown
         }
 
@@ -5393,73 +5358,26 @@ struct ScanView: View {
             if clothingConfidence < 0.28 {
                 personLabels.insert(DetectedLabel(identifier: "clothing", confidence: 0.58), at: min(1, personLabels.count))
             }
-            #if DEBUG
-            print("[ScanGate] PASS: personDetection - hasHuman=true, clothingConfidence=\(String(format: "%.3f", clothingConfidence)), clothing assist threshold=0.28")
-            print("[ScanGate] VERDICT: acceptedPerson")
-            #endif
             return .acceptedPerson(Array(personLabels.prefix(12)))
         }
 
-        #if DEBUG
-        print("[ScanGate] FAIL: personDetection - no accepted human rectangle, face, or person-context classifier label")
-        #endif
-
         if let sceneMatch, clothingConfidence >= 0.24 {
-            #if DEBUG
-            print("[ScanGate] PASS: clothingScene - scene=\(sceneMatch.scene.rawValue), label=\(sceneMatch.label), clothingConfidence=\(String(format: "%.3f", clothingConfidence)), threshold>=0.24")
-            print("[ScanGate] VERDICT: acceptedClothingScene(\(sceneMatch.scene.rawValue))")
-            #endif
             return .acceptedClothingScene(sceneMatch.scene, sceneMatch.label, Array(labels.prefix(12)))
         }
 
-        #if DEBUG
-        if sceneMatch == nil {
-            print("[ScanGate] FAIL: clothingScene - no clothing label plus accepted flat-lay/display scene term")
-        } else {
-            print("[ScanGate] FAIL: clothingScene - clothingConfidence=\(String(format: "%.3f", clothingConfidence)) below threshold>=0.24 for scene=\(sceneMatch?.scene.rawValue ?? "none")")
-        }
-        #endif
-
         if hasSleepwearEvidence {
             if let sceneMatch {
-                #if DEBUG
-                print("[ScanGate] PASS: sleepwearScene - scene=\(sceneMatch.scene.rawValue), label=\(sceneMatch.label)")
-                print("[ScanGate] VERDICT: acceptedClothingScene(\(sceneMatch.scene.rawValue)) via sleepwear evidence")
-                #endif
                 return .acceptedClothingScene(sceneMatch.scene, sceneMatch.label, Array(labels.prefix(12)))
             }
-            #if DEBUG
-            print("[ScanGate] PASS: sleepwearEvidence - no scene required")
-            print("[ScanGate] VERDICT: acceptedClothing(Sleepwear)")
-            #endif
             return .acceptedClothing("Sleepwear", Array(labels.prefix(12)))
         }
 
-        #if DEBUG
-        print("[ScanGate] FAIL: sleepwearEvidence - no sleepwear/loungewear label evidence")
-        #endif
-
         if let clothingLabel = directClothingLabel, clothingConfidence >= 0.30 {
-            #if DEBUG
-            print("[ScanGate] PASS: directClothing - label=\(clothingLabel.identifier), confidence=\(String(format: "%.3f", clothingLabel.confidence)), bestClothingConfidence=\(String(format: "%.3f", clothingConfidence)), threshold>=0.30")
-            print("[ScanGate] VERDICT: acceptedClothing(\(clothingLabel.identifier))")
-            #endif
             return .acceptedClothing(clothingLabel.identifier, Array(labels.prefix(12)))
         }
 
-        #if DEBUG
-        if let directClothingLabel {
-            print("[ScanGate] FAIL: directClothing - label=\(directClothingLabel.identifier), confidence=\(String(format: "%.3f", directClothingLabel.confidence)), bestClothingConfidence=\(String(format: "%.3f", clothingConfidence)) below threshold>=0.30")
-        } else {
-            print("[ScanGate] FAIL: directClothing - no classifier label matched clothing terms")
-        }
-        #endif
-
         if let rejectedLabel {
             if flatLayRegionScene(in: labels) != nil {
-                #if DEBUG
-                print("[ScanGate] REGION-BEFORE-REJECT: attempting regions before rejectedLabel=\(rejectedLabel)")
-                #endif
                 if let regionValidation = regionClothingValidation(
                     for: image,
                     wholeImageLabels: labels
@@ -5468,10 +5386,6 @@ struct ScanView: View {
                 }
             }
 
-            #if DEBUG
-            print("[ScanGate] FAIL: rejectedLabel - \(rejectedLabel), threshold>=0.32")
-            print("[ScanGate] VERDICT: rejected(\(rejectedLabel))")
-            #endif
             return .rejected(rejectedLabel)
         }
 
@@ -5482,22 +5396,8 @@ struct ScanView: View {
             return regionValidation
         }
 
-        #if DEBUG
-        print("[ScanGate] VERDICT: unknown; thresholds: scene clothingConfidence>=0.24, direct clothingConfidence>=0.30, rejectedLabel>=0.32, humanOrFace confidence>0.35, personContext label>=0.18")
-        #endif
         return .unknown
     }
-
-    #if DEBUG
-    private func debugLogScanGateInputs(image: UIImage, detectedAttributes: GarmentAttributeDetection) {
-        let labelsText = detectedAttributes.labels
-            .prefix(5)
-            .map { "\($0.identifier)=\(String(format: "%.3f", $0.confidence))" }
-            .joined(separator: ", ")
-        print("[ScanGate] INPUT: size=\(Int(image.size.width))x\(Int(image.size.height)), labelsTop5=[\(labelsText)], hasHuman=\(detectedAttributes.hasHuman), qualityIssue=\(detectedAttributes.qualityIssue?.rawValue ?? "none")")
-        image.debugLogScanGateMaskDiagnostics()
-    }
-    #endif
 
     private func detectGarmentAttributes(for image: UIImage) -> GarmentAttributeDetection {
         if let qualityIssue = image.qualityIssue() {
@@ -5544,14 +5444,6 @@ struct ScanView: View {
         if let storedScan = exactStoredScan,
            !forceReanalyze,
            let cachedAnalysis = storedScan.analysis {
-            logScanDebug(
-                source: scanSource,
-                validation: validation,
-                labels: labels,
-                fingerprint: fingerprint,
-                imageDigest: imageDigest,
-                cacheSource: "saved analysis"
-            )
             return SavedScanResult(
                 analysis: cachedAnalysis,
                 isRepeat: true,
@@ -5604,15 +5496,6 @@ struct ScanView: View {
         )
         history[fingerprint] = storedScan
         saveScanHistory(history)
-        logScanDebug(
-            source: scanSource,
-            validation: validation,
-            labels: labels,
-            fingerprint: fingerprint,
-            imageDigest: imageDigest,
-            cacheSource: forceReanalyze ? "reanalyze new score" : "new local score"
-        )
-
         return SavedScanResult(
             analysis: analysis,
             isRepeat: false,
@@ -5799,7 +5682,6 @@ struct ScanView: View {
             ]
         )
         #if DEBUG
-        print("[Scan AI Upgrade Prompt] final_utf16_count=\(prompt.utf16Count) message_count=1 retained_history=\(prompt.retainedHistoryCount) retained_weather=\(prompt.retainedWeatherCount) outfit_trimmed=\(prompt.outfitWasTrimmed)")
         assert(prompt.utf16Count < 2_000)
         #endif
         let profile = StyleMatchStylistProfile(
@@ -5842,9 +5724,6 @@ struct ScanView: View {
                     )
                 }
             } catch {
-                #if DEBUG
-                print("[Scan ChatGPT Upgrade] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     guard activeScanSessionID == scanSessionID,
                           activeScanFingerprint == identity.fingerprint else {
@@ -6518,46 +6397,6 @@ struct ScanView: View {
         return .low
     }
 
-    private func logScanDebug(
-        source: ScanSource,
-        validation: ScanValidation,
-        labels: [DetectedLabel],
-        fingerprint: String,
-        imageDigest: String?,
-        cacheSource: String
-    ) {
-        #if DEBUG
-        StyleMatchDebugLogEmitter.emit(scanDebugLog(
-            source: source,
-            validation: validation,
-            labels: labels,
-            fingerprint: fingerprint,
-            imageDigest: imageDigest,
-            cacheSource: cacheSource
-        ))
-        #endif
-    }
-
-    private func scanDebugLog(
-        source: ScanSource,
-        validation: ScanValidation,
-        labels: [DetectedLabel],
-        fingerprint: String,
-        imageDigest: String?,
-        cacheSource: String
-    ) -> String {
-        let qualityScore = validation.qualityScore
-        let confidence = confidenceLevel(for: validation, labels: labels)
-        let detectedCount = detectedClothingItems(from: labels).prefix(8).count
-        let reason = validation.isAccepted ? cacheSource : validation.rejectionTitle
-        let fingerprintVersion = fingerprint.split(separator: "|").first.map(String.init) ?? "none"
-        let imageDigestPrefix = ScanImageIdentity.debugDigestPrefix(imageDigest)
-
-        return """
-        [StyleMatch Scan Debug] source=\(source.rawValue); normalized=true; quality=\(qualityScore); confidence=\(confidence.label); fingerprintVersion=\(fingerprintVersion); imageDigestPrefix=\(imageDigestPrefix); scoreSource=\(cacheSource); detectedCount=\(detectedCount); reason=\(reason)
-        """
-    }
-
     private func scoreFingerprint(for image: UIImage, validation: ScanValidation, labels: [DetectedLabel], colorPalette: [String]) -> String {
         let palette = colorPalette
             .map(\.normalizedForFingerprint)
@@ -6622,13 +6461,7 @@ struct ScanView: View {
             detectedItems: detectedItems,
             styleCategory: styleCategory
         )
-        #if DEBUG
-        print("[StyleMatch Score Debug] attributes style=\(attributes.detectedStyle); colors=\(attributes.colors); patterns=\(attributes.patterns); fit=\(attributes.fitAssessment); accessories=\(attributes.accessories)")
-        #endif
         let result = calculateStyleScore(detectedAttributes: attributes)
-        #if DEBUG
-        print("[StyleMatch Score Debug] result raw=\(scoreRawTotal(for: result.breakdown))/80; normalized=\(normalizedScore(for: result.breakdown))/100; final=\(result.total)/100; tier=\(result.tier); breakdown=color:\(result.breakdown.colorHarmony), pattern:\(result.breakdown.patternBalance), fit:\(result.breakdown.fitQuality), occasion:informational, accessories:\(result.breakdown.accessoryUse)")
-        #endif
         return result
     }
 
@@ -6832,17 +6665,8 @@ struct ScanView: View {
         do {
             try handler.perform([request])
             let results = request.results ?? []
-            #if DEBUG
-            let confidences = results
-                .map { String(format: "%.3f", $0.confidence) }
-                .joined(separator: ", ")
-            print("[ScanGate] personDetection humanRectangles count=\(results.count), confidences=[\(confidences)], threshold>0.35")
-            #endif
             return results.contains { $0.confidence > 0.35 }
         } catch {
-            #if DEBUG
-            print("[ScanGate] personDetection humanRectangles error=\(error.localizedDescription), threshold>0.35")
-            #endif
             return false
         }
     }
@@ -6854,17 +6678,8 @@ struct ScanView: View {
         do {
             try handler.perform([request])
             let results = request.results ?? []
-            #if DEBUG
-            let confidences = results
-                .map { String(format: "%.3f", $0.confidence) }
-                .joined(separator: ", ")
-            print("[ScanGate] personDetection faces count=\(results.count), confidences=[\(confidences)], threshold>0.35")
-            #endif
             return results.contains { $0.confidence > 0.35 }
         } catch {
-            #if DEBUG
-            print("[ScanGate] personDetection faces error=\(error.localizedDescription), threshold>0.35")
-            #endif
             return false
         }
     }
@@ -6876,21 +6691,10 @@ struct ScanView: View {
         do {
             try handler.perform([request])
             let results = request.results ?? []
-            #if DEBUG
-            let topFive = results
-                .sorted { $0.confidence > $1.confidence }
-                .prefix(5)
-                .map { "\($0.identifier)=\(String(format: "%.3f", $0.confidence))" }
-                .joined(separator: ", ")
-            print("[StyleMatch Vision Debug] top5: \(topFive)")
-            #endif
             return results.filter { observation in
                 observation.confidence > 0.15 || isSleepwearObservationWorthKeeping(observation)
             }
         } catch {
-            #if DEBUG
-            print("[StyleMatch Vision Debug] image classification failed: \(error.localizedDescription)")
-            #endif
             return []
         }
     }
@@ -6923,9 +6727,6 @@ struct ScanView: View {
         wholeImageLabels: [DetectedLabel]
     ) -> ScanValidation? {
         guard let cgImage = image.fastVisionCGImage() else {
-            #if DEBUG
-            print("[ScanGate] REGION-VERDICT: unavailable - no CGImage")
-            #endif
             return nil
         }
 
@@ -6935,7 +6736,7 @@ struct ScanView: View {
         var strongestMatch: RegionClothingMatch?
         var qualifyingBoxes: [CGRect] = []
 
-        for (index, candidate) in candidates.enumerated() {
+        for candidate in candidates {
             guard let croppedImage = crop(cgImage, to: candidate.normalizedTopLeftBox) else {
                 continue
             }
@@ -6943,14 +6744,6 @@ struct ScanView: View {
             let regionLabels = classifyImage(croppedImage)
                 .map { DetectedLabel(identifier: $0.identifier, confidence: $0.confidence) }
                 .sorted { $0.confidence > $1.confidence }
-
-            #if DEBUG
-            let topThree = regionLabels
-                .prefix(3)
-                .map { "\($0.identifier)=\(String(format: "%.3f", $0.confidence))" }
-                .joined(separator: ", ")
-            print("[ScanGate] REGION: crop=\(index + 1), source=\(candidate.source), box=\(formattedRegionBox(candidate.normalizedTopLeftBox)), top3=[\(topThree)]")
-            #endif
 
             guard let clothingLabel = regionLabels.first(where: { label in
                 clothingTerms.contains { term in
@@ -6975,10 +6768,6 @@ struct ScanView: View {
 
         guard let strongestMatch,
               strongestMatch.label.confidence >= acceptanceThreshold else {
-            #if DEBUG
-            let bestConfidence = strongestMatch?.label.confidence ?? 0
-            print("[ScanGate] REGION-VERDICT: noMatch - candidates=\(candidates.count), bestClothingConfidence=\(String(format: "%.3f", bestConfidence)), threshold>=\(String(format: "%.2f", acceptanceThreshold)), scene=\(scene?.rawValue ?? "none")")
-            #endif
             return nil
         }
 
@@ -6991,10 +6780,6 @@ struct ScanView: View {
                 boxes.append(box)
             }
         }
-
-        #if DEBUG
-        print("[ScanGate] REGION-VERDICT: accepted - label=\(strongestMatch.label.identifier), confidence=\(String(format: "%.3f", strongestMatch.label.confidence)), threshold>=\(String(format: "%.2f", acceptanceThreshold)), scene=\(scene?.rawValue ?? "none")")
-        #endif
 
         if let scene {
             return .acceptedRegionClothing(
@@ -7016,7 +6801,6 @@ struct ScanView: View {
         if !validation.regionPaletteBoxes.isEmpty { return validation.regionPaletteBoxes }
         guard let cgImage = image.fastVisionCGImage() else { return [] }
 
-        let start = CFAbsoluteTimeGetCurrent()
         let scene = flatLayRegionScene(in: wholeImageLabels)
         let threshold: Float = scene == nil ? 0.30 : 0.24
         var boxes: [CGRect] = []
@@ -7039,10 +6823,6 @@ struct ScanView: View {
         let uniqueBoxes = boxes.reduce(into: [CGRect]()) { result, box in
             if !result.contains(box) { result.append(box) }
         }
-        #if DEBUG
-        let latencyMs = Int(((CFAbsoluteTimeGetCurrent() - start) * 1000).rounded())
-        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] paletteRegionDiscovery=flatLayAlways, qualifyingBoxes=\(uniqueBoxes.count), threshold=\(String(format: "%.2f", threshold)), latencyMs=\(latencyMs)")
-        #endif
         return uniqueBoxes
     }
 
@@ -7083,9 +6863,6 @@ struct ScanView: View {
                 return ScanRegionCandidate(source: "foregroundSubject", normalizedTopLeftBox: expandedRegionBox(box))
             }
         } catch {
-            #if DEBUG
-            print("[ScanGate] REGION: foregroundSubject error=\(error.localizedDescription)")
-            #endif
             return []
         }
     }
@@ -7115,9 +6892,6 @@ struct ScanView: View {
                 return ScanRegionCandidate(source: "objectness", normalizedTopLeftBox: expandedRegionBox(topLeftBox))
             }
         } catch {
-            #if DEBUG
-            print("[ScanGate] REGION: objectness error=\(error.localizedDescription)")
-            #endif
             return []
         }
     }
@@ -9254,144 +9028,7 @@ private extension OutfitAnalysisResult {
     }
 }
 
-#if DEBUG
-private enum StyleMatchPaletteExtractionTracker {
-    private static let lock = NSLock()
-    private static var invocationCounts: [ObjectIdentifier: Int] = [:]
-
-    static func nextInvocation(for image: UIImage) -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        let identifier = ObjectIdentifier(image)
-        let next = invocationCounts[identifier, default: 0] + 1
-        invocationCounts[identifier] = next
-        return next
-    }
-}
-#endif
-
 private extension UIImage {
-    #if DEBUG
-    func debugLogScanGateMaskDiagnostics(width: Int = 80, height: Int = 100) {
-        guard let cgImage else {
-            print("[ScanGate] maskDiagnostics unavailable - no CGImage")
-            return
-        }
-
-        debugLogForegroundSubjectMask(cgImage: cgImage, width: width, height: height)
-        debugLogPersonSegmentationMask(cgImage: cgImage, width: width, height: height)
-        debugLogSaliencyMask(cgImage: cgImage)
-    }
-
-    private func debugLogForegroundSubjectMask(cgImage: CGImage, width: Int, height: Int) {
-        guard #available(iOS 17.0, *) else {
-            print("[ScanGate] mask foregroundSubject unavailable - requires iOS 17")
-            return
-        }
-
-        let request = VNGenerateForegroundInstanceMaskRequest()
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
-
-        do {
-            try handler.perform([request])
-            guard let observation = request.results?.first else {
-                print("[ScanGate] mask foregroundSubject instances=0, coverage=0.0%, thresholdByte>96")
-                return
-            }
-
-            let instances = observation.allInstances
-            if instances.isEmpty {
-                print("[ScanGate] mask foregroundSubject instances=0, coverage=0.0%, thresholdByte>96")
-                return
-            }
-
-            let maskBuffer = try observation.generateScaledMaskForImage(
-                forInstances: instances,
-                from: handler
-            )
-            let coverage = debugMaskCoverage(maskBuffer, width: width, height: height, threshold: 96)
-            print("[ScanGate] mask foregroundSubject instances=\(instances.count), coverage=\(String(format: "%.1f", coverage * 100))%, thresholdByte>96")
-        } catch {
-            print("[ScanGate] mask foregroundSubject error=\(error.localizedDescription), thresholdByte>96")
-        }
-    }
-
-    private func debugLogPersonSegmentationMask(cgImage: CGImage, width: Int, height: Int) {
-        let request = VNGeneratePersonSegmentationRequest()
-        request.qualityLevel = .balanced
-        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
-
-        do {
-            try handler.perform([request])
-            guard let maskBuffer = request.results?.first?.pixelBuffer else {
-                print("[ScanGate] mask personSegmentation result=none, coverage=0.0%, thresholdByte>96")
-                return
-            }
-
-            let coverage = debugMaskCoverage(maskBuffer, width: width, height: height, threshold: 96)
-            print("[ScanGate] mask personSegmentation result=1, coverage=\(String(format: "%.1f", coverage * 100))%, thresholdByte>96")
-        } catch {
-            print("[ScanGate] mask personSegmentation error=\(error.localizedDescription), thresholdByte>96")
-        }
-    }
-
-    private func debugLogSaliencyMask(cgImage: CGImage) {
-        let request = VNGenerateAttentionBasedSaliencyImageRequest()
-        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
-
-        do {
-            try handler.perform([request])
-            guard let observation = request.results?.first,
-                  let salientObjects = observation.salientObjects,
-                  !salientObjects.isEmpty else {
-                print("[ScanGate] mask saliency objects=0, unionCoverage=0.0%")
-                return
-            }
-
-            let unionBox = salientObjects
-                .map(\.boundingBox)
-                .reduce(CGRect.null) { partial, rect in
-                    partial.isNull ? rect : partial.union(rect)
-                }
-                .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-
-            let coverage = max(0, Double(unionBox.width * unionBox.height))
-            print("[ScanGate] mask saliency objects=\(salientObjects.count), unionCoverage=\(String(format: "%.1f", coverage * 100))%")
-        } catch {
-            print("[ScanGate] mask saliency error=\(error.localizedDescription)")
-        }
-    }
-
-    private func debugMaskCoverage(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int, threshold: UInt8) -> Double {
-        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
-
-        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            return 0
-        }
-
-        let maskWidth = CVPixelBufferGetWidth(pixelBuffer)
-        let maskHeight = CVPixelBufferGetHeight(pixelBuffer)
-        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let bytes = base.assumingMemoryBound(to: UInt8.self)
-        var included = 0
-        let total = max(1, width * height)
-
-        for y in 0..<height {
-            for x in 0..<width {
-                let maskX = min(maskWidth - 1, max(0, Int((Double(x) / Double(max(1, width - 1))) * Double(maskWidth - 1))))
-                let maskY = min(maskHeight - 1, max(0, Int((Double(y) / Double(max(1, height - 1))) * Double(maskHeight - 1))))
-                if bytes[maskY * stride + maskX] > threshold {
-                    included += 1
-                }
-            }
-        }
-
-        return Double(included) / Double(total)
-    }
-    #endif
-
     func sleepwearVisualSignalScore(primaryPalette: [String]) -> Int {
         var score = SleepwearPrimaryPaletteSignal.score(for: primaryPalette)
         score += redPinkStripeSignalScore()
@@ -9563,25 +9200,18 @@ private extension UIImage {
         regionBoxes: [CGRect] = [],
         prefersPersonMask: Bool = false
     ) -> GarmentColorDetection {
-        let start = ProcessInfo.processInfo.systemUptime
         #if DEBUG
         let debugTiming = GarmentPaletteStageTiming()
-        let invocation = StyleMatchPaletteExtractionTracker.nextInvocation(for: self)
-        let callers = Thread.callStackSymbols.prefix(5).joined(separator: " | ")
-        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] extractionEntry caller=\(callers) regionBoxes=\(regionBoxes.count) invocation=\(invocation)")
-        let sourcesStart = ProcessInfo.processInfo.systemUptime
         #else
         let debugTiming: GarmentPaletteStageTiming? = nil
         #endif
         let backgroundSamples = prefersPersonMask ? [] : paletteBackgroundSamples(width: 48, height: 48)
         #if DEBUG
-        var sourcesMs = (ProcessInfo.processInfo.systemUptime - sourcesStart) * 1_000
         let backgroundNamingStart = ProcessInfo.processInfo.systemUptime
         #endif
         let backgroundReferences = GarmentColorPaletteEngine.backgroundFamilyShares(from: backgroundSamples)
         #if DEBUG
         debugTiming.add(ProcessInfo.processInfo.systemUptime - backgroundNamingStart, to: .naming)
-        let candidateSourcesStart = ProcessInfo.processInfo.systemUptime
         #endif
         var candidates: [MaskedGarmentPaletteSamples] = []
         if !regionBoxes.isEmpty {
@@ -9593,9 +9223,6 @@ private extension UIImage {
             hasHuman: prefersPersonMask
         ))
         let candidateFamilyMemo = GarmentColorPaletteEngine.CandidateFamilyMemo()
-        #if DEBUG
-        sourcesMs += (ProcessInfo.processInfo.systemUptime - candidateSourcesStart) * 1_000
-        #endif
         let evaluatedCandidates = candidates.filter { $0.tier != .couldNotIsolateGarment }.map { candidate in
             let garmentSampleCount = candidate.rawGarmentSampleCount ?? GarmentColorPaletteEngine.garmentSampleCount(
                 in: candidate.samples,
@@ -9617,13 +9244,7 @@ private extension UIImage {
                 familyShares: fastFamilyShares
             )
         }
-        #if DEBUG
-        let rankingStart = ProcessInfo.processInfo.systemUptime
-        #endif
         let selection = GarmentPaletteSourceSelector.select(evaluatedCandidates)
-        #if DEBUG
-        let rankingMs = (ProcessInfo.processInfo.systemUptime - rankingStart) * 1_000
-        #endif
         let selectedCandidate = selection.candidate
         let maskedSamples = selectedCandidate.map {
             MaskedGarmentPaletteSamples(
@@ -9636,11 +9257,6 @@ private extension UIImage {
             )
         } ?? failedPaletteSamples(width: 80, height: 100)
         if maskedSamples.tier == .couldNotIsolateGarment {
-            let latencyMs = Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())
-            #if DEBUG
-            StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(maskedSamples.tier.rawValue), maskingApplied=false, palette latencyMs=\(latencyMs); all tiers failed")
-            StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] timing totalMs=\(latencyMs) sourcesMs=\(String(format: "%.1f", sourcesMs)) illuminantMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .illuminant))) namingMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .naming))) rankingMs=\(String(format: "%.1f", rankingMs)) confidenceMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .confidence)))")
-            #endif
             return GarmentColorDetection(
                 garmentColors: [],
                 confidence: 0,
@@ -9667,26 +9283,6 @@ private extension UIImage {
         let finalColors = extraction.palette
         let confidence = extraction.confidence
         let noteColors = finalColors.joined(separator: ", ")
-        let latencyMs = Int(((ProcessInfo.processInfo.systemUptime - start) * 1000).rounded())
-
-        #if DEBUG
-        let candidateSummary = evaluatedCandidates.map {
-            let strongCount = $0.samples.filter { $0.isInsidePersonMask && $0.isStrongForegroundEvidence }.count
-            let strongCoverage = Double(strongCount) / Double(max(1, $0.samples.filter(\.isInsidePersonMask).count))
-            return "\($0.source.rawValue):\($0.garmentSampleCount):strongCoverage=\(String(format: "%.3f", strongCoverage))"
-        }.joined(separator: ", ")
-        let rankedSummary = selection.rankedCandidates.map {
-            "\($0.candidate.source.rawValue):score=\(String(format: "%.3f", $0.score)):samples=\($0.candidate.garmentSampleCount):agreement=\(String(format: "%.2f", $0.agreement))"
-        }.joined(separator: ", ")
-        let familySummary = extraction.debug.familyShares.map {
-            "\($0.name)=\(String(format: "%.1f", $0.share * 100))%"
-        }.joined(separator: ", ")
-        let backgroundSummary = backgroundReferences.sorted { $0.value > $1.value }.map {
-            "\($0.key)=\(String(format: "%.1f", $0.value * 100))%"
-        }.joined(separator: ", ")
-        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] chosenSource=\(maskedSamples.source.rawValue), reason=\(selection.metQualityBar ? "best ranked candidate clearing >=\(GarmentPaletteSourceSelector.minimumReliableGarmentSamples) garment samples" : "largest available tier; no tier cleared quality bar"), garmentSamples=\(selectedCandidate?.garmentSampleCount ?? 0), cropsMerged=\(maskedSamples.cropsMerged), candidates=[\(candidateSummary)], candidatesRanked=[\(rankedSummary)], familyShares=[\(familySummary)], disagreement=\(selection.disagreement), backgroundRefs=[\(backgroundSummary)], downWeighted=\(extraction.debug.downWeightedSamples), illuminantReference=\(extraction.debug.illuminantReference), namingCalibration=\(extraction.debug.namingCalibrationDecisions), leadershipEvidence=\(extraction.debug.leadershipDecision), confidenceReason=\(extraction.debug.confidenceReason), maskTier=\(maskedSamples.tier.rawValue), maskingApplied=\(maskedSamples.maskingApplied), paletteConfidence=\(extraction.confidenceLevel.rawValue), palette latencyMs=\(latencyMs); \(extraction.debug.debugDescription)")
-        StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] timing totalMs=\(latencyMs) sourcesMs=\(String(format: "%.1f", sourcesMs)) illuminantMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .illuminant))) namingMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .naming))) rankingMs=\(String(format: "%.1f", rankingMs)) confidenceMs=\(String(format: "%.1f", debugTiming.milliseconds(for: .confidence)))")
-        #endif
 
         let sourceNote = maskedSamples.maskingApplied
             ? "Colors came from masked garment-region pixels only"
@@ -9735,10 +9331,6 @@ private extension UIImage {
                 }
                 let mask = rawMask.eroded(radius: 1)
                 let strongForegroundMask = rawMask.adaptivelyErodedStrongMask()
-                #if DEBUG
-                let strongCoverage = Double(strongForegroundMask?.includedCount ?? 0) / Double(max(1, rawMask.includedCount))
-                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] source=\(self.paletteSource(for: tier).rawValue), included=\(mask.includedCount), strongCoverage=\(String(format: "%.3f", strongCoverage))")
-                #endif
                 return MaskedGarmentPaletteSamples(
                     samples: paletteSamples(
                         width: width,
@@ -9753,9 +9345,6 @@ private extension UIImage {
                     cropsMerged: 0
                 )
             } catch {
-                #if DEBUG
-                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] maskTier=\(tier.rawValue) failed during source selection: \(error.localizedDescription)")
-                #endif
                 return nil
             }
         }
@@ -9780,16 +9369,9 @@ private extension UIImage {
             let foregroundMask = rawForegroundMask?.eroded(radius: 1)
             guard let foregroundMask,
                   foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount else {
-                #if DEBUG
-                StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] garmentCrop sampling=skipped reason=noUsableForegroundIntersection")
-                #endif
                 return nil
             }
             let strongForegroundMask = rawForegroundMask?.adaptivelyErodedStrongMask()
-            #if DEBUG
-            let strongCoverage = Double(strongForegroundMask?.includedCount ?? 0) / Double(max(1, rawForegroundMask?.includedCount ?? 0))
-            StyleMatchDebugLogEmitter.emit("[StyleMatch Color Debug] garmentCrop sampling=foregroundIntersection included=\(foregroundMask.includedCount), strongForeground=\(strongForegroundMask?.includedCount ?? 0), strongCoverage=\(String(format: "%.3f", strongCoverage))")
-            #endif
             return paletteSamples(
                 width: width,
                 height: height,

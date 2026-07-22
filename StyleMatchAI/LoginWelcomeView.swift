@@ -189,18 +189,6 @@ struct LoginWelcomeView: View {
         hasChosenAccessMode = true
     }
 
-    private func logProfileNameEvent(
-        stage: String,
-        source: StyleMatchAccountNameResolver.Source,
-        appleNameProvided: Bool,
-        localNamePresent: Bool,
-        storedNamePresent: Bool
-    ) {
-        #if DEBUG
-        print("[ProfileName] welcome-\(stage) source=\(source.rawValue) appleNameProvided=\(appleNameProvided) localNamePresent=\(localNamePresent) storedNamePresent=\(storedNamePresent)")
-        #endif
-    }
-
     private func handleAppleSignIn(_ result: Result<ASAuthorization, Error>) {
         switch result {
         case .success(let authorization):
@@ -330,14 +318,6 @@ struct LoginWelcomeView: View {
             appleFamilyName: payload.familyName,
             localDisplayName: restoredLocalName
         )
-        logProfileNameEvent(
-            stage: "sign-in",
-            source: appliedProfile.source,
-            appleNameProvided: payload.givenName != nil || payload.familyName != nil,
-            localNamePresent: StyleMatchAccountNameResolver.clean(restoredLocalName) != nil,
-            storedNamePresent: appliedProfile.givenName != nil
-        )
-
         customerAccountEmail = appliedProfile.email ?? ""
         profileName = appliedProfile.displayName ?? restoredLocalName ?? ""
 

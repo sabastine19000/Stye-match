@@ -25,6 +25,9 @@ struct OpenAIStylistClient {
         question: String,
         debugRequestLabel: String? = nil
     ) async throws -> String {
+        guard await ThirdPartyAIConsentCoordinator.shared.authorizeExternalAIRequest() else {
+            throw ThirdPartyAIConsentError.required
+        }
         guard let configuration = StylistChatConfiguration.production else {
             throw OpenAIStylistError.invalidResponse
         }
@@ -56,10 +59,7 @@ struct OpenAIStylistClient {
         )
         let request = ChatRequest(messages: requestMessages, context: context, stream: true)
         #if DEBUG
-        if let debugRequestLabel {
-            let bodyBytes = (try? JSONEncoder().encode(request).count) ?? -1
-            let maximumMessageUTF16 = requestMessages.map { $0.content.utf16.count }.max() ?? 0
-            print("[Stylist Request Size] label=\(debugRequestLabel) final_utf16_count=\(maximumMessageUTF16) encoded_body_bytes=\(bodyBytes) message_count=\(requestMessages.count)")
+        if debugRequestLabel != nil {
             assert(requestMessages.allSatisfy { $0.content.utf16.count <= 2_000 })
         }
         #endif
@@ -73,6 +73,8 @@ struct OpenAIStylistClient {
         } catch let error as StylistChatDiagnosticError {
             throw error
         } catch let error as StylistChatError {
+            throw error
+        } catch let error as ThirdPartyAIConsentError {
             throw error
         } catch {
             throw OpenAIStylistError.api(message: "The AI Stylist is unavailable right now.")
@@ -188,15 +190,6 @@ struct OpenAIStylistClient {
 
         return !emptyMarkers.contains(normalized)
     }
-
-    #if DEBUG
-    private func debugPromptLog(for messages: [OpenAIChatCompletionRequest.Message], model: String) -> String {
-        let prompt = messages
-            .map { "[\($0.role)] \($0.content)" }
-            .joined(separator: "\n\n")
-        return "[StyleMatch AI Prompt Debug] model=\(model)\n\(prompt)"
-    }
-    #endif
 
     private func conversationText(from messages: [AIChatMessage]) -> String {
         guard !messages.isEmpty else {

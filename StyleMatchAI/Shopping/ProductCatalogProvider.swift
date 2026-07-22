@@ -65,10 +65,7 @@ actor SharedProductCatalogLoader {
 
     func products() async throws -> [AffiliateProduct] {
         #if DEBUG
-        let startedAt = Date()
-        func logDuration(_ message: String) {
-            print("[StyleMatch Shop Perf] catalog loader \(message) elapsed=\(String(format: "%.3fs", Date().timeIntervalSince(startedAt)))")
-        }
+        func logDuration(_ message: String) { _ = message }
         #endif
         let currentDate = now()
         if let cachedProducts, let cachedAt {
@@ -205,18 +202,12 @@ struct BundledStoreDirectoryProvider: StoreDirectoryProvider {
         return rawObjects.compactMap { object in
             guard JSONSerialization.isValidJSONObject(object),
                   let data = try? JSONSerialization.data(withJSONObject: object) else {
-                #if DEBUG
-                print("[StyleMatch Shopping Stores] Skipping malformed store JSON object.")
-                #endif
                 return nil
             }
 
             do {
                 return try JSONDecoder.catalog.decode(SupportedStore.self, from: data)
             } catch {
-                #if DEBUG
-                print("[StyleMatch Shopping Stores] Skipping malformed store: \(error.localizedDescription)")
-                #endif
                 return nil
             }
         }
@@ -262,9 +253,6 @@ struct BundledCatalogProvider: ProductCatalogProvider {
         return rawObjects.compactMap { object in
             guard JSONSerialization.isValidJSONObject(object),
                   let data = try? JSONSerialization.data(withJSONObject: object) else {
-                #if DEBUG
-                print("[StyleMatch Shopping Catalog] Skipping malformed product JSON object.")
-                #endif
                 return nil
             }
 
@@ -300,9 +288,6 @@ struct BundledCatalogProvider: ProductCatalogProvider {
                 }
                 return decoded
             } catch {
-                #if DEBUG
-                print("[StyleMatch Shopping Catalog] Skipping malformed product: \(error.localizedDescription)")
-                #endif
                 return nil
             }
         }
@@ -390,9 +375,6 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         let response = try JSONDecoder.catalog.decode(RemoteProductsResponse.self, from: data)
         let decoded: [AffiliateProduct] = response.products.compactMap { remote -> AffiliateProduct? in
             guard let buyURL = URL(string: remote.buyURL, relativeTo: baseURL)?.absoluteURL else {
-                #if DEBUG
-                print("[StyleMatch Remote Catalog] Skipping product with invalid buy_url: \(remote.id)")
-                #endif
                 return nil
             }
             let imageURL = ProductImageURLValidator.validated(remote.imageURL)
@@ -448,9 +430,6 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
         request.httpMethod = "GET"
         request.timeoutInterval = requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        #if DEBUG
-        print("[StyleMatch Remote Catalog] Fetching catalog from \(url.absoluteString)")
-        #endif
         let startedAt = Date()
         do {
             let (data, response) = try await urlSession.data(for: request)
@@ -515,16 +494,12 @@ struct RemoteCatalogProvider: ProductCatalogProvider, CatalogDisclosureProviding
     }
 
     private func debugLog(_ message: @autoclosure () -> String) {
-        #if DEBUG
-        print("[StyleMatch Remote Catalog] \(message())")
-        #endif
+        _ = message
     }
 
     private func debugLog(_ error: Error, prefix: String) {
-        #if DEBUG
-        let nsError = error as NSError
-        print("[StyleMatch Remote Catalog] \(prefix) error_domain=\(nsError.domain) error_code=\(nsError.code)")
-        #endif
+        _ = error
+        _ = prefix
     }
 
 }

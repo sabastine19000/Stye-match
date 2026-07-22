@@ -196,9 +196,6 @@ struct AggregatedSearchProvider: ProductSearchProvider {
                             try await adapter.search(query)
                         }
                     } catch {
-                        #if DEBUG
-                        print("[StyleMatch Shopping Search] Skipping \(adapter.retailerName) adapter: \(error.localizedDescription)")
-                        #endif
                         return []
                     }
                 }
@@ -243,9 +240,6 @@ struct RetailerAPIAdapter: RetailerSearchAdapter {
 
     func search(_ query: ProductSearchQuery) async throws -> [AffiliateProduct] {
         let request = try requestBuilder.makeRequest(for: query)
-        #if DEBUG
-        print("[StyleMatch Shopping Adapter Request] \(request.url?.absoluteString ?? "")")
-        #endif
         let (data, _) = try await urlSession.data(for: request)
         return try requestBuilder.decodeProducts(from: data)
     }
@@ -268,9 +262,6 @@ struct BestBuyAdapter: RetailerSearchAdapter {
 
     func search(_ query: ProductSearchQuery) async throws -> [AffiliateProduct] {
         let request = try makeRequest(for: query)
-        #if DEBUG
-        print("[StyleMatch Shopping Adapter Request] \(request.url?.absoluteString ?? "")")
-        #endif
         let (data, _) = try await urlSession.data(for: request)
         return try decodeProducts(from: data)
     }
@@ -456,9 +447,6 @@ private struct ProxyRetailerSearchAdapter: RetailerSearchAdapter {
 
     func search(_ query: ProductSearchQuery, decode: (Data) throws -> [AffiliateProduct]) async throws -> [AffiliateProduct] {
         let request = try makeRequest(for: query)
-        #if DEBUG
-        print("[StyleMatch Shopping Adapter Request] \(request.url?.absoluteString ?? "")")
-        #endif
         let (data, _) = try await urlSession.data(for: request)
         return try decode(data)
     }

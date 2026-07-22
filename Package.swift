@@ -17,6 +17,7 @@ let package = Package(
                 "AIProviderAdapters.swift",
                 "AIAssistantsView.swift",
                 "AIStyleAdvisor.swift",
+                "AppleWeatherAttributionView.swift",
                 "Assets.xcassets",
                 "BackendFeaturePlan.swift",
                 "ChecklistView.swift",
@@ -47,6 +48,7 @@ let package = Package(
             ],
             sources: [
                 "AccountService.swift",
+                "AppleWeatherDataPolicy.swift",
                 "AppBackendConfiguration.swift",
                 "ShareableScoreCard.swift",
                 "Models.swift",
@@ -84,6 +86,7 @@ let package = Package(
                 "PersonalStylist/PersonalStylistIntelligence.swift",
                 "PersonalStylist/PersonalStylistPhase2Diagnostics.swift",
                 "StylistChat/StylistChatModels.swift",
+                "ThirdPartyAIConsent.swift",
                 "StylistChat/ChatConversationStore.swift",
                 "StylistChat/StylistChatTransport.swift",
                 "StylistChat/StylistChatService.swift",

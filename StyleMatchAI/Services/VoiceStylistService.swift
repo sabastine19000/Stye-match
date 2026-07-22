@@ -183,18 +183,18 @@ final class VoiceStylistService: NSObject, ObservableObject, AVSpeechSynthesizer
         }
 
         playbackErrorMessage = nil
-        Self.logStage("requested", startedAt: startedAt, textLength: cleaned.count, extra: "request_id=\(requestID.uuidString)")
+        Self.logStage("requested", startedAt: startedAt, textLength: cleaned.count)
 
         #if canImport(UIKit)
         if UIAccessibility.isVoiceOverRunning {
             UIAccessibility.post(notification: .announcement, argument: cleaned)
-            Self.logStage("voiceover_announcement", startedAt: startedAt, textLength: cleaned.count, extra: "request_id=\(requestID.uuidString)")
+            Self.logStage("voiceover_announcement", startedAt: startedAt, textLength: cleaned.count)
             return
         }
         #endif
 
         guard !isPreparingSpeech else {
-            Self.logStage("duplicate_start_ignored", startedAt: startedAt, textLength: cleaned.count, extra: "request_id=\(requestID.uuidString)")
+            Self.logStage("duplicate_start_ignored", startedAt: startedAt, textLength: cleaned.count)
             return
         }
 
@@ -222,7 +222,7 @@ final class VoiceStylistService: NSObject, ObservableObject, AVSpeechSynthesizer
 
     private func startSpeech(_ cleaned: String, requestID: UUID, startedAt: TimeInterval) {
         guard activeSpeechRequestID == requestID else { return }
-        Self.logStage("speech_startup_begin", startedAt: startedAt, textLength: cleaned.count, extra: "request_id=\(requestID.uuidString)")
+        Self.logStage("speech_startup_begin", startedAt: startedAt, textLength: cleaned.count)
 
         let voice = selectedVoice(startedAt: startedAt, textLength: cleaned.count)
         guard activeSpeechRequestID == requestID, !Task.isCancelled else { return }
@@ -592,10 +592,10 @@ final class VoiceStylistService: NSObject, ObservableObject, AVSpeechSynthesizer
         let mainThread = Thread.isMainThread
         let thread = mainThread ? "main" : "background"
         let length = textLength.map(String.init) ?? "unknown"
-        let voiceID = voiceIdentifier ?? "none"
-        let language = voiceLanguage ?? "none"
+        _ = voiceIdentifier
+        _ = voiceLanguage
         let suffix = extra.isEmpty ? "" : " \(extra)"
-        logger.notice("stage=\(stage, privacy: .public) timestamp=\(now, privacy: .public) elapsed_ms=\(elapsed, privacy: .public) thread=\(thread, privacy: .public) main=\(mainThread, privacy: .public) text_length=\(length, privacy: .public) voice_id=\(voiceID, privacy: .public) voice_language=\(language, privacy: .public)\(suffix, privacy: .public)")
+        logger.notice("stage=\(stage, privacy: .public) timestamp=\(now, privacy: .public) elapsed_ms=\(elapsed, privacy: .public) thread=\(thread, privacy: .public) main=\(mainThread, privacy: .public) text_length=\(length, privacy: .public)\(suffix, privacy: .public)")
     }
 
     private func deactivateAudioSession() {

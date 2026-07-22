@@ -91,7 +91,6 @@ struct StylistChatView: View {
             .onPreferenceChange(StyleMatchComposerFramePreferenceKey.self) { frame in
                 guard !frame.isNull, !frame.isEmpty, frame != composerFrame else { return }
                 composerFrame = frame
-                debugLogComposerLayout()
             }
         }
         .appScreenBackground(.ai)
@@ -292,23 +291,6 @@ struct StylistChatView: View {
                     )
                 }
             }
-    }
-
-    private func debugLogComposerLayout() {
-#if DEBUG
-        let frame = composerFrame
-        guard !frame.isNull, !frame.isEmpty else { return }
-        print(
-            String(
-                format: "[StyleMatch Layout Debug] composerFrame={x=%.1f y=%.1f width=%.1f height=%.1f} bottomNavigationClearance=%.1f",
-                frame.minX,
-                frame.minY,
-                frame.width,
-                frame.height,
-                bottomNavigationClearance
-            )
-        )
-#endif
     }
 
     private var voiceInputButton: some View {

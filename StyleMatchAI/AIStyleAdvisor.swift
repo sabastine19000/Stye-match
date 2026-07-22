@@ -413,9 +413,6 @@ struct AIStyleInsightCard: View {
                     saveMessages()
             }
         } catch {
-            #if DEBUG
-            print("[AI Insight Chat] \(error.localizedDescription)")
-            #endif
             await MainActor.run {
                 messages.append(
                     AIInsightChatMessage(
@@ -534,9 +531,6 @@ struct AIStyleInsightCard: View {
                     isLoading = false
                 }
             } catch {
-                #if DEBUG
-                print("[AI Designer] \(error.localizedDescription)")
-                #endif
                 await MainActor.run {
                     advice = fallbackAdvice
                     statusText = "AI Stylist is having trouble connecting right now. Showing saved guidance."
