@@ -356,3 +356,33 @@ Rollback evidence: Not applicable to the accepted physical result. This append-o
 Exceptions and expiration: None. The absence of hashable screenshot files is explicitly recorded and is not represented as hashed evidence; the accepted same-attempt trace, CLI exports, owner-observed UI, and exact B5 comparison remain authoritative.
 
 Open follow-up: Route B (Macy's plus the D7 in-app-browser dismissal/state-preservation evidence) is planned in `docs/IA1.1-ROUTE-B-PLAN.md` but is not authorized for execution. Route C, D7/SL1 acceptance, CS1, SR1, TestFlight, deployment, and other downstream work remain unopened.
+
+### 2026-07-22 — IA1.1 Route B (Macy's and D7 browser fallback) accepted
+
+Decision ID and checkpoint: IA1.1-RB — Route B Macy's physical acceptance and D7 browser-dismissal evidence
+
+Date: 2026-07-22
+
+Status: Accepted
+
+Governing decisions: ADR-001, ADR-005, ADR-006, ADR-007
+
+Repository HEAD(s): `STYLEMATCH_BETA_2_0_SHOPPING_COMPOSITION` at `9558c53d45334523c135940b7494a9e778fd6e51` on `release/beta-2.0-shopping-composition`; installed pinned application source remained `5463866e7783d8d4e75318423c8d85a23c252d8c`.
+
+Files/hunks owned: This acceptance record and the separately prepared Route C procedure only. No application source, tests, catalog, build settings, retained data, or deployment state changed during Route B.
+
+Automated evidence: The foreground Logging trace for StyleMatch Pro PID 7874 finalized normally after one direct Ctrl-C, was saved, and was preserved unchanged. Stable trace archive identity: 2,500,608 bytes, SHA-256 `455c6c1ec3e4779c98ebf7ace40e8743ced0f1505888ebbf250580ec5234948d`. Explicit os-log export passed with 2,308 rows (1,534,075 bytes; SHA-256 `5656b1f5effbab5f95a80dbcdf02c205cd85178be0323aef33e85b24ea9509d8`). Sanitized os-log evidence SHA-256: `2c8aeed8bb339f01a75a5e1d6bc5bec5f1fa8063a61fedac46c3f89248f1a6a4`. The CLI TOC serializer produced a retained zero-byte artifact (SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`); Instruments GUI fallback opened the same trace and rendered the `00:08:04` run, StyleMatch Pro PID 7874, and 2,308 Messages rows, confirming usable runtime data. The complete Route B report SHA-256 is `4075f10f457fa88bd9a4ae1898ad1d08502ab3effe60fff4482ed24069d40898`.
+
+Physical evidence: Macy's-only selection passed. The thin-inventory fallback truthfully stated that selected-store inventory was unavailable and identified Macy's as the selected store. Visible fallback recommendations remained correctly attributed to Amazon rather than being represented as Macy's inventory. The approved Macy's direct-store path opened the in-app browser at public `macys.com`. Normal dismissal returned to Shopping > Stores > My Stores with Macy's, `No products available yet`, the same `Open` action, and the same navigation and fallback context preserved. Retained screenshots: fallback SHA-256 `14184bde9c63c4c373c8edcea98848164c0a7e7363168b60d3125e0fff645e6c`; Macy's destination SHA-256 `de4a03f995ebc23995d7dae1dd7644b947158ce19319124c574d621d88d1ee6f`; post-dismissal state SHA-256 `887dc3f08c34d69a40ce563a91c4d072941e73ad09bdb49ea88a87199ba7b0b5`.
+
+Environment, deployment and artifact identity: Bundle `com.sabastine.stylematchai`; version/build 1.7 (1); installed pinned candidate unchanged. One separately authorized supported `devicectl` termination targeted only the pre-existing StyleMatchAI PID 7813 to establish the required process boundary; it succeeded once, and the confirmation inventory showed zero StyleMatchAI processes. No retry, unauthorized termination, crash, security rejection, source change, catalog change, build, installation, reinstall, replacement, signing change, or deployment occurred.
+
+Authority and compatibility assessment: Immutable B5 remained an exact match after Route B: active 3 records at `2851dbd25dcc9fbc628517f831c61d37a4bac352e8b83ca6f8be7febc51a9200`; staging 6 records at `d8005542e432a022d7be91a16897e436b60fbddb18c19c02ee301ec9362c7053`; quarantine 0. Sanitized B5 comparison SHA-256: `64c879b0449e20a7c53949a11acb379399ff138374238e5e819892d0b17d581f`.
+
+Continuity compliance record: Chat impact was none. No Stylist binding, authentication, persistence, transport, context, Worker contract, or handoff changed. Existing supported-version contracts, regression suites, live-health state, retailer authorities, and the accepted B5 authority were not modified by this physical Shopping acceptance checkpoint.
+
+Rollback evidence: Not applicable to the accepted physical result. This append-only entry may be superseded only by a separately authorized later record; it must not be rewritten.
+
+Exceptions and expiration: The owner-declared 18:24:30 Stores screenshot did not materialize at its declared local path, so no hash was invented. The retained 18:23 fallback, 18:25 destination, and 18:26 post-dismissal screenshots independently establish the bounded state transition. The zero-byte CLI TOC remains explicitly classified as a serializer artifact; acceptance relies on the structurally complete retained trace, explicit nonempty os-log export, privacy-reviewed derivative, and accepted Instruments GUI fallback.
+
+Open follow-up: Route C (Best Buy native-app continuation) is prepared in `docs/IA1.1-ROUTE-C-PLAN.md` but is not authorized for execution. Route B supplies the Macy's-specific D7 browser-open and state-preserving dismissal evidence; D7/SL1 is not separately accepted by this record. Route C, D7/SL1 final acceptance, CS1, SR1, TestFlight, deployment, and other downstream work remain unopened.
