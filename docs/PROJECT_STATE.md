@@ -326,3 +326,33 @@ Open follow-up:
 ### 2026-07-19 — Ledger established
 
 ADR-001 through ADR-007 were consolidated from owner-approved project directives and the verified repository state available on this date. Where an implementation or physical result could not be proven from repository evidence, its status was recorded as pending rather than accepted. Future decisions must be appended below this entry.
+
+### 2026-07-22 — IA1.1 Route A (Nike) accepted
+
+Decision ID and checkpoint: IA1.1-RA — Route A Nike physical acceptance
+
+Date: 2026-07-22
+
+Status: Accepted
+
+Governing decisions: ADR-001, ADR-005, ADR-006, ADR-007
+
+Repository HEAD(s): `STYLEMATCH_BETA_2_0_SHOPPING_COMPOSITION` at `5463866e7783d8d4e75318423c8d85a23c252d8c` on `release/beta-2.0-shopping-composition`
+
+Files/hunks owned: This acceptance record only. No application source, tests, catalog, build settings, retained data, or deployment state changed during Route A.
+
+Automated evidence: The foreground Logging trace finalized normally and was preserved unchanged. CLI TOC export passed (3,579 bytes; SHA-256 `327051971315b56cb6fc3fb5d0d248ea2e0851a8322d97fff075b63384d6d1b1`). Explicit os-log export passed (1,713,077 bytes; 3,773 rows; SHA-256 `862bd33f13005a70b89a8bc26fe1c762bae0a6b4a44d94ed1682fd483f3bbe32`). Sanitized os-log evidence SHA-256: `f513d00d1a5294ddcaa84962f672e93d5158f2187894fe5f7c66b4ead2cf2cd6`. The complete Route A report SHA-256 is `eaa70c9fc51288d3eae61b12c4be9c0486a9a44b95f5b6c657ad8eef6e12b4ad`.
+
+Physical evidence: On the installed pinned StyleMatch Pro 1.7 (1) candidate, Nike-only selection passed; the truthful empty-inventory fallback passed; the selected-store disclosure identified Nike; visible fallback recommendations identified their actual retailer (Amazon) rather than being represented as Nike inventory; the approved Nike direct-store path passed; and the in-app browser reached `nike.com`. Owner screenshots were visually validated during the bounded attempt, but the declared Downloads paths did not materialize as local files for hashing. No screenshot hashes were invented.
+
+Environment, deployment and artifact identity: Bundle `com.sabastine.stylematchai`; version/build 1.7 (1); executable SHA-256 `f58e67fb3da80a716f85e8c27d0db7059a85b5cc371605538aab4e124bd42a02`; pinned ZIP SHA-256 `88f980042606fed10057528302a33fddb7b8de07164438ff748c4ee04e5afff3`. Foreground xctrace recorded PID 7731 from 2026-07-22 17:52:09.987 EDT through 17:59:55.265 EDT and ended by one direct Ctrl-C after destination evidence. No crash, security rejection, automatic retry, unauthorized termination, build, installation, signing change, catalog change, source change, or deployment occurred.
+
+Authority and compatibility assessment: Shopping retailer attribution and soft-fallback truthfulness were preserved. Immutable B5 remained an exact match after the route: active 3 records at `2851dbd25dcc9fbc628517f831c61d37a4bac352e8b83ca6f8be7febc51a9200`; staging 6 records at `d8005542e432a022d7be91a16897e436b60fbddb18c19c02ee301ec9362c7053`; quarantine 0. Sanitized B5 comparison SHA-256: `6a7eb0f27cba5f70569623dc031f5ea27e65a03424c704760c3fdef7c0d4c5ef`.
+
+Continuity compliance record: Chat impact was none. No Stylist binding, authentication, persistence, transport, context, Worker contract, or handoff changed. Existing supported-version contracts, regression suites, and live-health state were therefore not modified by this physical Shopping acceptance checkpoint.
+
+Rollback evidence: Not applicable to the accepted physical result. This append-only entry may be superseded only by a separately authorized later record; it must not be rewritten.
+
+Exceptions and expiration: None. The absence of hashable screenshot files is explicitly recorded and is not represented as hashed evidence; the accepted same-attempt trace, CLI exports, owner-observed UI, and exact B5 comparison remain authoritative.
+
+Open follow-up: Route B (Macy's plus the D7 in-app-browser dismissal/state-preservation evidence) is planned in `docs/IA1.1-ROUTE-B-PLAN.md` but is not authorized for execution. Route C, D7/SL1 acceptance, CS1, SR1, TestFlight, deployment, and other downstream work remain unopened.
