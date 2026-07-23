@@ -386,3 +386,33 @@ Rollback evidence: Not applicable to the accepted physical result. This append-o
 Exceptions and expiration: The owner-declared 18:24:30 Stores screenshot did not materialize at its declared local path, so no hash was invented. The retained 18:23 fallback, 18:25 destination, and 18:26 post-dismissal screenshots independently establish the bounded state transition. The zero-byte CLI TOC remains explicitly classified as a serializer artifact; acceptance relies on the structurally complete retained trace, explicit nonempty os-log export, privacy-reviewed derivative, and accepted Instruments GUI fallback.
 
 Open follow-up: Route C (Best Buy native-app continuation) is prepared in `docs/IA1.1-ROUTE-C-PLAN.md` but is not authorized for execution. Route B supplies the Macy's-specific D7 browser-open and state-preserving dismissal evidence; D7/SL1 is not separately accepted by this record. Route C, D7/SL1 final acceptance, CS1, SR1, TestFlight, deployment, and other downstream work remain unopened.
+
+### 2026-07-22 — IA1.1 Route C (Best Buy native-app continuation) accepted
+
+Decision ID and checkpoint: IA1.1-RC — Route C Best Buy physical acceptance and native-app continuation evidence
+
+Date: 2026-07-22
+
+Status: Accepted
+
+Governing decisions: ADR-001, ADR-005, ADR-006, ADR-007
+
+Repository HEAD(s): `STYLEMATCH_BETA_2_0_SHOPPING_COMPOSITION` at `f8076a737f53f2823625b9131250f724def0415e` on `release/beta-2.0-shopping-composition`; installed pinned application source remained `5463866e7783d8d4e75318423c8d85a23c252d8c`.
+
+Files/hunks owned: This acceptance record only. No application source, tests, catalog, build settings, retained data, or deployment state changed during Route C.
+
+Automated evidence: The foreground Logging trace for StyleMatch Pro PID 8248 finalized normally after one direct Ctrl-C, ran for 260.254624 seconds (00:04:20), ended with `exit(0)`, and was preserved. Frozen pre-GUI trace identity: 2,296,832 bytes, SHA-256 `9c64f749f6e9c9198581ed50fc840a07b21b6bea9052f828840e3d927f1589eb`. The CLI TOC export passed (3,565 bytes; SHA-256 `86d89ad66d8d59c4695657fbd33d71543b293ef7e96f6cdd9e82ff845087fd52`) and exposed the run plus `os-log` schema. The explicit CLI os-log serializer produced a retained zero-byte artifact (SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`). Instruments GUI fallback opened the same trace and rendered 1,114 unified-log Messages rows for StyleMatch Pro PID 8248; screenshot SHA-256 `32e5e507eb249bbbacb9f9cbd880074eaad6433424c650caa61ee8c318988c88`. Sanitized runtime evidence SHA-256: `ccabfff83750db3ccc9616e5b44a902102943b1a030cb8557f443565301c6bb9`. The Route C final report SHA-256 is `e5988afc3530625868a7ec40612222110b17b21375446fe8eaa4402007b3c214`; evidence manifest SHA-256 is `440a939d97b66034879127d44e0db4c5a0e2fcf6646385882e4815fcbd44b298`.
+
+Physical evidence: Best Buy was selected exclusively. The truthful zero-catalog state displayed `No products available yet`, and the direct-store disclosure stated that StyleMatch Pro did not claim a catalog integration or affiliate relationship. The owner tapped the Best Buy `Open` action exactly once from StyleMatch Pro; the installed native Best Buy app opened without manual app-switcher substitution. The native destination displayed the system return link `< StyleMatch Pro`, confirming StyleMatch Pro as the originating application. Selected-store screenshot SHA-256: `556cd5b6172e0b16f4aa91ec2f824c9e9410f30a8886038ba92765f425ffbd52`. Native-destination screenshot SHA-256: `fda558586d45e1c24e5fd0fd387aa491adfb93898136f95a44bdc11222fb41ef`. The native screenshot is restricted evidence because ordinary private account UI is visible; no personal content is reproduced in this ledger.
+
+Environment, deployment and artifact identity: Bundle `com.sabastine.stylematchai`; version/build 1.7 (1); installed pinned candidate unchanged. One separately authorized supported `devicectl` termination targeted only the verified pinned StyleMatch Pro PID 8011 to establish the process boundary. It succeeded once; the confirmation inventory showed zero processes in the pinned StyleMatch Pro bundle container. The separate StyleMatch AI 1.0.20 application was not touched. No crash, security rejection, automatic retry, unauthorized termination, source change, catalog change, build, installation, reinstall, replacement, signing action, or deployment occurred.
+
+Authority and compatibility assessment: Immutable B5 remained an exact match after Route C: active 3 records at `2851dbd25dcc9fbc628517f831c61d37a4bac352e8b83ca6f8be7febc51a9200`; staging 6 records at `d8005542e432a022d7be91a16897e436b60fbddb18c19c02ee301ec9362c7053`; quarantine 0. Sanitized B5 comparison SHA-256: `264805f74f35cc3315060f829caed3d79ebaa8fdd37339db19b7f1383293b178`. Whole-preferences runtime churn did not affect any accepted retained-data authority.
+
+Continuity compliance record: Chat impact was none. No Stylist binding, authentication, persistence, transport, context, Worker contract, or handoff changed. Existing supported-version contracts, regression suites, live-health state, retailer authorities, and the accepted B5 authority were not modified by this physical Shopping acceptance checkpoint.
+
+Rollback evidence: Not applicable to the accepted physical result. This append-only entry may be superseded only by a separately authorized later record; it must not be rewritten.
+
+Exceptions and expiration: The CLI os-log zero-byte result is classified as the known serializer artifact, not an application failure. Acceptance relies on the structurally complete finalized trace, nonempty TOC, privacy-reviewed derivative, and the accepted Instruments GUI fallback showing 1,114 unified-log rows. No required physical criterion is missing.
+
+Open follow-up: Route C is complete. D7/SL1 remains separately unaccepted until the authorized criterion-by-criterion reconciliation of Routes A, B, and C is complete. CS1, SR1, TestFlight, deployment, App Store Connect, and other downstream work remain unopened.
