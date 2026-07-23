@@ -985,9 +985,30 @@ struct ScanView: View {
         .disabled(isAnalyzing)
     }
 
-    private var scannerPanel: some View {
-        VStack(spacing: 12) {
-            if let selectedImage {
+    private var scannerPanel: AnyView {
+        AnyView(
+            VStack(spacing: 12) {
+                scannerPhotoSection
+                scannerHeaderSection
+                AnyView(scanSourceControl)
+                AnyView(scanOccasionSelector)
+                scannerInsightTabsSection
+                AnyView(scannerInsightCard)
+            }
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .background(scanPanel)
+            .overlay(
+                RoundedRectangle(cornerRadius: 30)
+                    .stroke(scanPanelBorder, lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 30))
+        )
+    }
+
+    private var scannerPhotoSection: AnyView {
+        if let selectedImage {
+            return AnyView(
                 ZStack(alignment: .topTrailing) {
                     selectedImage
                         .resizable()
@@ -1011,16 +1032,22 @@ struct ScanView: View {
                     .padding(.trailing, 24)
                     .padding(.top, 10)
                 }
-            } else {
-                Button {
-                    startCameraCapture()
-                } label: {
-                    scannerExampleCarousel
-                }
-                .buttonStyle(.plain)
-                .disabled(isAnalyzing || isPreparingCamera)
-            }
+            )
+        }
 
+        return AnyView(
+            Button {
+                startCameraCapture()
+            } label: {
+                scannerExampleCarousel
+            }
+            .buttonStyle(.plain)
+            .disabled(isAnalyzing || isPreparingCamera)
+        )
+    }
+
+    private var scannerHeaderSection: AnyView {
+        AnyView(
             VStack(spacing: 12) {
                 Text("AI Outfit Scanner")
                     .font(.title3)
@@ -1035,10 +1062,11 @@ struct ScanView: View {
                     .lineSpacing(4)
                     .padding(.horizontal, 22)
             }
+        )
+    }
 
-            scanSourceControl
-            scanOccasionSelector
-
+    private var scannerInsightTabsSection: AnyView {
+        AnyView(
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(scannerInsightTabs, id: \.self) { tab in
@@ -1049,17 +1077,7 @@ struct ScanView: View {
                 .padding(.vertical, 4)
             }
             .padding(.top, 8)
-
-            scannerInsightCard
-        }
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity)
-        .background(scanPanel)
-        .overlay(
-            RoundedRectangle(cornerRadius: 30)
-                .stroke(scanPanelBorder, lineWidth: 1.5)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 30))
     }
 
     private var scannerExampleCarousel: some View {
