@@ -446,3 +446,33 @@ Rollback evidence: The physical and documentation acceptance records are append-
 Exceptions and expiration: Route A screenshots were visually validated but did not materialize at the declared paths, so no screenshot hashes are claimed. Route A retains successful CLI TOC and explicit os-log exports. Route B's zero-byte CLI TOC is classified as a serializer artifact because its explicit os-log export and Instruments GUI fallback were usable. Route C's zero-byte explicit CLI os-log export is classified as a serializer artifact because its nonempty TOC and Instruments GUI fallback rendered 1,114 rows. These are evidence-tool limitations, not application failures.
 
 Open follow-up: IA1.1 and D7/SL1 are complete. CS1 remains a separate prerequisite and is not accepted or begun by this record. SR1, TestFlight, deployment, App Store Connect, push, and every downstream checkpoint remain unauthorized until separately approved.
+
+### 2026-07-23 — CE1 typed Context Engine contracts and legacy adapter accepted
+
+Decision ID and checkpoint: CE1 — Typed outfit-context contracts and behavior-neutral legacy adapter
+
+Date: 2026-07-23
+
+Status: Accepted
+
+Governing decisions: ADR-001, ADR-003, ADR-006, ADR-007
+
+Repository HEAD(s): `STYLEMATCH_EXPANDED_GARMENT_CLASSIFICATION` implementation commit `369c464737386e6ae21801d217de15b8cd8c997d` on `feature/expanded-garment-classification`; parent `06f0826434db3f6b1422adb66e5ef58bd50d4feb`. Implementation patch SHA-256: `edb30dfd9a4ec24d921b0e3a377b57028173f12b78bb1ba20720836bc550c056`.
+
+Files/hunks owned: Five implementation files with 1,308 insertions and no deletions: `Package.swift`; `StyleMatchAI.xcodeproj/project.pbxproj`; `StyleMatchAI/ContextEngine/OutfitContextContracts.swift`; `StyleMatchAI/ContextEngine/LegacyContextAdapter.swift`; and `StyleMatchProPhase2Tests/ContextEngineCE1Tests.swift`. This acceptance checkpoint owns only this append-only ledger entry. No production source or test file changed during acceptance reconciliation.
+
+Automated evidence: Focused CE1 tests passed 16/16. The full Swift suite passed 723/723. Debug simulator build passed. Release simulator compile passed. Static analysis passed, with only the two documented pre-existing warnings in protected Shopping code. `git show --check` and the implementation whitespace check passed. The acceptance review did not rerun these unchanged green gates because the reviewed implementation commit and patch identity matched exactly and no contradictory evidence was found. The committed CE1 test file contains 16 focused test methods covering typed adaptation, explicit uncertainty, deterministic output, unknown-value fallback, score and breakdown preservation, privacy-safe evidence, non-rewriting legacy access, and absence of Shopping/catalog/persistence-write dependencies.
+
+Physical evidence: NOT APPLICABLE to CE1 itself. CE1 adds a behaviorally inactive contract layer and deterministic transient adapter with no runtime consumer adoption, UI path, AI payload, voice path, scoring path, persistence write, or device behavior. This classification does not constitute physical acceptance of any future Context Engine runtime behavior. All hardware-dependent Context Engine behavior remains unimplemented and unaccepted.
+
+Environment, deployment and artifact identity: No build artifact was installed or deployed by CE1 acceptance. No signing, certificate, provisioning, TestFlight, App Store Connect, Worker, deployment, device, or B5 action occurred. Protected Shopping and catalog files remained byte-identical: `ShoppingView.swift` SHA-256 `9a1c08de953f528d04a2355e05758f49629fb8aa388253dd01035d1b4d1f9471`; `StoreSearchView.swift` SHA-256 `4ef79d81b804c0423f447e50d0e85f8e426105e7f126da210caad8535ca99fa4`; `ProductCatalog.json` SHA-256 `6c7abb5e08905334d0e0e3196d32c03153db5a830330f69819c49c63997819e3`.
+
+Authority and compatibility assessment: CE1 preserves the existing score and breakdown exactly and does not recompute either. Legacy scans are read into a transient typed snapshot without rewriting records, destructive migration, key reuse, or persistence mutation. Unsupported purpose and workplace values remain explicitly uncertain; `.otherUncertain` remains uncertain; detected visual style remains separate from garment category and purpose; identical inputs produce deterministic adapter output; and unknown future enum values decode to documented fail-closed fallbacks. The contract includes typed purpose, workplace profile, environment, occasion/workplace/weather/safety suitability, confidence, evidence, missing evidence, scoring-profile, and provenance fields. Raw OCR text, speech, names, employer identity, branding identity, badge values, and other private legacy evidence are not copied into the snapshot; generic presence-only summaries are used. Project and Swift Package integration are additive. CE2 runtime inference, persistence integration, current-scan consumer adoption, UI confirmation, AI/voice integration, and scoring experiments remain unopened.
+
+Continuity compliance record: Chat impact is none at runtime. CE1 introduces types but does not modify binding, authentication, persistence, transport, current-scan selection, prompt construction, Worker payloads, response validation, handoffs, or live health. Supported-version contracts and Worker behavior remain unchanged; Worker suite, live-health checks, and device chat acceptance are NOT APPLICABLE to this inactive layer. Dependency ownership remains the iOS Context Engine contract layer; lifecycle and rollback are compile-time source boundaries. No new active dependency or single point of failure was introduced.
+
+Rollback evidence: CE1 is isolated in implementation commit `369c464737386e6ae21801d217de15b8cd8c997d`. A future rollback may revert that commit before CE2 consumer adoption without migrating or rewriting user data. No amend, rebase, reset, merge, or history rewriting occurred.
+
+Exceptions and expiration: None for CE1. Physical evidence is explicitly NOT APPLICABLE only because no runtime path consumes CE1. This exception does not extend to CE2 or any later runtime, persistence, AI, UI, voice, scoring, or device checkpoint.
+
+Open follow-up: CE1 is formally accepted. Overall release readiness remains BLOCKED. Q2/CE2 planning and implementation remain unopened and require separate authorization. No physical Context Engine behavior, release candidate, Shopping refinement, deployment, TestFlight, or App Store action is accepted by this record.
