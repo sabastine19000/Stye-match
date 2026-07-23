@@ -4434,11 +4434,13 @@ struct ScanView: View {
                             .font(.caption)
                             .foregroundStyle(scanMuted)
 
-                        Text(scan.styleContextText)
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(scanCream.opacity(0.9))
-                            .lineLimit(1)
+                        if let contextText = scan.compactHistoryContextText {
+                            Text(contextText)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(scanCream.opacity(0.9))
+                                .lineLimit(1)
+                        }
 
                         if let occasionText = scan.occasionText {
                             Label(occasionText, systemImage: "calendar")
@@ -9106,7 +9108,15 @@ private struct RecentOutfitScore: Identifiable {
     }
 
     var occasionText: String? {
-        occasion?.displayName
+        effectiveOccasion?.occasion.displayName
+    }
+
+    var compactHistoryContextText: String? {
+        RecentHistoryEffectiveOccasionResolver.compactDescriptor(
+            legacyDescriptor: styleContextText,
+            detectedStyle: analysis.styleBalance,
+            effectiveOccasion: effectiveOccasion
+        )
     }
 
     var styleContextText: String {
@@ -9163,6 +9173,13 @@ private struct RecentOutfitScore: Identifiable {
         }
 
         return "Category Uncertain"
+    }
+
+    private var effectiveOccasion: RecentHistoryEffectiveOccasion? {
+        RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: nil,
+            legacyCanonicalOccasion: occasion
+        )
     }
 
     func matchesAny(_ terms: [String]) -> Bool {

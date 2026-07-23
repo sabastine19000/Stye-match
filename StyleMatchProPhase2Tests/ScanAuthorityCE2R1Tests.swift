@@ -1878,6 +1878,234 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         }
     }
 
+    func testCE2R1C101LegacyWorkBeatsConflictingDateNightProse() {
+        let original = analysis(score: 80, occasionFit: "Date Night")
+        let originalOccasionFit = original.occasionFit
+        let originalScore = original.score
+        let originalTitle = "Custom Work Attire"
+        let projection = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: nil,
+            legacyCanonicalOccasion: .work
+        )
+        assertEqual(projection?.occasion, .work)
+        assertEqual(
+            RecentHistoryEffectiveOccasionResolver.compactDescriptor(
+                legacyDescriptor: "Date Night",
+                detectedStyle: "Casual",
+                effectiveOccasion: projection
+            ),
+            "Casual"
+        )
+        assertEqual(original.occasionFit, originalOccasionFit)
+        assertEqual(original.score, originalScore)
+        assertEqual(originalTitle, "Custom Work Attire")
+    }
+
+    func testCE2R1C102AcceptedAuthorityBeatsLegacyOccasion() async throws {
+        let before = context(workplace: workplace(
+            proposed: .factoryManufacturing,
+            confirmed: .office,
+            disposition: .corrected,
+            correctedAt: date
+        ))
+        let after = context(workplace: workplace(
+            proposed: .factoryManufacturing,
+            disposition: .inferred,
+            correctedAt: date.addingTimeInterval(60)
+        ))
+        let reversedIdentity = try workplaceReversalResult(
+            before: before,
+            after: after
+        ).get()
+        let authority = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(
+                analysisOverride: analysis(occasionFit: "Date Night"),
+                metadata: metadata(
+                    generation: reversedIdentity.generation,
+                    context: after,
+                    analysis: analysis(occasionFit: "Date Night")
+                ),
+                context: after
+            )]
+        )
+        let projection = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: authority,
+            legacyCanonicalOccasion: .dateNight
+        )
+        assertEqual(projection?.occasion, .work)
+        assertEqual(projection?.source, .ce2r1(authority.identity))
+        assertEqual(authority.identity, reversedIdentity)
+        assertEqual(authority.scanBoundContext.workplace.disposition, .inferred)
+    }
+
+    func testCE2R1C103RepeatedResolutionIsIdempotent() async throws {
+        let authority = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record()]
+        )
+        let first = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: authority,
+            legacyCanonicalOccasion: .dateNight
+        )
+        let second = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: authority,
+            legacyCanonicalOccasion: .dateNight
+        )
+        assertEqual(first, second)
+    }
+
+    func testCE2R1C104InvalidAuthorityDoesNotFallbackToWork() {
+        let rejectedWorkplace = workplace(
+            proposed: .factoryManufacturing,
+            rejected: [.factoryManufacturing],
+            disposition: .rejected,
+            correctedAt: date
+        )
+        let invalid = ScanAuthority(
+            identity: identity(
+                "a",
+                generation: .legacy,
+                fingerprint: "invalid"
+            ),
+            analysis: analysis(),
+            completedAt: date,
+            completionOrdinal: 1,
+            selectedOccasion: .work,
+            state: .quarantined,
+            reason: .latestValidCompleted,
+            legacyState: .versioned,
+            imageReferenceState: .absent,
+            scanBoundContext: context(workplace: rejectedWorkplace),
+            invalidationEpoch: .init(value: 0)
+        )
+        XCTAssertNil(
+            RecentHistoryEffectiveOccasionResolver.resolve(
+                authority: invalid,
+                legacyCanonicalOccasion: .work
+            )
+        )
+        assertEqual(
+            invalid.scanBoundContext.workplace.rejected,
+            [.factoryManufacturing]
+        )
+        XCTAssertNil(invalid.scanBoundContext.workplace.confirmed)
+    }
+
+    func testCE2R1C105LegacyRecordWithoutCanonicalOccasionDoesNotInferDateNight() {
+        let projection = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: nil,
+            legacyCanonicalOccasion: nil
+        )
+        XCTAssertNil(projection)
+        assertEqual(
+            RecentHistoryEffectiveOccasionResolver.compactDescriptor(
+                legacyDescriptor: "Date Night",
+                detectedStyle: "Casual",
+                effectiveOccasion: projection
+            ),
+            "Casual"
+        )
+    }
+
+    func testCE2R1C106DetectedStyleRemainsSeparateFromEffectiveOccasion() async throws {
+        let authority = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record()]
+        )
+        let projection = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: authority,
+            legacyCanonicalOccasion: nil
+        )
+        assertEqual(authority.analysis.styleBalance, "Casual")
+        assertEqual(projection?.occasion, .work)
+        assertEqual(
+            RecentHistoryEffectiveOccasionResolver.compactDescriptor(
+                legacyDescriptor: "Date Night",
+                detectedStyle: authority.analysis.styleBalance,
+                effectiveOccasion: projection
+            ),
+            "Casual"
+        )
+    }
+
+    func testCE2R1C107ProjectionDoesNotMutateUnrelatedScanFields() async throws {
+        let authority = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(score: 80)]
+        )
+        let beforeScore = authority.analysis.score
+        let beforeStyle = authority.analysis.styleBalance
+        let beforeSummary = authority.analysis.summary
+        _ = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: authority,
+            legacyCanonicalOccasion: .dateNight
+        )
+        assertEqual(authority.analysis.score, beforeScore)
+        assertEqual(authority.analysis.styleBalance, beforeStyle)
+        assertEqual(authority.analysis.summary, beforeSummary)
+        assertEqual(beforeScore, 80)
+        assertEqual(authority.identity.localID.rawValue, "a")
+    }
+
+    func testCE2R1C108VersionedWorkProjectionSurvivesRecordRoundTrip() async throws {
+        let originalAnalysis = analysis(occasionFit: "Date Night")
+        let original = record(
+            analysisOverride: originalAnalysis,
+            metadata: metadata(analysis: originalAnalysis),
+            context: .legacyDefault
+        )
+        let encoded = try data(["a": original])
+        let source = FakeSource(data: encoded)
+        let authority = try await authority(
+            repository: ScanAuthorityRepository(source: source)
+        )
+        let projection = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: authority,
+            legacyCanonicalOccasion: .dateNight
+        )
+        assertEqual(projection?.occasion, .work)
+        assertEqual(projection?.source, .ce2r1(authority.identity))
+        assertEqual(authority.analysis.occasionFit, "Date Night")
+        assertEqual(authority.analysis.score, originalAnalysis.score)
+    }
+
+    func testCE2R1C109MatchingLegacyDescriptorHasNoPresentationRegression() {
+        let projection = RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: nil,
+            legacyCanonicalOccasion: .dateNight
+        )
+        assertEqual(
+            RecentHistoryEffectiveOccasionResolver.compactDescriptor(
+                legacyDescriptor: "Date Night",
+                detectedStyle: "Casual",
+                effectiveOccasion: projection
+            ),
+            "Date Night"
+        )
+        assertEqual(projection?.occasion, .dateNight)
+    }
+
+    func testCE2R1C110ResolverHasNoConsumerOrPersistenceSideEffects() throws {
+        let sourceValue = try source("ScanAuthorityContracts.swift")
+        let start = try XCTUnwrap(
+            sourceValue.range(of: "enum RecentHistoryEffectiveOccasionResolver")
+        )
+        let end = try XCTUnwrap(
+            sourceValue.range(
+                of: "\nenum ScanAuthorityError",
+                range: start.lowerBound..<sourceValue.endIndex
+            )
+        )
+        let resolver = String(sourceValue[start.lowerBound..<end.lowerBound])
+        for forbidden in [
+            "UserDefaults", "saveScanHistory", "URLRequest", "StylistChat",
+            "Shopping", "Voice", "score ="
+        ] {
+            XCTAssertFalse(resolver.contains(forbidden), forbidden)
+        }
+    }
+
     func testCE2R1R2Schema01MetadataNegativeAndZeroFailClosed() async {
         for version in [-1, 0] {
             assertEqual(
@@ -2098,6 +2326,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         analysisOverride: OutfitAnalysisResult? = nil,
         at: Date? = nil,
         includeTimestamp: Bool = true,
+        occasion: Occasion? = .work,
         lifecycle: StoredScanLifecycle? = nil,
         metadata: StoredScanAuthorityMetadata? = nil,
         thumbnail: Data? = nil,
@@ -2107,7 +2336,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
             score: score,
             analysis: includeAnalysis ? (analysisOverride ?? self.analysis()) : nil,
             firstScannedAt: includeTimestamp ? (at ?? date) : nil,
-            occasion: .work,
+            occasion: occasion,
             thumbnailData: thumbnail,
             lifecycle: lifecycle,
             authorityMetadata: metadata,
@@ -2120,6 +2349,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         evidence kinds: [OutfitClassificationEvidence.Kind] = [.silhouette],
         style: String = "Casual",
         summary: String = "Completed",
+        occasionFit: String = "Work",
         confidence: Double = 0.9
     ) -> OutfitAnalysisResult {
         let classification = OutfitClassificationResult(
@@ -2151,7 +2381,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
                 accessoryUse: 6
             ),
             colorMatch: "Coordinated",
-            occasionFit: "Work",
+            occasionFit: occasionFit,
             styleBalance: style,
             colorHarmony: "Strong",
             styleCoordination: "Strong",

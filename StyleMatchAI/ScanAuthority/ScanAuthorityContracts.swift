@@ -190,6 +190,66 @@ struct ScanAuthority: @unchecked Sendable {
     let invalidationEpoch: ScanInvalidationEpoch
 }
 
+enum RecentHistoryOccasionAuthoritySource: Equatable, Sendable {
+    case ce2r1(ScanSnapshotIdentity)
+    case legacyCanonical
+}
+
+struct RecentHistoryEffectiveOccasion: Equatable, @unchecked Sendable {
+    let occasion: Occasion
+    let source: RecentHistoryOccasionAuthoritySource
+}
+
+enum RecentHistoryEffectiveOccasionResolver {
+    static func resolve(
+        authority: ScanAuthority?,
+        legacyCanonicalOccasion: Occasion?
+    ) -> RecentHistoryEffectiveOccasion? {
+        if let authority {
+            guard authority.state == .completed,
+                  let occasion = authority.selectedOccasion?.canonical else {
+                return nil
+            }
+            return RecentHistoryEffectiveOccasion(
+                occasion: occasion,
+                source: .ce2r1(authority.identity)
+            )
+        }
+
+        guard let occasion = legacyCanonicalOccasion?.canonical else {
+            return nil
+        }
+        return RecentHistoryEffectiveOccasion(
+            occasion: occasion,
+            source: .legacyCanonical
+        )
+    }
+
+    static func compactDescriptor(
+        legacyDescriptor: String,
+        detectedStyle: String,
+        effectiveOccasion: RecentHistoryEffectiveOccasion?
+    ) -> String? {
+        let descriptor = normalized(legacyDescriptor)
+        guard !descriptor.isEmpty else { return nil }
+
+        guard let descriptorOccasion = Occasion(label: descriptor)?.canonical else {
+            return descriptor
+        }
+
+        if descriptorOccasion == effectiveOccasion?.occasion {
+            return descriptor
+        }
+
+        let style = normalized(detectedStyle)
+        return style.isEmpty ? nil : style
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 enum ScanAuthorityError: Error, Equatable, Sendable {
     case noAuthoritativeScan
     case scanNotFound
