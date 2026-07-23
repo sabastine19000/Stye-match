@@ -15,6 +15,71 @@ struct ContextInferenceEvidenceAtom: Equatable {
     let confidence: Double
 }
 
+struct CanonicalClassificationEvidence: Equatable {
+    let evidence: [ContextInferenceEvidenceAtom]
+    let hasAccessoryEvidence: Bool
+}
+
+enum ContextInferenceEvidenceCanonicalizer {
+    static let confidenceScale = 1_000_000.0
+
+    static func canonicalize(
+        _ evidence: [OutfitClassificationEvidence]
+    ) -> CanonicalClassificationEvidence? {
+        var confidenceByKind: [ContextEvidenceKind: Int] = [:]
+        var hasAccessoryEvidence = false
+        for item in evidence {
+            guard let confidence = normalizedConfidence(item.confidence) else {
+                return nil
+            }
+            if item.kind == .accessory {
+                hasAccessoryEvidence = true
+            }
+            let kind = contextKind(item.kind)
+            confidenceByKind[kind] = max(
+                confidenceByKind[kind] ?? 0,
+                confidence
+            )
+        }
+        let canonicalEvidence = confidenceByKind.keys
+            .sorted { $0.rawValue < $1.rawValue }
+            .map {
+                ContextInferenceEvidenceAtom(
+                    kind: $0,
+                    confidence: Double(confidenceByKind[$0] ?? 0) / confidenceScale
+                )
+            }
+        return CanonicalClassificationEvidence(
+            evidence: canonicalEvidence,
+            hasAccessoryEvidence: hasAccessoryEvidence
+        )
+    }
+
+    static func normalizedConfidence(_ value: Double) -> Int? {
+        guard value.isFinite else { return nil }
+        return Int((min(1, max(0, value)) * confidenceScale).rounded())
+    }
+
+    private static func contextKind(
+        _ kind: OutfitClassificationEvidence.Kind
+    ) -> ContextEvidenceKind {
+        switch kind {
+        case .silhouette, .accessory:
+            return .garmentSilhouette
+        case .construction:
+            return .garmentConstruction
+        case .visibleText:
+            return .textPresence
+        case .branding:
+            return .brandingPresence
+        case .occasion:
+            return .selectedOccasion
+        case .uncertainty:
+            return .uncertainty
+        }
+    }
+}
+
 struct ContextInferenceInput: Equatable {
     let scanID: String
     let recordRevision: UInt64
@@ -52,6 +117,17 @@ struct ContextInferenceInput: Equatable {
         rejectedPurposeIDs: Set<OutfitPurpose> = []
     ) {
         let classification = analysis.outfitClassification
+        let canonicalEvidence = ContextInferenceEvidenceCanonicalizer
+            .canonicalize(classification.evidence)
+            ?? CanonicalClassificationEvidence(
+                evidence: [
+                    ContextInferenceEvidenceAtom(
+                        kind: .uncertainty,
+                        confidence: 0
+                    )
+                ],
+                hasAccessoryEvidence: false
+            )
         let resolvedOccasion = selectedOccasion
             ?? Occasion(label: classification.selectedOccasion)
         self.scanID = scanID
@@ -78,10 +154,8 @@ struct ContextInferenceInput: Equatable {
         self.legacyOccasionCompatibility = classification.occasionCompatibility
         self.environmentLabel = analysis.environment
         self.weather = weather ?? .unknown
-        self.evidence = Self.privacySafeEvidence(from: classification.evidence)
-        self.hasAccessoryEvidence = classification.evidence.contains {
-            $0.kind == .accessory
-        }
+        self.evidence = canonicalEvidence.evidence
+        self.hasAccessoryEvidence = canonicalEvidence.hasAccessoryEvidence
         self.confirmedPurpose = confirmedPurpose
         self.confirmedWorkplaceProfile = confirmedWorkplaceProfile
         self.rejectedPurposeIDs = rejectedPurposeIDs
@@ -107,31 +181,4 @@ struct ContextInferenceInput: Equatable {
         }
     }
 
-    private static func privacySafeEvidence(
-        from evidence: [OutfitClassificationEvidence]
-    ) -> [ContextInferenceEvidenceAtom] {
-        evidence.map { item in
-            let kind: ContextEvidenceKind
-            switch item.kind {
-            case .silhouette:
-                kind = .garmentSilhouette
-            case .construction:
-                kind = .garmentConstruction
-            case .visibleText:
-                kind = .textPresence
-            case .branding:
-                kind = .brandingPresence
-            case .occasion:
-                kind = .selectedOccasion
-            case .accessory:
-                kind = .garmentSilhouette
-            case .uncertainty:
-                kind = .uncertainty
-            }
-            return ContextInferenceEvidenceAtom(
-                kind: kind,
-                confidence: item.confidence
-            )
-        }
-    }
 }

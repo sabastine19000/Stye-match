@@ -72,8 +72,8 @@ struct ScanMutationRequest: @unchecked Sendable {
 }
 
 enum ScanGenerationPolicy {
-    private static let fingerprintSchemaVersion = 2
-    private static let confidenceScale = 1_000_000.0
+    static let minimumSupportedFingerprintSchemaVersion = 3
+    static let currentFingerprintSchemaVersion = 3
 
     static func resolvedGeneration(
         recordID: LocalScanRecordID,
@@ -101,11 +101,19 @@ enum ScanGenerationPolicy {
             scanBoundContext: context,
             completionOrdinal: metadata?.completionOrdinal
         )
-        let fingerprint = contextFingerprint(input)
+        let fingerprint: String
+        switch contextFingerprint(input) {
+        case .success(let value):
+            fingerprint = value
+        case .failure(let error):
+            return .failure(error)
+        }
         guard let metadata else {
             return .success((generation, fingerprint, .transientLegacyGeneration))
         }
-        guard metadata.schemaVersion <= StoredScanAuthorityMetadata.currentSchemaVersion else {
+        guard StoredScanAuthorityMetadata.supports(
+            schemaVersion: metadata.schemaVersion
+        ) else {
             return .failure(.unsupportedSchema)
         }
         guard metadata.generation.isValid,
@@ -124,25 +132,57 @@ enum ScanGenerationPolicy {
                 return .failure(.generationMismatch)
             }
             let initial = request.after.replacingGeneration(.legacy)
+            let fingerprint: String
+            switch contextFingerprint(initial) {
+            case .success(let value):
+                fingerprint = value
+            case .failure(let error):
+                return .failure(error)
+            }
             return .success(ScanSnapshotIdentity(
                 localID: initial.recordID,
                 generation: .legacy,
-                contextFingerprint: contextFingerprint(initial)
+                contextFingerprint: fingerprint
             ))
+        }
+        let beforeFingerprint: String
+        switch contextFingerprint(request.before) {
+        case .success(let value):
+            beforeFingerprint = value
+        case .failure(let error):
+            return .failure(error)
         }
         guard current == request.expectedIdentity,
               request.before.recordID == current.localID,
               request.after.recordID == current.localID,
               request.before.generation == current.generation,
               request.after.generation == current.generation,
-              contextFingerprint(request.before) == current.contextFingerprint else {
+              beforeFingerprint == current.contextFingerprint else {
             return .failure(.generationMismatch)
         }
 
-        let beforeContext = canonicalContextData(request.before)
-        let afterContext = canonicalContextData(request.after)
+        let beforeContext: Data
+        switch canonicalContextData(request.before) {
+        case .success(let value):
+            beforeContext = value
+        case .failure(let error):
+            return .failure(error)
+        }
+        let afterContext: Data
+        switch canonicalContextData(request.after) {
+        case .success(let value):
+            afterContext = value
+        case .failure(let error):
+            return .failure(error)
+        }
         let contextChanged = beforeContext != afterContext
 
+        // Correction timestamps are audit metadata, not context authority.
+        // A repeated correction with identical normalized meaning preserves the
+        // first published identity even if an audit layer records a later event.
+        if !contextChanged, case .correction = request.mutation {
+            return .success(current)
+        }
         if !contextChanged, !request.storedRecordChanged {
             return .success(current)
         }
@@ -166,16 +206,36 @@ enum ScanGenerationPolicy {
             return .failure(.generationOverflow)
         }
         let nextInput = request.after.replacingGeneration(nextGeneration)
+        let nextFingerprint: String
+        switch contextFingerprint(nextInput) {
+        case .success(let value):
+            nextFingerprint = value
+        case .failure(let error):
+            return .failure(error)
+        }
         return .success(ScanSnapshotIdentity(
             localID: current.localID,
             generation: nextGeneration,
-            contextFingerprint: contextFingerprint(nextInput)
+            contextFingerprint: nextFingerprint
         ))
     }
 
-    static func contextFingerprint(_ input: ScanFingerprintInput) -> String {
+    static func contextFingerprint(
+        _ input: ScanFingerprintInput,
+        schemaVersion: Int = currentFingerprintSchemaVersion
+    ) -> Result<String, ScanAuthorityError> {
+        guard supportsFingerprintSchemaVersion(schemaVersion) else {
+            return .failure(.unsupportedSchema)
+        }
+        let context: CanonicalContextMaterial
+        switch canonicalContext(input) {
+        case .success(let value):
+            context = value
+        case .failure(let error):
+            return .failure(error)
+        }
         let material = FingerprintMaterial(
-            schemaVersion: fingerprintSchemaVersion,
+            schemaVersion: schemaVersion,
             localIdentityDigest: digest(
                 Data(("local-scan:" + input.recordID.rawValue).utf8)
             ),
@@ -183,13 +243,30 @@ enum ScanGenerationPolicy {
             contextRevision: input.generation.contextRevision,
             completionMilliseconds: epochMilliseconds(input.completedAt),
             completionOrdinal: input.completionOrdinal,
-            context: canonicalContext(input)
+            context: context
         )
-        return digest(encode(material))
+        switch encode(material) {
+        case .success(let data):
+            return .success(digest(data))
+        case .failure(let error):
+            return .failure(error)
+        }
     }
 
-    static func canonicalContextData(_ input: ScanFingerprintInput) -> Data {
-        encode(canonicalContext(input))
+    static func canonicalContextData(
+        _ input: ScanFingerprintInput
+    ) -> Result<Data, ScanAuthorityError> {
+        switch canonicalContext(input) {
+        case .success(let context):
+            return encode(context)
+        case .failure(let error):
+            return .failure(error)
+        }
+    }
+
+    static func supportsFingerprintSchemaVersion(_ schemaVersion: Int) -> Bool {
+        (minimumSupportedFingerprintSchemaVersion...currentFingerprintSchemaVersion)
+            .contains(schemaVersion)
     }
 
     private static func increment(
@@ -305,8 +382,18 @@ enum ScanGenerationPolicy {
 
     private static func canonicalContext(
         _ input: ScanFingerprintInput
-    ) -> CanonicalContextMaterial {
-        CanonicalContextMaterial(
+    ) -> Result<CanonicalContextMaterial, ScanAuthorityError> {
+        guard (0...100).contains(input.analysis.score) else {
+            return .failure(.invalidAnalysisScore)
+        }
+        guard input.analysis.outfitClassification.confidence.isFinite,
+              let classification = FingerprintClassification(
+                input.analysis.outfitClassification
+              ),
+              let weather = WeatherMaterial(input.scanBoundContext.weather) else {
+            return .failure(.scanCorrupt)
+        }
+        return .success(CanonicalContextMaterial(
             inputSchemaVersion: input.scanBoundContext.inputSchemaVersion,
             score: input.analysis.score,
             scoreBreakdown: input.analysis.scoreBreakdown.map {
@@ -320,22 +407,26 @@ enum ScanGenerationPolicy {
             },
             detectedStyle: normalized(input.analysis.styleBalance),
             environment: normalized(input.analysis.environment),
-            outfitClassification: FingerprintClassification(
-                input.analysis.outfitClassification
-            ),
+            outfitClassification: classification,
             selectedOccasion: input.selectedOccasion?.rawValue,
             purpose: PurposeMaterial(input.scanBoundContext.purpose),
             workplace: WorkplaceMaterial(input.scanBoundContext.workplace),
             categoryDisposition: input.scanBoundContext.categoryDisposition.rawValue,
             occasionDisposition: input.scanBoundContext.occasionDisposition.rawValue,
-            weather: WeatherMaterial(input.scanBoundContext.weather)
-        )
+            weather: weather
+        ))
     }
 
-    private static func encode<T: Encodable>(_ value: T) -> Data {
+    private static func encode<T: Encodable>(
+        _ value: T
+    ) -> Result<Data, ScanAuthorityError> {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return (try? encoder.encode(value)) ?? Data()
+        do {
+            return .success(try encoder.encode(value))
+        } catch {
+            return .failure(.scanCorrupt)
+        }
     }
 
     private static func digest(_ data: Data) -> String {
@@ -350,10 +441,6 @@ enum ScanGenerationPolicy {
             .joined(separator: " ")
             .lowercased()
         return collapsed.isEmpty ? nil : collapsed
-    }
-
-    private static func normalizedConfidence(_ value: Double) -> Int {
-        Int((min(1, max(0, value)) * confidenceScale).rounded())
     }
 
     private static func epochMilliseconds(_ value: Date?) -> Int64? {
@@ -398,14 +485,12 @@ enum ScanGenerationPolicy {
         let confirmed: String?
         let rejected: [String]
         let disposition: String
-        let correctedAtMilliseconds: Int64?
 
         init(_ value: ScanPurposeAuthority) {
             proposed = value.proposed?.rawValue
             confirmed = value.confirmed?.rawValue
             rejected = value.rejected.map(\.rawValue).sorted()
             disposition = value.disposition.rawValue
-            correctedAtMilliseconds = epochMilliseconds(value.correctedAt)
         }
     }
 
@@ -414,14 +499,12 @@ enum ScanGenerationPolicy {
         let confirmed: String?
         let rejected: [String]
         let disposition: String
-        let correctedAtMilliseconds: Int64?
 
         init(_ value: ScanWorkplaceAuthority) {
             proposed = value.proposed?.rawValue
             confirmed = value.confirmed?.rawValue
             rejected = value.rejected.map(\.rawValue).sorted()
             disposition = value.disposition.rawValue
-            correctedAtMilliseconds = epochMilliseconds(value.correctedAt)
         }
     }
 
@@ -437,7 +520,11 @@ enum ScanGenerationPolicy {
         let confidence: Int
         let confidenceLevel: String
 
-        init(_ value: WeatherContextReference) {
+        init?(_ value: WeatherContextReference) {
+            guard let confidenceUnits = ContextInferenceEvidenceCanonicalizer
+                .normalizedConfidence(value.confidence.value) else {
+                return nil
+            }
             observedAtMilliseconds = epochMilliseconds(value.observedAt)
             airTemperature = value.airTemperature
             feelsLikeTemperature = value.feelsLikeTemperature
@@ -446,7 +533,7 @@ enum ScanGenerationPolicy {
             windMph = value.windMph
             uvIndex = value.uvIndex
             condition = normalized(value.condition)
-            confidence = normalizedConfidence(value.confidence.value)
+            confidence = confidenceUnits
             confidenceLevel = value.confidence.level.rawValue
         }
     }
@@ -457,28 +544,34 @@ enum ScanGenerationPolicy {
         let confidence: Int
         let confidenceLevel: String
         let evidence: [FingerprintEvidence]
+        let hasAccessoryEvidence: Bool
         let selectedOccasion: String?
         let occasionCompatibility: String
         let userConfirmedCategory: String?
         let scoringProfile: String
 
-        init(_ value: OutfitClassificationResult) {
+        init?(_ value: OutfitClassificationResult) {
+            guard let confidenceUnits = ContextInferenceEvidenceCanonicalizer
+                    .normalizedConfidence(value.confidence),
+                  let canonicalEvidence = ContextInferenceEvidenceCanonicalizer
+                    .canonicalize(value.evidence) else {
+                return nil
+            }
             primaryCategory = value.primaryCategory.rawValue
             secondaryCategories = value.secondaryCategories
                 .map(\.rawValue)
                 .sorted()
-            confidence = normalizedConfidence(value.confidence)
+            confidence = confidenceUnits
             confidenceLevel = value.confidenceLevel.rawValue
-            evidence = value.evidence
+            evidence = canonicalEvidence.evidence
                 .map {
                     FingerprintEvidence(
                         kind: $0.kind.rawValue,
-                        confidence: normalizedConfidence($0.confidence)
+                        confidence: ContextInferenceEvidenceCanonicalizer
+                            .normalizedConfidence($0.confidence) ?? 0
                     )
                 }
-                .sorted {
-                    ($0.kind, $0.confidence) < ($1.kind, $1.confidence)
-                }
+            hasAccessoryEvidence = canonicalEvidence.hasAccessoryEvidence
             selectedOccasion = normalized(value.selectedOccasion)
             occasionCompatibility = value.occasionCompatibility.rawValue
             userConfirmedCategory = value.userConfirmedCategory?.rawValue

@@ -199,6 +199,10 @@ enum ScanAuthorityError: Error, Equatable, Sendable {
     case scanQuarantined
     case scanPartial
     case scanCorrupt
+    case missingStoredScore
+    case invalidStoredScore
+    case invalidAnalysisScore
+    case scoreMismatch
     case unsupportedSchema
     case ambiguousLatest
     case generationMismatch

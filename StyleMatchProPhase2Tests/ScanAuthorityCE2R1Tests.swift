@@ -364,7 +364,13 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
     }
 
     func testCE2R151ScoreAnalysisMismatchFails() async throws {
-        assertEqual(await failure(.latestValidCompleted, records: ["a": record(score: 74)]), .scanCorrupt)
+        assertEqual(
+            await failure(
+                .latestValidCompleted,
+                records: ["a": record(score: 74)]
+            ),
+            .scoreMismatch
+        )
     }
 
     func testCE2R152FutureSchemaFailsClosed() async throws {
@@ -616,7 +622,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = identity(
             "a",
             generation: generation,
-            fingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            fingerprint: resolvedFingerprint(before)
         )
         let request = mutationRequest(
             current: current,
@@ -643,7 +649,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = identity(
             "a",
             generation: generation,
-            fingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            fingerprint: resolvedFingerprint(before)
         )
         let request = mutationRequest(
             current: current,
@@ -788,7 +794,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = identity(
             "a",
             generation: before.generation,
-            fingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            fingerprint: resolvedFingerprint(before)
         )
         let stale = identity(
             "a",
@@ -1024,7 +1030,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = identity(
             "a",
             generation: before.generation,
-            fingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            fingerprint: resolvedFingerprint(before)
         )
         let request = mutationRequest(
             current: current,
@@ -1052,7 +1058,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = identity(
             "a",
             generation: before.generation,
-            fingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            fingerprint: resolvedFingerprint(before)
         )
         let request = mutationRequest(
             current: current,
@@ -1122,7 +1128,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = identity(
             "a",
             generation: before.generation,
-            fingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            fingerprint: resolvedFingerprint(before)
         )
         let after = fingerprintInput(
             context: context(
@@ -1141,6 +1147,517 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
                 ScanGenerationPolicy.apply(current: current, request: request)
             ),
             .generationMismatch
+        )
+    }
+
+    func testCE2R1R2Score01MissingStoredScorePublishesNoAuthority() async {
+        assertEqual(
+            await failure(records: ["a": record(score: nil)]),
+            .missingStoredScore
+        )
+    }
+
+    func testCE2R1R2Score02MissingAnalysisPublishesNoAuthority() async {
+        assertEqual(
+            await failure(
+                .explicitHistorical(id: id("a"), expected: nil),
+                records: ["a": record(includeAnalysis: false)]
+            ),
+            .scanPartial
+        )
+    }
+
+    func testCE2R1R2Score03StoredScoreBelowZeroFailsClosed() async {
+        assertEqual(
+            await failure(records: ["a": record(score: -1)]),
+            .invalidStoredScore
+        )
+    }
+
+    func testCE2R1R2Score04AnalysisScoreBelowZeroFailsClosed() async {
+        assertEqual(
+            await failure(records: [
+                "a": record(score: 0, analysisOverride: analysis(score: -1))
+            ]),
+            .invalidAnalysisScore
+        )
+    }
+
+    func testCE2R1R2Score05StoredScoreAboveOneHundredFailsClosed() async {
+        assertEqual(
+            await failure(records: ["a": record(score: 101)]),
+            .invalidStoredScore
+        )
+    }
+
+    func testCE2R1R2Score06AnalysisScoreAboveOneHundredFailsClosed() async {
+        assertEqual(
+            await failure(records: [
+                "a": record(score: 100, analysisOverride: analysis(score: 101))
+            ]),
+            .invalidAnalysisScore
+        )
+    }
+
+    func testCE2R1R2Score07MatchingScoresBelowZeroFailClosed() async {
+        assertEqual(
+            await failure(records: [
+                "a": record(score: -1, analysisOverride: analysis(score: -1))
+            ]),
+            .invalidStoredScore
+        )
+    }
+
+    func testCE2R1R2Score08MatchingScoresAboveOneHundredFailClosed() async {
+        assertEqual(
+            await failure(records: [
+                "a": record(score: 101, analysisOverride: analysis(score: 101))
+            ]),
+            .invalidStoredScore
+        )
+    }
+
+    func testCE2R1R2Score09ValidMismatchFailsClosed() async {
+        assertEqual(
+            await failure(records: [
+                "a": record(score: 74, analysisOverride: analysis(score: 80))
+            ]),
+            .scoreMismatch
+        )
+    }
+
+    func testCE2R1R2Score10ZeroBoundaryIsAuthoritative() async throws {
+        let value = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(score: 0, analysisOverride: analysis(score: 0))]
+        )
+        assertEqual(value.analysis.score, 0)
+    }
+
+    func testCE2R1R2Score11OneHundredBoundaryIsAuthoritative() async throws {
+        let value = try await resolve(
+            .latestValidCompleted,
+            records: [
+                "a": record(score: 100, analysisOverride: analysis(score: 100))
+            ]
+        )
+        assertEqual(value.analysis.score, 100)
+    }
+
+    func testCE2R1R2Score12InteriorScoreIsAuthoritative() async throws {
+        let value = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(score: 80)]
+        )
+        assertEqual(value.analysis.score, 80)
+    }
+
+    func testCE2R1R2Score13MalformedNumericScoreCannotDecodeAsAuthority() async throws {
+        let object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(
+                with: data(["a": record()])
+            ) as? [String: Any]
+        )
+        var root = object
+        var malformed = try XCTUnwrap(root["a"] as? [String: Any])
+        malformed["score"] = "eighty"
+        root["a"] = malformed
+        let source = FakeSource(
+            data: try JSONSerialization.data(withJSONObject: root)
+        )
+        assertEqual(
+            await failure(
+                .explicitHistorical(id: id("a"), expected: nil),
+                repository: ScanAuthorityRepository(source: source)
+            ),
+            .scanCorrupt
+        )
+    }
+
+    func testCE2R1R2Score14InvalidScoreNeverReachesCE2A() async {
+        let result = await ScanAuthorityRepository(
+            source: FakeSource(
+                data: try? data([
+                    "a": record(
+                        score: 101,
+                        analysisOverride: analysis(score: 101)
+                    )
+                ])
+            )
+        ).resolve(.latestValidCompleted)
+        if case .authority = result {
+            XCTFail("Invalid score published partial authority")
+        }
+        assertEqual(resultFailure(result), .invalidStoredScore)
+    }
+
+    func testCE2R1R2Correction01SamePurposeConfirmationIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .purposeConfirmation,
+            before: context(purpose: purpose(
+                confirmed: .office,
+                disposition: .confirmed,
+                correctedAt: date
+            )),
+            after: context(purpose: purpose(
+                confirmed: .office,
+                disposition: .confirmed,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Correction02SamePurposeCorrectionIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .purposeCorrection,
+            before: context(purpose: purpose(
+                confirmed: .office,
+                disposition: .corrected,
+                correctedAt: date
+            )),
+            after: context(purpose: purpose(
+                confirmed: .office,
+                disposition: .corrected,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Correction03SamePurposeRejectionIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .purposeRejection,
+            before: context(purpose: purpose(
+                proposed: .office,
+                rejected: [.office],
+                disposition: .rejected,
+                correctedAt: date
+            )),
+            after: context(purpose: purpose(
+                proposed: .office,
+                rejected: [.office],
+                disposition: .rejected,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Correction04SameWorkplaceConfirmationIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .workplaceConfirmation,
+            before: context(workplace: workplace(
+                confirmed: .office,
+                disposition: .confirmed,
+                correctedAt: date
+            )),
+            after: context(workplace: workplace(
+                confirmed: .office,
+                disposition: .confirmed,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Correction05SameWorkplaceCorrectionIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .workplaceCorrection,
+            before: context(workplace: workplace(
+                confirmed: .office,
+                disposition: .corrected,
+                correctedAt: date
+            )),
+            after: context(workplace: workplace(
+                confirmed: .office,
+                disposition: .corrected,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Correction06SameWorkplaceClearingIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .workplaceRejectionOrClearing,
+            before: context(workplace: workplace(
+                proposed: .office,
+                rejected: [.office],
+                disposition: .cleared,
+                correctedAt: date
+            )),
+            after: context(workplace: workplace(
+                proposed: .office,
+                rejected: [.office],
+                disposition: .cleared,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Correction07SameCategoryCorrectionIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .categoryCorrection,
+            before: context(categoryDisposition: .corrected),
+            after: context(categoryDisposition: .corrected)
+        )
+    }
+
+    func testCE2R1R2Correction08SameOccasionCorrectionIsIdempotent() {
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .occasionCorrection,
+            before: context(occasionDisposition: .corrected),
+            after: context(occasionDisposition: .corrected)
+        )
+    }
+
+    func testCE2R1R2Correction09NormalizedFormattingIsIdempotent() {
+        let corrected = context(
+            purpose: purpose(confirmed: .office, disposition: .corrected)
+        )
+        let value = mutate(
+            .correction(.purposeCorrection),
+            beforeContext: corrected,
+            afterContext: corrected,
+            beforeAnalysis: analysis(style: "  Casual  "),
+            afterAnalysis: analysis(style: "casual"),
+            storedRecordChanged: true
+        )
+        assertEqual(value.generation, generation())
+    }
+
+    func testCE2R1R2Correction10DifferentPurposeChangesAuthority() {
+        let before = context(
+            purpose: purpose(confirmed: .office, disposition: .corrected)
+        )
+        let after = context(
+            purpose: purpose(
+                confirmed: .factoryManufacturing,
+                disposition: .corrected
+            )
+        )
+        let value = mutate(
+            .correction(.purposeCorrection),
+            beforeContext: before,
+            afterContext: after
+        )
+        assertEqual(value.generation, generation(record: 3, context: 6))
+        XCTAssertNotEqual(
+            fingerprint(context: before),
+            fingerprint(context: after)
+        )
+    }
+
+    func testCE2R1R2Correction11DifferentWorkplaceChangesAuthority() {
+        let before = context(
+            workplace: workplace(confirmed: .office, disposition: .corrected)
+        )
+        let after = context(
+            workplace: workplace(
+                confirmed: .factoryManufacturing,
+                disposition: .corrected
+            )
+        )
+        let value = mutate(
+            .correction(.workplaceCorrection),
+            beforeContext: before,
+            afterContext: after
+        )
+        assertEqual(value.generation, generation(record: 3, context: 6))
+    }
+
+    func testCE2R1R2Correction12ReversalChangesThenRepeatsIdempotently() {
+        let corrected = context(
+            purpose: purpose(confirmed: .office, disposition: .corrected)
+        )
+        let reversed = context(
+            purpose: purpose(disposition: .inferred, correctedAt: date)
+        )
+        let changed = mutate(
+            .correction(.purposeReversal),
+            beforeContext: corrected,
+            afterContext: reversed
+        )
+        assertEqual(changed.generation, generation(record: 3, context: 6))
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .purposeReversal,
+            before: reversed,
+            after: context(purpose: purpose(
+                disposition: .inferred,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R2Schema01MetadataNegativeAndZeroFailClosed() async {
+        for version in [-1, 0] {
+            assertEqual(
+                await failure(records: [
+                    "a": record(metadata: StoredScanAuthorityMetadata(
+                        schemaVersion: version,
+                        generation: .legacy,
+                        contextFingerprint: fingerprint(),
+                        completionOrdinal: 1
+                    ))
+                ]),
+                .unsupportedSchema
+            )
+        }
+    }
+
+    func testCE2R1R2Schema02MetadataSupportedRangeIsClosed() async throws {
+        XCTAssertTrue(StoredScanAuthorityMetadata.supports(schemaVersion: 1))
+        XCTAssertFalse(StoredScanAuthorityMetadata.supports(schemaVersion: 0))
+        XCTAssertFalse(StoredScanAuthorityMetadata.supports(schemaVersion: 2))
+        _ = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(metadata: metadata())]
+        )
+    }
+
+    func testCE2R1R2Schema03FingerprintVersionsFailClosed() {
+        for version in [-1, 0, 2, 4] {
+            assertEqual(
+                fingerprintFailure(
+                    ScanGenerationPolicy.contextFingerprint(
+                        fingerprintInput(),
+                        schemaVersion: version
+                    )
+                ),
+                .unsupportedSchema
+            )
+        }
+        XCTAssertNotNil(
+            try? ScanGenerationPolicy.contextFingerprint(
+                fingerprintInput(),
+                schemaVersion: 3
+            ).get()
+        )
+    }
+
+    func testCE2R1R2Schema04MissingMetadataUsesDocumentedLegacyPolicy() async throws {
+        let authority = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(metadata: nil)]
+        )
+        assertEqual(authority.legacyState, .transientLegacyGeneration)
+    }
+
+    func testCE2R1R2Schema05MalformedSchemaNeverReachesCE2A() async {
+        let malformed = StoredScanAuthorityMetadata(
+            schemaVersion: 0,
+            generation: .legacy,
+            contextFingerprint: fingerprint(),
+            completionOrdinal: 1
+        )
+        let result = await ScanAuthorityRepository(
+            source: FakeSource(data: try? data([
+                "a": record(metadata: malformed)
+            ]))
+        ).resolve(.latestValidCompleted)
+        if case .authority = result {
+            XCTFail("Malformed schema published authority")
+        }
+        assertEqual(resultFailure(result), .unsupportedSchema)
+    }
+
+    func testCE2R1R2Evidence01RedundantDuplicatesDoNotChangeFingerprint() {
+        let single = analysis(evidenceItems: [
+            (.branding, 0.8, "one")
+        ])
+        let duplicateSets: [[
+            (OutfitClassificationEvidence.Kind, Double, String)
+        ]] = [
+            [(.branding, 0.8, "one"), (.branding, 0.4, "lower")],
+            [(.branding, 0.8, "one"), (.branding, 0.8, "same")],
+            [(.branding, 0.4, "lower"), (.branding, 0.8, "one")]
+        ]
+        for duplicates in duplicateSets {
+            assertEqual(
+                fingerprint(analysis: single),
+                fingerprint(analysis: analysis(evidenceItems: duplicates))
+            )
+        }
+    }
+
+    func testCE2R1R2Evidence02HigherSameKindChangesFingerprint() {
+        XCTAssertNotEqual(
+            fingerprint(analysis: analysis(evidenceItems: [
+                (.branding, 0.7, "brand")
+            ])),
+            fingerprint(analysis: analysis(evidenceItems: [
+                (.branding, 0.8, "brand")
+            ]))
+        )
+    }
+
+    func testCE2R1R2Evidence03DifferentKindChangesFingerprint() {
+        XCTAssertNotEqual(
+            fingerprint(analysis: analysis(evidenceItems: [
+                (.branding, 0.8, "brand")
+            ])),
+            fingerprint(analysis: analysis(evidenceItems: [
+                (.construction, 0.8, "construction")
+            ]))
+        )
+    }
+
+    func testCE2R1R2Evidence04EqualTieAndPrecisionAreDeterministic() {
+        let first = analysis(evidenceItems: [
+            (.branding, 0.8000000001, "first"),
+            (.branding, 0.8, "second")
+        ])
+        let second = analysis(evidenceItems: [
+            (.branding, 0.8, "second"),
+            (.branding, 0.8000000002, "first")
+        ])
+        assertEqual(fingerprint(analysis: first), fingerprint(analysis: second))
+    }
+
+    func testCE2R1R2Evidence05FingerprintAndCE2AUseSameCanonicalEvidence() {
+        let first = analysis(evidenceItems: [
+            (.silhouette, 0.7, "shape"),
+            (.accessory, 0.4, "accessory"),
+            (.branding, 0.8, "brand"),
+            (.branding, 0.3, "lower")
+        ])
+        let second = analysis(evidenceItems: [
+            (.branding, 0.8, "different private summary"),
+            (.accessory, 0.4, "accessory"),
+            (.silhouette, 0.7, "shape")
+        ])
+        let firstInput = contextInput(analysis: first)
+        let secondInput = contextInput(analysis: second)
+        assertEqual(firstInput.evidence, secondInput.evidence)
+        assertEqual(
+            firstInput.hasAccessoryEvidence,
+            secondInput.hasAccessoryEvidence
+        )
+        assertEqual(fingerprint(analysis: first), fingerprint(analysis: second))
+    }
+
+    func testCE2R1R2Evidence06AccessorySignalRemainsSemanticallyDistinct() {
+        let silhouette = analysis(evidenceItems: [
+            (.silhouette, 0.7, "shape")
+        ])
+        let accessory = analysis(evidenceItems: [
+            (.silhouette, 0.7, "shape"),
+            (.accessory, 0.4, "accessory")
+        ])
+        XCTAssertNotEqual(
+            fingerprint(analysis: silhouette),
+            fingerprint(analysis: accessory)
+        )
+        XCTAssertFalse(contextInput(analysis: silhouette).hasAccessoryEvidence)
+        XCTAssertTrue(contextInput(analysis: accessory).hasAccessoryEvidence)
+    }
+
+    func testCE2R1R2Evidence07CanonicalizationIsRepeatableAndPrivate() {
+        let value = analysis(evidenceItems: [
+            (.visibleText, 0.6, "PRIVATE NAME"),
+            (.branding, 0.7, "PRIVATE EMPLOYER")
+        ])
+        let fingerprints = (0..<10).map { _ in fingerprint(analysis: value) }
+        assertEqual(Set(fingerprints).count, 1)
+        XCTAssertFalse(
+            contextInput(analysis: value).evidence
+                .contains { $0.kind.rawValue.contains("PRIVATE") }
         )
     }
 
@@ -1259,6 +1776,72 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         )
     }
 
+    private func analysis(
+        score: Int = 80,
+        evidenceItems: [
+            (OutfitClassificationEvidence.Kind, Double, String)
+        ],
+        style: String = "Casual",
+        confidence: Double = 0.9
+    ) -> OutfitAnalysisResult {
+        let classification = OutfitClassificationResult(
+            primaryCategory: .workUniform,
+            secondaryCategories: [],
+            confidence: confidence,
+            confidenceLevel: .high,
+            evidence: evidenceItems.map {
+                OutfitClassificationEvidence(
+                    kind: $0.0,
+                    summary: $0.2,
+                    confidence: $0.1
+                )
+            },
+            detectedText: [],
+            detectedBranding: [],
+            selectedOccasion: Occasion.work.rawValue,
+            occasionCompatibility: .compatible,
+            userConfirmedCategory: nil,
+            scoringProfile: .uniformWorkwear
+        )
+        return OutfitAnalysisResult(
+            score: score,
+            scoreBreakdown: OutfitScoreBreakdown(
+                colorHarmony: 25,
+                patternBalance: 20,
+                fitQuality: 13,
+                occasionMatch: 6,
+                accessoryUse: 6
+            ),
+            colorMatch: "Coordinated",
+            occasionFit: "Work",
+            styleBalance: style,
+            colorHarmony: "Strong",
+            styleCoordination: "Strong",
+            formality: "Casual",
+            seasonalMatch: "Warm",
+            summary: "Completed",
+            outfitDescription: "Outfit",
+            detectedClothingItems: ["shirt", "pants"],
+            colorPalette: ["gray"],
+            environment: "Factory",
+            imageQuality: "Clear",
+            outfitClassification: classification,
+            suggestions: [],
+            recommendations: []
+        )
+    }
+
+    private func contextInput(
+        analysis: OutfitAnalysisResult
+    ) -> ContextInferenceInput {
+        ContextInferenceInput(
+            scanID: "a",
+            completedAt: date,
+            analysis: analysis,
+            selectedOccasion: .work
+        )
+    }
+
     private func fingerprint(
         id rawID: String = "a",
         generation: ScanGeneration = .legacy,
@@ -1267,7 +1850,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         score: Int = 80,
         ordinal: UInt64? = nil
     ) -> String {
-        ScanGenerationPolicy.contextFingerprint(
+        resolvedFingerprint(
             fingerprintInput(
                 id: rawID,
                 generation: generation,
@@ -1275,6 +1858,50 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
                 analysis: analysis ?? self.analysis(score: score),
                 ordinal: ordinal
             )
+        )
+    }
+
+    private func resolvedFingerprint(
+        _ input: ScanFingerprintInput,
+        schemaVersion: Int = ScanGenerationPolicy.currentFingerprintSchemaVersion
+    ) -> String {
+        try! ScanGenerationPolicy.contextFingerprint(
+            input,
+            schemaVersion: schemaVersion
+        ).get()
+    }
+
+    private func assertRepeatedCorrectionIsIdempotent(
+        mutation: ScanCorrectionMutation,
+        before: ScanBoundContext,
+        after: ScanBoundContext,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let beforeInput = fingerprintInput(context: before)
+        let current = identity(
+            "a",
+            generation: beforeInput.generation,
+            fingerprint: resolvedFingerprint(beforeInput)
+        )
+        let afterInput = fingerprintInput(context: after)
+        let request = mutationRequest(
+            current: current,
+            before: beforeInput,
+            after: afterInput,
+            storedRecordChanged: true,
+            mutation: .correction(mutation)
+        )
+        let result = try? ScanGenerationPolicy.apply(
+            current: current,
+            request: request
+        ).get()
+        XCTAssertEqual(result, current, file: file, line: line)
+        XCTAssertEqual(
+            resolvedFingerprint(beforeInput),
+            resolvedFingerprint(afterInput),
+            file: file,
+            line: line
         )
     }
 
@@ -1370,7 +1997,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let current = ScanSnapshotIdentity(
             localID: before.recordID,
             generation: generation,
-            contextFingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            contextFingerprint: resolvedFingerprint(before)
         )
         let after = fingerprintInput(
             generation: generation,
@@ -1402,7 +2029,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         let fallbackIdentity = current ?? ScanSnapshotIdentity(
             localID: before.recordID,
             generation: before.generation,
-            contextFingerprint: ScanGenerationPolicy.contextFingerprint(before)
+            contextFingerprint: resolvedFingerprint(before)
         )
         return ScanMutationRequest(
             expectedIdentity: expectedIdentity ?? fallbackIdentity,
@@ -1467,6 +2094,13 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
 
     private func resultFailure(
         _ result: Result<ScanSnapshotIdentity, ScanAuthorityError>
+    ) -> ScanAuthorityError? {
+        if case .failure(let error) = result { return error }
+        return nil
+    }
+
+    private func fingerprintFailure(
+        _ result: Result<String, ScanAuthorityError>
     ) -> ScanAuthorityError? {
         if case .failure(let error) = result { return error }
         return nil

@@ -10,7 +10,13 @@ enum StoredScanLifecycle: String, Codable, Sendable {
 }
 
 struct StoredScanAuthorityMetadata: Codable, Equatable, Sendable {
+    static let minimumSupportedSchemaVersion = 1
     static let currentSchemaVersion = 1
+
+    static func supports(schemaVersion: Int) -> Bool {
+        (minimumSupportedSchemaVersion...currentSchemaVersion)
+            .contains(schemaVersion)
+    }
 
     let schemaVersion: Int
     let generation: ScanGeneration

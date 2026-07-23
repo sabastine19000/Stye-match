@@ -79,9 +79,17 @@ actor ScanAuthorityRepository {
         guard let analysis = selected.0.record.analysis else {
             return .failure(.scanPartial)
         }
-        if let storedScore = selected.0.record.score,
-           storedScore != analysis.score {
-            return .failure(.scanCorrupt)
+        guard let storedScore = selected.0.record.score else {
+            return .failure(.missingStoredScore)
+        }
+        guard (0...100).contains(storedScore) else {
+            return .failure(.invalidStoredScore)
+        }
+        guard (0...100).contains(analysis.score) else {
+            return .failure(.invalidAnalysisScore)
+        }
+        guard storedScore == analysis.score else {
+            return .failure(.scoreMismatch)
         }
         let generation: ScanGeneration
         let fingerprint: String
