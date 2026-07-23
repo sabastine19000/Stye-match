@@ -53,6 +53,102 @@ struct ScanSnapshotIdentity: Codable, Equatable, Sendable {
     }
 }
 
+enum ScanCorrectionDisposition: String, Codable, Equatable, Sendable {
+    case inferred
+    case confirmed
+    case corrected
+    case rejected
+    case cleared
+    case uncertain
+}
+
+struct ScanPurposeAuthority: Codable, Equatable, @unchecked Sendable {
+    static let inferred = Self(
+        proposed: nil,
+        confirmed: nil,
+        rejected: [],
+        disposition: .inferred,
+        correctedAt: nil
+    )
+
+    let proposed: OutfitPurpose?
+    let confirmed: OutfitPurpose?
+    let rejected: [OutfitPurpose]
+    let disposition: ScanCorrectionDisposition
+    let correctedAt: Date?
+
+    init(
+        proposed: OutfitPurpose?,
+        confirmed: OutfitPurpose?,
+        rejected: [OutfitPurpose],
+        disposition: ScanCorrectionDisposition,
+        correctedAt: Date?
+    ) {
+        self.proposed = proposed
+        self.confirmed = confirmed
+        self.rejected = Dictionary(
+            uniqueKeysWithValues: rejected.map { ($0.rawValue, $0) }
+        ).values.sorted { $0.rawValue < $1.rawValue }
+        self.disposition = disposition
+        self.correctedAt = correctedAt
+    }
+}
+
+struct ScanWorkplaceAuthority: Codable, Equatable, @unchecked Sendable {
+    static let inferred = Self(
+        proposed: nil,
+        confirmed: nil,
+        rejected: [],
+        disposition: .inferred,
+        correctedAt: nil
+    )
+
+    let proposed: WorkplaceProfile?
+    let confirmed: WorkplaceProfile?
+    let rejected: [WorkplaceProfile]
+    let disposition: ScanCorrectionDisposition
+    let correctedAt: Date?
+
+    init(
+        proposed: WorkplaceProfile?,
+        confirmed: WorkplaceProfile?,
+        rejected: [WorkplaceProfile],
+        disposition: ScanCorrectionDisposition,
+        correctedAt: Date?
+    ) {
+        self.proposed = proposed
+        self.confirmed = confirmed
+        self.rejected = Dictionary(
+            uniqueKeysWithValues: rejected.map { ($0.rawValue, $0) }
+        ).values.sorted { $0.rawValue < $1.rawValue }
+        self.disposition = disposition
+        self.correctedAt = correctedAt
+    }
+}
+
+struct ScanBoundContext: Codable, Equatable, @unchecked Sendable {
+    static let currentInputSchemaVersion = 1
+    static let legacyDefault = Self(
+        inputSchemaVersion: currentInputSchemaVersion,
+        purpose: .inferred,
+        workplace: .inferred,
+        categoryDisposition: .inferred,
+        occasionDisposition: .inferred,
+        weather: .unknown
+    )
+
+    let inputSchemaVersion: Int
+    let purpose: ScanPurposeAuthority
+    let workplace: ScanWorkplaceAuthority
+    let categoryDisposition: ScanCorrectionDisposition
+    let occasionDisposition: ScanCorrectionDisposition
+    let weather: WeatherContextReference
+}
+
+struct ScanInvalidationEpoch: Equatable, Sendable {
+    let value: UInt64
+}
+
 enum ScanAuthorityState: String, Codable, Equatable, Sendable {
     case completed
     case inProgress
@@ -90,6 +186,8 @@ struct ScanAuthority: @unchecked Sendable {
     let reason: ScanAuthorityReason
     let legacyState: ScanLegacyAuthorityState
     let imageReferenceState: ScanImageReferenceState
+    let scanBoundContext: ScanBoundContext
+    let invalidationEpoch: ScanInvalidationEpoch
 }
 
 enum ScanAuthorityError: Error, Equatable, Sendable {
@@ -107,6 +205,8 @@ enum ScanAuthorityError: Error, Equatable, Sendable {
     case generationOverflow
     case accountChanged
     case sourceChanged
+    case authorityInvalidated
+    case invalidationEpochOverflow
     case cancelled
 }
 

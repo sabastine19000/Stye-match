@@ -26,6 +26,27 @@ struct StoredScanRecord: Codable, @unchecked Sendable {
     let thumbnailData: Data?
     let lifecycle: StoredScanLifecycle?
     let authorityMetadata: StoredScanAuthorityMetadata?
+    let scanBoundContext: ScanBoundContext?
+
+    init(
+        score: Int?,
+        analysis: OutfitAnalysisResult?,
+        firstScannedAt: Date?,
+        occasion: Occasion?,
+        thumbnailData: Data?,
+        lifecycle: StoredScanLifecycle?,
+        authorityMetadata: StoredScanAuthorityMetadata?,
+        scanBoundContext: ScanBoundContext? = nil
+    ) {
+        self.score = score
+        self.analysis = analysis
+        self.firstScannedAt = firstScannedAt
+        self.occasion = occasion
+        self.thumbnailData = thumbnailData
+        self.lifecycle = lifecycle
+        self.authorityMetadata = authorityMetadata
+        self.scanBoundContext = scanBoundContext
+    }
 
     var inferredState: ScanAuthorityState {
         switch lifecycle {
@@ -93,7 +114,8 @@ enum StoredScanRecordDecoder {
                         occasion: nil,
                         thumbnailData: nil,
                         lifecycle: nil,
-                        authorityMetadata: nil
+                        authorityMetadata: nil,
+                        scanBoundContext: nil
                     ),
                     decodeCorrupt: true
                 ))
