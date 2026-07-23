@@ -89,6 +89,8 @@
 		AA0000000000000000000164 /* ShareableScoreCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000166 /* ShareableScoreCard.swift */; };
 		AA0000000000000000000165 /* ShareableScoreCardViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000167 /* ShareableScoreCardViews.swift */; };
 		AA0000000000000000000168 /* AppBackendConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000169 /* AppBackendConfiguration.swift */; };
+		CE1000000000000000000001 /* OutfitContextContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1000000000000000000011 /* OutfitContextContracts.swift */; };
+		CE1000000000000000000002 /* LegacyContextAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1000000000000000000012 /* LegacyContextAdapter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -115,6 +117,8 @@
 		AA0000000000000000000029 /* OpenAIStylistClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIStylistClient.swift; sourceTree = "<group>"; };
 		AA000000000000000000002B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA000000000000000000002D /* AIStyleAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStyleAdvisor.swift; sourceTree = "<group>"; };
+		CE1000000000000000000011 /* OutfitContextContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitContextContracts.swift; sourceTree = "<group>"; };
+		CE1000000000000000000012 /* LegacyContextAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyContextAdapter.swift; sourceTree = "<group>"; };
 		AA0000000000000000000039 /* ShoppingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingView.swift; sourceTree = "<group>"; };
 		AA000000000000000000003A /* AffiliateProduct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AffiliateProduct.swift; sourceTree = "<group>"; };
 		AA000000000000000000003B /* ProductCatalogProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogProvider.swift; sourceTree = "<group>"; };
@@ -218,6 +222,7 @@
 				AA0000000000000000000167 /* ShareableScoreCardViews.swift */,
 				AA0000000000000000000012 /* ContentView.swift */,
 				AA0000000000000000000013 /* Models.swift */,
+				CE1000000000000000000010 /* ContextEngine */,
 				AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */,
 				AA00000000000000000000E6 /* WeatherContextEngine.swift */,
 				AA00000000000000000000D0 /* PersonalStylist */,
@@ -262,6 +267,15 @@
 				AA0000000000000000000010 /* StyleMatchAI.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		CE1000000000000000000010 /* ContextEngine */ = {
+			isa = PBXGroup;
+			children = (
+				CE1000000000000000000011 /* OutfitContextContracts.swift */,
+				CE1000000000000000000012 /* LegacyContextAdapter.swift */,
+			);
+			path = ContextEngine;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000041 /* Shopping */ = {
@@ -431,6 +445,8 @@
 				AA0000000000000000000001 /* StyleMatchAIApp.swift in Sources */,
 				AA0000000000000000000002 /* ContentView.swift in Sources */,
 				AA0000000000000000000003 /* Models.swift in Sources */,
+				CE1000000000000000000001 /* OutfitContextContracts.swift in Sources */,
+				CE1000000000000000000002 /* LegacyContextAdapter.swift in Sources */,
 				AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */,
 				AA0000000000000000000004 /* RoadmapData.swift in Sources */,
 				AA0000000000000000000005 /* HomeView.swift in Sources */,
