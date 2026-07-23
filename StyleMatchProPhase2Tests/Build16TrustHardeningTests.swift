@@ -8,6 +8,37 @@ final class Build16TrustHardeningTests: XCTestCase {
         return try String(contentsOf: root.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    func testScannerPanelUsesExplicitTypeErasureAtConstructionBoundaries() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let panelStart = source.range(of: "private var scannerPanel: AnyView"),
+              let panelEnd = source.range(
+                of: "private var scannerExampleCarousel:",
+                range: panelStart.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected scannerPanel and its construction-boundary helpers.")
+        }
+
+        let panel = String(source[panelStart.lowerBound..<panelEnd.lowerBound])
+        XCTAssertTrue(panel.contains("scannerPhotoSection"))
+        XCTAssertTrue(panel.contains("scannerHeaderSection"))
+        XCTAssertTrue(panel.contains("AnyView(scanSourceControl)"))
+        XCTAssertTrue(panel.contains("AnyView(scanOccasionSelector)"))
+        XCTAssertTrue(panel.contains("scannerInsightTabsSection"))
+        XCTAssertTrue(panel.contains("AnyView(scannerInsightCard)"))
+        XCTAssertTrue(panel.contains("private var scannerPhotoSection: AnyView"))
+        XCTAssertTrue(panel.contains("private var scannerHeaderSection: AnyView"))
+        XCTAssertTrue(panel.contains("private var scannerInsightTabsSection: AnyView"))
+
+        guard let panelBodyEnd = panel.range(of: "private var scannerPhotoSection:") else {
+            return XCTFail("Expected scanner photo section boundary.")
+        }
+        let panelBody = String(panel[..<panelBodyEnd.lowerBound])
+        XCTAssertFalse(
+            panelBody.contains("if let selectedImage"),
+            "The image-state conditional must stay behind its erased section boundary."
+        )
+    }
+
     func testOutfitSharingOpensPrivacyPreviewBeforeSystemShareSheet() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 
