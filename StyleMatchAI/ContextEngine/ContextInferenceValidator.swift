@@ -43,6 +43,9 @@ enum ContextInferenceValidator {
         if !(0...100).contains(input.score) {
             return .invalidScore
         }
+        if input.contextGeneration == 0 {
+            return .invariantViolation
+        }
         let confidenceValues = [input.garmentCategoryConfidence]
             + input.evidence.map(\.confidence)
             + [input.weather.confidence.value]
@@ -67,6 +70,7 @@ enum ContextInferenceValidator {
         guard snapshot.scanID == input.scanID,
               snapshot.authoritativeScore == input.score,
               snapshot.authoritativeBreakdown == input.scoreBreakdown,
+              snapshot.generation == input.contextGeneration,
               snapshot.provenance.sourceScanID == input.scanID,
               snapshot.provenance.algorithmVersion == OutfitContextEngine.algorithmVersion,
               !snapshot.provenance.legacyFallbackUsed else {

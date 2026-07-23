@@ -8,6 +8,7 @@ enum LegacyContextAdapter {
         scanID: String,
         completedAt: Date,
         analysis: OutfitAnalysisResult,
+        generation: UInt64 = 1,
         selectedOccasion explicitOccasion: Occasion? = nil,
         weatherContext: WeatherContextReference? = nil
     ) -> OutfitContextSnapshot {
@@ -45,7 +46,7 @@ enum LegacyContextAdapter {
 
         return OutfitContextSnapshot(
             schemaVersion: OutfitContextSnapshot.currentSchemaVersion,
-            generation: 0,
+            generation: generation,
             scanID: scanID,
             completedAt: completedAt,
             authoritativeScore: analysis.score,

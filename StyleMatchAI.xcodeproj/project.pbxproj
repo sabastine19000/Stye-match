@@ -97,6 +97,12 @@
 		CE2A00000000000000000004 /* SuitabilityEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000014 /* SuitabilityEvaluator.swift */; };
 		CE2A00000000000000000005 /* ContextInferenceValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000015 /* ContextInferenceValidator.swift */; };
 		CE2A00000000000000000006 /* OutfitContextEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000016 /* OutfitContextEngine.swift */; };
+		CE2R100000000000000000001 /* ScanAuthorityContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2R100000000000000000011 /* ScanAuthorityContracts.swift */; };
+		CE2R100000000000000000002 /* StoredScanRecord.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2R100000000000000000012 /* StoredScanRecord.swift */; };
+		CE2R100000000000000000003 /* ScanGenerationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2R100000000000000000013 /* ScanGenerationPolicy.swift */; };
+		CE2R100000000000000000004 /* AuthoritativeScanSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2R100000000000000000014 /* AuthoritativeScanSelector.swift */; };
+		CE2R100000000000000000005 /* ScanAuthorityRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2R100000000000000000015 /* ScanAuthorityRepository.swift */; };
+		CE2R100000000000000000006 /* ContextInferenceInputFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2R100000000000000000016 /* ContextInferenceInputFactory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -131,6 +137,12 @@
 		CE2A00000000000000000014 /* SuitabilityEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuitabilityEvaluator.swift; sourceTree = "<group>"; };
 		CE2A00000000000000000015 /* ContextInferenceValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInferenceValidator.swift; sourceTree = "<group>"; };
 		CE2A00000000000000000016 /* OutfitContextEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitContextEngine.swift; sourceTree = "<group>"; };
+		CE2R100000000000000000011 /* ScanAuthorityContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAuthorityContracts.swift; sourceTree = "<group>"; };
+		CE2R100000000000000000012 /* StoredScanRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredScanRecord.swift; sourceTree = "<group>"; };
+		CE2R100000000000000000013 /* ScanGenerationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanGenerationPolicy.swift; sourceTree = "<group>"; };
+		CE2R100000000000000000014 /* AuthoritativeScanSelector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthoritativeScanSelector.swift; sourceTree = "<group>"; };
+		CE2R100000000000000000015 /* ScanAuthorityRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanAuthorityRepository.swift; sourceTree = "<group>"; };
+		CE2R100000000000000000016 /* ContextInferenceInputFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInferenceInputFactory.swift; sourceTree = "<group>"; };
 		AA0000000000000000000039 /* ShoppingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingView.swift; sourceTree = "<group>"; };
 		AA000000000000000000003A /* AffiliateProduct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AffiliateProduct.swift; sourceTree = "<group>"; };
 		AA000000000000000000003B /* ProductCatalogProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogProvider.swift; sourceTree = "<group>"; };
@@ -235,6 +247,7 @@
 				AA0000000000000000000012 /* ContentView.swift */,
 				AA0000000000000000000013 /* Models.swift */,
 				CE1000000000000000000010 /* ContextEngine */,
+				CE2R100000000000000000010 /* ScanAuthority */,
 				AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */,
 				AA00000000000000000000E6 /* WeatherContextEngine.swift */,
 				AA00000000000000000000D0 /* PersonalStylist */,
@@ -294,6 +307,19 @@
 				CE2A00000000000000000016 /* OutfitContextEngine.swift */,
 			);
 			path = ContextEngine;
+			sourceTree = "<group>";
+		};
+		CE2R100000000000000000010 /* ScanAuthority */ = {
+			isa = PBXGroup;
+			children = (
+				CE2R100000000000000000011 /* ScanAuthorityContracts.swift */,
+				CE2R100000000000000000012 /* StoredScanRecord.swift */,
+				CE2R100000000000000000013 /* ScanGenerationPolicy.swift */,
+				CE2R100000000000000000014 /* AuthoritativeScanSelector.swift */,
+				CE2R100000000000000000015 /* ScanAuthorityRepository.swift */,
+				CE2R100000000000000000016 /* ContextInferenceInputFactory.swift */,
+			);
+			path = ScanAuthority;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000041 /* Shopping */ = {
@@ -471,6 +497,12 @@
 				CE2A00000000000000000004 /* SuitabilityEvaluator.swift in Sources */,
 				CE2A00000000000000000005 /* ContextInferenceValidator.swift in Sources */,
 				CE2A00000000000000000006 /* OutfitContextEngine.swift in Sources */,
+				CE2R100000000000000000001 /* ScanAuthorityContracts.swift in Sources */,
+				CE2R100000000000000000002 /* StoredScanRecord.swift in Sources */,
+				CE2R100000000000000000003 /* ScanGenerationPolicy.swift in Sources */,
+				CE2R100000000000000000004 /* AuthoritativeScanSelector.swift in Sources */,
+				CE2R100000000000000000005 /* ScanAuthorityRepository.swift in Sources */,
+				CE2R100000000000000000006 /* ContextInferenceInputFactory.swift in Sources */,
 				AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */,
 				AA0000000000000000000004 /* RoadmapData.swift in Sources */,
 				AA0000000000000000000005 /* HomeView.swift in Sources */,

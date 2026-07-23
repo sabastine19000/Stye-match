@@ -43,7 +43,7 @@ enum OutfitContextEngine {
         )
         let snapshot = OutfitContextSnapshot(
             schemaVersion: OutfitContextSnapshot.currentSchemaVersion,
-            generation: 0,
+            generation: input.contextGeneration,
             scanID: input.scanID,
             completedAt: input.completedAt,
             authoritativeScore: input.score,

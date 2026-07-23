@@ -17,6 +17,7 @@ struct ContextInferenceEvidenceAtom: Equatable {
 
 struct ContextInferenceInput: Equatable {
     let scanID: String
+    let contextGeneration: UInt64
     let completedAt: Date
     let score: Int
     let scoreBreakdown: OutfitScoreBreakdown?
@@ -37,6 +38,7 @@ struct ContextInferenceInput: Equatable {
 
     init(
         scanID: String,
+        contextGeneration: UInt64 = 1,
         completedAt: Date,
         analysis: OutfitAnalysisResult,
         selectedOccasion: Occasion? = nil,
@@ -49,6 +51,7 @@ struct ContextInferenceInput: Equatable {
         let resolvedOccasion = selectedOccasion
             ?? Occasion(label: classification.selectedOccasion)
         self.scanID = scanID
+        self.contextGeneration = contextGeneration
         self.completedAt = completedAt
         self.score = analysis.score
         self.scoreBreakdown = analysis.scoreBreakdown

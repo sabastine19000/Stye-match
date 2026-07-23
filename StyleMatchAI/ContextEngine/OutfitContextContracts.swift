@@ -481,7 +481,7 @@ struct OutfitContextSnapshot: Codable, Equatable {
     static let currentSchemaVersion = 1
 
     let schemaVersion: Int
-    let generation: Int
+    let generation: UInt64
     let scanID: String
     let completedAt: Date
     let authoritativeScore: Int
