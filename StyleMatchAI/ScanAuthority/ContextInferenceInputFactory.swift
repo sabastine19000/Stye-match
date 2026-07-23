@@ -29,7 +29,8 @@ enum ContextInferenceInputFactory {
                     profile: $0
                 )
             },
-            rejectedPurposeIDs: Set(context.purpose.rejected)
+            rejectedPurposeIDs: Set(context.purpose.rejected),
+            rejectedWorkplaceProfileIDs: Set(context.workplace.rejected)
         ))
     }
 }

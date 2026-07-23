@@ -60,6 +60,10 @@ enum ContextInferenceValidator {
            confirmation.scanID != input.scanID {
             return .mismatchedWorkplaceConfirmation
         }
+        if let confirmation = input.confirmedWorkplaceProfile,
+           input.rejectedWorkplaceProfileIDs.contains(confirmation.profile) {
+            return .invariantViolation
+        }
         return nil
     }
 

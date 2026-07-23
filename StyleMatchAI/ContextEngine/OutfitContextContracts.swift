@@ -47,7 +47,7 @@ enum OutfitPurpose: String, CaseIterable, Equatable, Hashable, FailClosedStringE
     static let unknownFallback = OutfitPurpose.otherUncertain
 }
 
-enum WorkplaceProfile: String, CaseIterable, Equatable, FailClosedStringEnum {
+enum WorkplaceProfile: String, CaseIterable, Equatable, Hashable, FailClosedStringEnum {
     case factoryManufacturing
     case warehouse
     case office

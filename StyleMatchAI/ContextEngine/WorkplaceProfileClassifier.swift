@@ -22,7 +22,8 @@ enum WorkplaceProfileClassifier {
         }
 
         guard PurposeClassifier.isWorkPurpose(purpose.value),
-              let profile = profile(for: purpose.value) else {
+              let profile = profile(for: purpose.value),
+              !input.rejectedWorkplaceProfileIDs.contains(profile) else {
             return WorkplaceResolution(
                 value: EvidenceBackedValue(
                     value: .otherUncertain,

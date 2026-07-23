@@ -9,6 +9,7 @@ enum ScanCorrectionMutation: Equatable, Sendable {
     case workplaceConfirmation
     case workplaceCorrection
     case workplaceRejectionOrClearing
+    case workplaceReversal
     case categoryCorrection
     case occasionCorrection
     case restorationToInferredOrUncertain
@@ -61,10 +62,31 @@ struct ScanFingerprintInput: @unchecked Sendable {
             completionOrdinal: completionOrdinal
         )
     }
+
+    func replacingWorkplace(_ value: ScanWorkplaceAuthority) -> Self {
+        let context = ScanBoundContext(
+            inputSchemaVersion: scanBoundContext.inputSchemaVersion,
+            purpose: scanBoundContext.purpose,
+            workplace: value,
+            categoryDisposition: scanBoundContext.categoryDisposition,
+            occasionDisposition: scanBoundContext.occasionDisposition,
+            weather: scanBoundContext.weather
+        )
+        return Self(
+            recordID: recordID,
+            generation: generation,
+            completedAt: completedAt,
+            analysis: analysis,
+            selectedOccasion: selectedOccasion,
+            scanBoundContext: context,
+            completionOrdinal: completionOrdinal
+        )
+    }
 }
 
 struct ScanMutationRequest: @unchecked Sendable {
     let expectedIdentity: ScanSnapshotIdentity
+    let authorityState: ScanAuthorityState
     let before: ScanFingerprintInput
     let after: ScanFingerprintInput
     let storedRecordChanged: Bool
@@ -160,6 +182,10 @@ enum ScanGenerationPolicy {
               beforeFingerprint == current.contextFingerprint else {
             return .failure(.generationMismatch)
         }
+        if case .correction(.workplaceReversal) = request.mutation,
+           request.authorityState != .completed {
+            return .failure(.generationMismatch)
+        }
 
         let beforeContext: Data
         switch canonicalContextData(request.before) {
@@ -190,7 +216,12 @@ enum ScanGenerationPolicy {
             guard !contextChanged else { return .failure(.generationMismatch) }
             return .success(current)
         }
-        guard validatesMutation(request.mutation, after: request.after.scanBoundContext) else {
+        guard validatesMutation(
+            request.mutation,
+            authorityState: request.authorityState,
+            before: request.before,
+            after: request.after
+        ) else {
             return .failure(.generationMismatch)
         }
 
@@ -289,46 +320,103 @@ enum ScanGenerationPolicy {
 
     private static func validatesMutation(
         _ mutation: ScanMutationKind,
-        after: ScanBoundContext
+        authorityState: ScanAuthorityState,
+        before: ScanFingerprintInput,
+        after: ScanFingerprintInput
     ) -> Bool {
-        guard validatesStoredContext(after) else { return false }
+        guard validatesStoredContext(after.scanBoundContext) else { return false }
         switch mutation {
         case .newScan, .titleOnly, .thumbnailOnly, .analysisEnrichment,
              .restoredByteIdentical:
             return true
         case .correction(.purposeConfirmation):
-            return after.purpose.disposition == .confirmed
-                && validConfirmedPurpose(after.purpose)
+            return after.scanBoundContext.purpose.disposition == .confirmed
+                && validConfirmedPurpose(after.scanBoundContext.purpose)
         case .correction(.purposeCorrection):
-            return after.purpose.disposition == .corrected
-                && validConfirmedPurpose(after.purpose)
+            return after.scanBoundContext.purpose.disposition == .corrected
+                && validConfirmedPurpose(after.scanBoundContext.purpose)
         case .correction(.purposeRejection):
-            return after.purpose.disposition == .rejected
-                && !after.purpose.rejected.isEmpty
-                && after.purpose.confirmed == nil
+            return after.scanBoundContext.purpose.disposition == .rejected
+                && !after.scanBoundContext.purpose.rejected.isEmpty
+                && after.scanBoundContext.purpose.confirmed == nil
         case .correction(.purposeReversal):
-            return [.inferred, .uncertain].contains(after.purpose.disposition)
-                && after.purpose.confirmed == nil
+            return [.inferred, .uncertain]
+                .contains(after.scanBoundContext.purpose.disposition)
+                && after.scanBoundContext.purpose.confirmed == nil
         case .correction(.workplaceConfirmation):
-            return after.workplace.disposition == .confirmed
-                && validConfirmedWorkplace(after.workplace)
+            return after.scanBoundContext.workplace.disposition == .confirmed
+                && validConfirmedWorkplace(after.scanBoundContext.workplace)
         case .correction(.workplaceCorrection):
-            return after.workplace.disposition == .corrected
-                && validConfirmedWorkplace(after.workplace)
+            return after.scanBoundContext.workplace.disposition == .corrected
+                && validConfirmedWorkplace(after.scanBoundContext.workplace)
         case .correction(.workplaceRejectionOrClearing):
-            return [.rejected, .cleared].contains(after.workplace.disposition)
-                && after.workplace.confirmed == nil
+            return [.rejected, .cleared]
+                .contains(after.scanBoundContext.workplace.disposition)
+                && after.scanBoundContext.workplace.confirmed == nil
+        case .correction(.workplaceReversal):
+            return authorityState == .completed
+                && validWorkplaceReversal(before: before, after: after)
         case .correction(.categoryCorrection):
             return [.confirmed, .corrected, .inferred, .uncertain]
-                .contains(after.categoryDisposition)
+                .contains(after.scanBoundContext.categoryDisposition)
         case .correction(.occasionCorrection):
             return [.confirmed, .corrected, .inferred, .uncertain]
-                .contains(after.occasionDisposition)
+                .contains(after.scanBoundContext.occasionDisposition)
         case .correction(.restorationToInferredOrUncertain):
-            return [.inferred, .uncertain].contains(after.purpose.disposition)
-                && [.inferred, .uncertain, .cleared]
-                .contains(after.workplace.disposition)
+            return validGenericRestoration(before: before, after: after)
         }
+    }
+
+    private static func validWorkplaceReversal(
+        before: ScanFingerprintInput,
+        after: ScanFingerprintInput
+    ) -> Bool {
+        let beforeWorkplace = before.scanBoundContext.workplace
+        let afterWorkplace = after.scanBoundContext.workplace
+        guard [.confirmed, .corrected].contains(beforeWorkplace.disposition),
+              validConfirmedWorkplace(beforeWorkplace),
+              [.inferred, .uncertain].contains(afterWorkplace.disposition),
+              afterWorkplace.confirmed == nil,
+              afterWorkplace.proposed == beforeWorkplace.proposed,
+              afterWorkplace.rejected == beforeWorkplace.rejected,
+              after.completedAt == before.completedAt,
+              after.completionOrdinal == before.completionOrdinal else {
+            return false
+        }
+
+        let neutralWorkplace = ScanWorkplaceAuthority.inferred
+        let beforeWithoutWorkplace = before.replacingWorkplace(neutralWorkplace)
+        let afterWithoutWorkplace = after.replacingWorkplace(neutralWorkplace)
+        switch (
+            canonicalContextData(beforeWithoutWorkplace),
+            canonicalContextData(afterWithoutWorkplace)
+        ) {
+        case (.success(let beforeData), .success(let afterData)):
+            return beforeData == afterData
+        default:
+            return false
+        }
+    }
+
+    private static func validGenericRestoration(
+        before: ScanFingerprintInput,
+        after: ScanFingerprintInput
+    ) -> Bool {
+        let explicitDispositions: [ScanCorrectionDisposition] = [
+            .confirmed, .corrected
+        ]
+        guard !explicitDispositions.contains(
+            before.scanBoundContext.purpose.disposition
+        ),
+        !explicitDispositions.contains(
+            before.scanBoundContext.workplace.disposition
+        ) else {
+            return false
+        }
+        return [.inferred, .uncertain]
+            .contains(after.scanBoundContext.purpose.disposition)
+            && [.inferred, .uncertain, .cleared]
+            .contains(after.scanBoundContext.workplace.disposition)
     }
 
     private static func validatesStoredContext(_ context: ScanBoundContext) -> Bool {

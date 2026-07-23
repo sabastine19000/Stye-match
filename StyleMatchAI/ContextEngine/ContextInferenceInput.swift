@@ -102,6 +102,7 @@ struct ContextInferenceInput: Equatable {
     let confirmedPurpose: ContextPurposeConfirmation?
     let confirmedWorkplaceProfile: ContextWorkplaceConfirmation?
     let rejectedPurposeIDs: Set<OutfitPurpose>
+    let rejectedWorkplaceProfileIDs: Set<WorkplaceProfile>
 
     init(
         scanID: String,
@@ -114,7 +115,8 @@ struct ContextInferenceInput: Equatable {
         weather: WeatherContextReference? = nil,
         confirmedPurpose: ContextPurposeConfirmation? = nil,
         confirmedWorkplaceProfile: ContextWorkplaceConfirmation? = nil,
-        rejectedPurposeIDs: Set<OutfitPurpose> = []
+        rejectedPurposeIDs: Set<OutfitPurpose> = [],
+        rejectedWorkplaceProfileIDs: Set<WorkplaceProfile> = []
     ) {
         let classification = analysis.outfitClassification
         let canonicalEvidence = ContextInferenceEvidenceCanonicalizer
@@ -159,6 +161,7 @@ struct ContextInferenceInput: Equatable {
         self.confirmedPurpose = confirmedPurpose
         self.confirmedWorkplaceProfile = confirmedWorkplaceProfile
         self.rejectedPurposeIDs = rejectedPurposeIDs
+        self.rejectedWorkplaceProfileIDs = rejectedWorkplaceProfileIDs
     }
 
     private static func contextOccasion(_ occasion: Occasion?) -> ContextOccasion {

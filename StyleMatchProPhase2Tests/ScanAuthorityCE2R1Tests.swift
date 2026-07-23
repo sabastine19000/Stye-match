@@ -1485,6 +1485,399 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         )
     }
 
+    func testCE2R1R3Workplace01ConfirmedReversalChangesGenerationAndFingerprint() throws {
+        let before = context(workplace: workplace(
+            proposed: .factoryManufacturing,
+            confirmed: .office,
+            disposition: .confirmed,
+            correctedAt: date
+        ))
+        let after = context(workplace: workplace(
+            proposed: .factoryManufacturing,
+            disposition: .inferred,
+            correctedAt: date.addingTimeInterval(60)
+        ))
+        let value = try workplaceReversalResult(before: before, after: after).get()
+
+        assertEqual(value.generation, generation(record: 3, context: 6))
+        XCTAssertNotEqual(value.contextFingerprint, fingerprint(context: before))
+        assertEqual(
+            value.contextFingerprint,
+            fingerprint(
+                generation: value.generation,
+                context: after,
+                ordinal: 1
+            )
+        )
+    }
+
+    func testCE2R1R3Workplace02CorrectedReversalReturnsToUncertain() throws {
+        let before = context(workplace: workplace(
+            proposed: .warehouse,
+            confirmed: .office,
+            disposition: .corrected
+        ))
+        let after = context(workplace: workplace(
+            proposed: .warehouse,
+            disposition: .uncertain
+        ))
+        let value = try workplaceReversalResult(before: before, after: after).get()
+
+        assertEqual(value.generation, generation(record: 3, context: 6))
+        XCTAssertNotEqual(value.contextFingerprint, fingerprint(context: before))
+    }
+
+    func testCE2R1R3Workplace03RepeatedReversalIgnoresLaterAuditTimestamp() {
+        let reversed = context(workplace: workplace(
+            proposed: .warehouse,
+            rejected: [.office],
+            disposition: .inferred,
+            correctedAt: date
+        ))
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .workplaceReversal,
+            before: reversed,
+            after: context(workplace: workplace(
+                proposed: .warehouse,
+                rejected: [.office],
+                disposition: .inferred,
+                correctedAt: date.addingTimeInterval(60)
+            ))
+        )
+    }
+
+    func testCE2R1R3Workplace04AlreadyUncertainReversalIsIdempotent() {
+        let uncertain = context(workplace: workplace(
+            proposed: .warehouse,
+            rejected: [.office],
+            disposition: .uncertain,
+            correctedAt: date
+        ))
+        assertRepeatedCorrectionIsIdempotent(
+            mutation: .workplaceReversal,
+            before: uncertain,
+            after: uncertain
+        )
+    }
+
+    func testCE2R1R3Workplace05StaleIdentityGenerationAndFingerprintFailClosed() {
+        let before = context(workplace: workplace(
+            confirmed: .office,
+            disposition: .confirmed
+        ))
+        let after = context(workplace: workplace(disposition: .inferred))
+        let staleIdentities = [
+            identity(
+                "b",
+                generation: generation(),
+                fingerprint: fingerprint(context: before)
+            ),
+            identity(
+                "a",
+                generation: generation(record: 1, context: 1),
+                fingerprint: fingerprint(context: before)
+            ),
+            identity(
+                "a",
+                generation: generation(),
+                fingerprint: "stale-fingerprint"
+            )
+        ]
+
+        for stale in staleIdentities {
+            assertEqual(
+                resultFailure(workplaceReversalResult(
+                    before: before,
+                    after: after,
+                    expectedIdentity: stale
+                )),
+                .generationMismatch
+            )
+        }
+    }
+
+    func testCE2R1R3Workplace06WrongScanFailsClosed() {
+        let before = context(workplace: workplace(
+            confirmed: .office,
+            disposition: .confirmed
+        ))
+        let after = context(workplace: workplace(disposition: .inferred))
+
+        assertEqual(
+            resultFailure(workplaceReversalResult(
+                before: before,
+                after: after,
+                afterID: "b"
+            )),
+            .generationMismatch
+        )
+    }
+
+    func testCE2R1R3Workplace07InvalidLifecycleStatesFailClosed() {
+        let before = context(workplace: workplace(
+            confirmed: .office,
+            disposition: .confirmed
+        ))
+        let after = context(workplace: workplace(disposition: .inferred))
+        for state in [
+            ScanAuthorityState.deleted,
+            .quarantined,
+            .failed,
+            .corrupt,
+            .partial,
+            .inProgress
+        ] {
+            assertEqual(
+                resultFailure(workplaceReversalResult(
+                    before: before,
+                    after: after,
+                    authorityState: state
+                )),
+                .generationMismatch
+            )
+        }
+        let alreadyReversed = context(
+            workplace: workplace(disposition: .inferred)
+        )
+        assertEqual(
+            resultFailure(workplaceReversalResult(
+                before: alreadyReversed,
+                after: alreadyReversed,
+                authorityState: .deleted
+            )),
+            .generationMismatch
+        )
+    }
+
+    func testCE2R1R3Workplace08ReversalPreservesRejectionsAndUnrelatedContext() async throws {
+        let purposeValue = purpose(
+            confirmed: .factoryManufacturing,
+            rejected: [.warehouse],
+            disposition: .corrected
+        )
+        let before = context(
+            purpose: purposeValue,
+            workplace: workplace(
+                proposed: .factoryManufacturing,
+                confirmed: .office,
+                rejected: [.factoryManufacturing],
+                disposition: .corrected,
+                correctedAt: date
+            ),
+            categoryDisposition: .corrected,
+            occasionDisposition: .confirmed
+        )
+        let after = context(
+            purpose: purposeValue,
+            workplace: workplace(
+                proposed: .factoryManufacturing,
+                rejected: [.factoryManufacturing],
+                disposition: .inferred,
+                correctedAt: date.addingTimeInterval(60)
+            ),
+            categoryDisposition: .corrected,
+            occasionDisposition: .confirmed
+        )
+        let identity = try workplaceReversalResult(
+            before: before,
+            after: after
+        ).get()
+        let source = FakeSource(data: try data([
+            "a": record(
+                metadata: metadata(
+                    generation: identity.generation,
+                    context: after
+                ),
+                context: after
+            )
+        ]))
+        let authority = try await authority(
+            repository: ScanAuthorityRepository(source: source)
+        )
+        let value = try input(authority)
+
+        assertEqual(value.scanID, identity.localID.rawValue)
+        assertEqual(value.contextGeneration, identity.generation.contextRevision)
+        assertEqual(value.contextFingerprint, identity.contextFingerprint)
+        assertEqual(value.score, 80)
+        assertEqual(value.scoreBreakdown, analysis().scoreBreakdown)
+        assertEqual(value.detectedStyle, "Casual")
+        assertEqual(value.garmentCategory, .workUniform)
+        assertEqual(value.selectedOccasion, .work)
+        assertEqual(value.confirmedPurpose?.purpose, .factoryManufacturing)
+        XCTAssertNil(value.confirmedWorkplaceProfile)
+        assertEqual(
+            value.rejectedWorkplaceProfileIDs,
+            [.factoryManufacturing]
+        )
+        assertEqual(await source.captureCount, 1)
+        assertEqual(await source.boundaryCount, 1)
+        assertEqual(await source.writeCount, 0)
+    }
+
+    func testCE2R1R3Workplace09RejectedProfileCannotReappearThroughInference() async throws {
+        let bound = context(
+            purpose: purpose(
+                confirmed: .factoryManufacturing,
+                disposition: .confirmed
+            ),
+            workplace: workplace(
+                proposed: .factoryManufacturing,
+                rejected: [.factoryManufacturing],
+                disposition: .inferred
+            )
+        )
+        let authority = try await resolve(
+            .latestValidCompleted,
+            records: ["a": record(context: bound)]
+        )
+        let value = try input(authority)
+        let snapshot = try infer(value)
+
+        assertEqual(
+            value.rejectedWorkplaceProfileIDs,
+            [.factoryManufacturing]
+        )
+        assertEqual(snapshot.workplaceProfile.value, .otherUncertain)
+        assertEqual(snapshot.workplaceProfile.confirmationState, .uncertain)
+    }
+
+    func testCE2R1R3Workplace10ReversalRejectsUnrelatedContextChanges() {
+        let before = context(
+            purpose: purpose(confirmed: .office, disposition: .confirmed),
+            workplace: workplace(
+                confirmed: .office,
+                disposition: .confirmed
+            ),
+            categoryDisposition: .corrected,
+            occasionDisposition: .confirmed
+        )
+        let changedPurpose = context(
+            purpose: purpose(
+                confirmed: .factoryManufacturing,
+                disposition: .confirmed
+            ),
+            workplace: workplace(disposition: .inferred),
+            categoryDisposition: .corrected,
+            occasionDisposition: .confirmed
+        )
+        let changedAnalysis = analysis(style: "Formal")
+
+        assertEqual(
+            resultFailure(workplaceReversalResult(
+                before: before,
+                after: changedPurpose
+            )),
+            .generationMismatch
+        )
+        assertEqual(
+            resultFailure(workplaceReversalResult(
+                before: before,
+                after: context(
+                    purpose: before.purpose,
+                    workplace: workplace(disposition: .inferred),
+                    categoryDisposition: .corrected,
+                    occasionDisposition: .confirmed
+                ),
+                afterAnalysis: changedAnalysis
+            )),
+            .generationMismatch
+        )
+    }
+
+    func testCE2R1R3Workplace11ReversalCannotRemoveRejectionConstraints() {
+        let before = context(workplace: workplace(
+            proposed: .factoryManufacturing,
+            confirmed: .office,
+            rejected: [.factoryManufacturing],
+            disposition: .confirmed
+        ))
+        let after = context(workplace: workplace(
+            proposed: .factoryManufacturing,
+            disposition: .inferred
+        ))
+
+        assertEqual(
+            resultFailure(workplaceReversalResult(
+                before: before,
+                after: after
+            )),
+            .generationMismatch
+        )
+    }
+
+    func testCE2R1R3Workplace12ClearingAndGenericRestorationStayDistinct() {
+        let before = context(workplace: workplace(
+            confirmed: .office,
+            disposition: .confirmed
+        ))
+        let reversed = context(workplace: workplace(disposition: .inferred))
+        let cleared = context(workplace: workplace(
+            rejected: [.office],
+            disposition: .cleared
+        ))
+
+        assertEqual(
+            resultFailure(ScanGenerationPolicy.apply(
+                current: currentIdentity(context: before),
+                request: mutationRequest(
+                    current: currentIdentity(context: before),
+                    before: fingerprintInput(context: before),
+                    after: fingerprintInput(context: reversed),
+                    storedRecordChanged: true,
+                    mutation: .correction(.restorationToInferredOrUncertain)
+                )
+            )),
+            .generationMismatch
+        )
+        assertEqual(
+            resultFailure(workplaceReversalResult(
+                before: before,
+                after: cleared
+            )),
+            .generationMismatch
+        )
+        XCTAssertNoThrow(try ScanGenerationPolicy.apply(
+            current: currentIdentity(context: before),
+            request: mutationRequest(
+                current: currentIdentity(context: before),
+                before: fingerprintInput(context: before),
+                after: fingerprintInput(context: cleared),
+                storedRecordChanged: true,
+                mutation: .correction(.workplaceRejectionOrClearing)
+            )
+        ).get())
+    }
+
+    func testCE2R1R3Workplace13PurposeReversalRemainsUnaffected() {
+        let before = context(purpose: purpose(
+            confirmed: .office,
+            disposition: .confirmed
+        ))
+        let after = context(purpose: purpose(disposition: .inferred))
+        let value = mutate(
+            .correction(.purposeReversal),
+            beforeContext: before,
+            afterContext: after
+        )
+
+        assertEqual(value.generation, generation(record: 3, context: 6))
+    }
+
+    func testCE2R1R3Workplace14ExplicitMutationIsBehaviorInactiveAndLocalOnly() throws {
+        let policy = try source("ScanGenerationPolicy.swift")
+        XCTAssertTrue(policy.contains("case workplaceReversal"))
+        XCTAssertFalse(policy.contains("URLRequest"))
+        XCTAssertFalse(policy.contains("RemoteSafeScanReference"))
+        let joined = try scanAuthoritySources().joined(separator: "\n")
+        for token in [
+            "UserDefaults.standard.set", "StylistChat", "AIAssist",
+            "VoiceAssistant", "ShoppingView", "Worker"
+        ] {
+            XCTAssertFalse(joined.contains(token))
+        }
+    }
+
     func testCE2R1R2Schema01MetadataNegativeAndZeroFailClosed() async {
         for version in [-1, 0] {
             assertEqual(
@@ -1976,6 +2369,55 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         )
     }
 
+    private func currentIdentity(
+        id rawID: String = "a",
+        context: ScanBoundContext,
+        generation: ScanGeneration = ScanGeneration(
+            recordRevision: 2,
+            contextRevision: 5
+        )
+    ) -> ScanSnapshotIdentity {
+        let input = fingerprintInput(
+            id: rawID,
+            generation: generation,
+            context: context
+        )
+        return ScanSnapshotIdentity(
+            localID: input.recordID,
+            generation: generation,
+            contextFingerprint: resolvedFingerprint(input)
+        )
+    }
+
+    private func workplaceReversalResult(
+        before: ScanBoundContext,
+        after: ScanBoundContext,
+        expectedIdentity: ScanSnapshotIdentity? = nil,
+        afterID: String = "a",
+        authorityState: ScanAuthorityState = .completed,
+        afterAnalysis: OutfitAnalysisResult? = nil
+    ) -> Result<ScanSnapshotIdentity, ScanAuthorityError> {
+        let beforeInput = fingerprintInput(context: before)
+        let current = currentIdentity(context: before)
+        let afterInput = fingerprintInput(
+            id: afterID,
+            context: after,
+            analysis: afterAnalysis
+        )
+        return ScanGenerationPolicy.apply(
+            current: current,
+            request: mutationRequest(
+                current: current,
+                before: beforeInput,
+                after: afterInput,
+                storedRecordChanged: true,
+                mutation: .correction(.workplaceReversal),
+                expectedIdentity: expectedIdentity,
+                authorityState: authorityState
+            )
+        )
+    }
+
     private func mutate(
         _ mutation: ScanMutationKind,
         beforeContext: ScanBoundContext = .legacyDefault,
@@ -1987,7 +2429,8 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
             recordRevision: 2,
             contextRevision: 5
         ),
-        expectedIdentity: ScanSnapshotIdentity? = nil
+        expectedIdentity: ScanSnapshotIdentity? = nil,
+        authorityState: ScanAuthorityState = .completed
     ) -> ScanSnapshotIdentity {
         let before = fingerprintInput(
             generation: generation,
@@ -2010,7 +2453,8 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
             after: after,
             storedRecordChanged: storedRecordChanged,
             mutation: mutation,
-            expectedIdentity: expectedIdentity
+            expectedIdentity: expectedIdentity,
+            authorityState: authorityState
         )
         return try! ScanGenerationPolicy.apply(
             current: current,
@@ -2024,7 +2468,8 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         after: ScanFingerprintInput,
         storedRecordChanged: Bool,
         mutation: ScanMutationKind,
-        expectedIdentity: ScanSnapshotIdentity? = nil
+        expectedIdentity: ScanSnapshotIdentity? = nil,
+        authorityState: ScanAuthorityState = .completed
     ) -> ScanMutationRequest {
         let fallbackIdentity = current ?? ScanSnapshotIdentity(
             localID: before.recordID,
@@ -2033,6 +2478,7 @@ final class ScanAuthorityCE2R1Tests: XCTestCase {
         )
         return ScanMutationRequest(
             expectedIdentity: expectedIdentity ?? fallbackIdentity,
+            authorityState: authorityState,
             before: before,
             after: after,
             storedRecordChanged: storedRecordChanged,
