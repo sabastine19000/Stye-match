@@ -13,7 +13,7 @@ struct VoiceScriptBuilder {
 
     static func scanResult(from analysis: OutfitAnalysisResult) -> VoiceScript {
         let score = min(max(analysis.score, 0), 100)
-        let style = spokenStyleName(from: analysis.styleBalance)
+        let style = spokenOutfitType(from: analysis)
         let rating = scoreRating(for: score).lowercased()
         let explanation = scanExplanationSource(from: analysis, score: score, style: style, rating: rating)
         let scanIdentifier = scanIdentifier(from: analysis, score: score, style: style)
@@ -151,6 +151,14 @@ struct VoiceScriptBuilder {
             .map(String.init) ?? trimmed
 
         return firstClause.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func spokenOutfitType(from analysis: OutfitAnalysisResult) -> String {
+        let classification = analysis.outfitClassification
+        if !classification.isUncertain {
+            return classification.effectiveCategory.displayName.lowercased()
+        }
+        return spokenStyleName(from: analysis.styleBalance)
     }
 
     private static func scoreRating(for score: Int) -> String {

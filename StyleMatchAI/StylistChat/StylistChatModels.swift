@@ -11,17 +11,22 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var role: StylistChatRole
     var content: String
     var timestamp: Date
+    /// The authoritative scan used when this turn was created. Optional for
+    /// backward-compatible decoding of conversations saved by older builds.
+    var scanContextID: String?
 
     init(
         id: UUID = UUID(),
         role: StylistChatRole,
         content: String,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        scanContextID: String? = nil
     ) {
         self.id = id
         self.role = role
         self.content = content
         self.timestamp = timestamp
+        self.scanContextID = scanContextID
     }
 }
 
@@ -196,6 +201,105 @@ struct StylistScreenContext: Codable, Equatable {
     }
 }
 
+enum StylistScanContextSource: String, Codable, Equatable {
+    case liveCompleted = "live_completed"
+    case savedSelection = "saved_selection"
+    case latestCompleted = "latest_completed"
+}
+
+enum StylistScanImageReference: String, Codable, Equatable {
+    // This is deliberately a presence marker, never an image, path, URL, or identifier.
+    case onDeviceOnly = "on_device_only"
+}
+
+struct StylistAuthoritativeScanContext: Codable, Equatable {
+    let scanID: String
+    let completedAt: Date
+    let overallScore: Int
+    let scoreBreakdown: OutfitScoreBreakdown?
+    let detectedStyle: String?
+    let styleConfidence: Int?
+    let selectedOccasion: String?
+    let occasionAssessment: String?
+    let weatherContext: String?
+    let outfitClassification: OutfitClassificationResult?
+    let imageReference: StylistScanImageReference?
+    let source: StylistScanContextSource
+
+    init(
+        scanID: String,
+        completedAt: Date,
+        overallScore: Int,
+        scoreBreakdown: OutfitScoreBreakdown?,
+        detectedStyle: String? = nil,
+        styleConfidence: Int? = nil,
+        selectedOccasion: String? = nil,
+        occasionAssessment: String? = nil,
+        weatherContext: String? = nil,
+        outfitClassification: OutfitClassificationResult? = nil,
+        imageReference: StylistScanImageReference? = nil,
+        source: StylistScanContextSource
+    ) {
+        self.scanID = Self.nonEmpty(scanID) ?? ""
+        self.completedAt = completedAt
+        self.overallScore = min(100, max(0, overallScore))
+        self.scoreBreakdown = scoreBreakdown
+        self.detectedStyle = Self.nonEmpty(detectedStyle)
+        self.styleConfidence = styleConfidence.map { min(100, max(0, $0)) }
+        self.selectedOccasion = Self.nonEmpty(selectedOccasion)
+        self.occasionAssessment = Self.nonEmpty(occasionAssessment)
+        self.weatherContext = Self.nonEmpty(weatherContext)
+        self.outfitClassification = outfitClassification
+        self.imageReference = imageReference
+        self.source = source
+    }
+
+    var isComplete: Bool {
+        !scanID.isEmpty && (0...100).contains(overallScore)
+    }
+
+    func matches(_ screenContext: StylistScreenContext?) -> Bool {
+        guard let screenContext,
+              screenContext.activeScanState != .none else {
+            return true
+        }
+        guard screenContext.activeScanID == scanID else { return false }
+        return screenContext.visibleOverallScore.map { $0 == overallScore } ?? true
+    }
+
+    var activeScanPrompt: String {
+        var facts = ["scan ID \(scanID)", "completed \(completedAt.ISO8601Format())", "score \(overallScore)/100"]
+        if let detectedStyle { facts.append("detected style \(detectedStyle)") }
+        if let styleConfidence { facts.append("style confidence \(styleConfidence)%") }
+        if let selectedOccasion { facts.append("selected occasion \(selectedOccasion)") }
+        if let occasionAssessment { facts.append("occasion assessment \(occasionAssessment)") }
+        if let weatherContext { facts.append("weather context \(weatherContext)") }
+        if let outfitClassification {
+            facts.append("outfit category \(outfitClassification.effectiveCategory.displayName)")
+            facts.append("category confidence \(Int((outfitClassification.confidence * 100).rounded()))%")
+            facts.append("category source \(outfitClassification.userConfirmedCategory == nil ? "scan evidence" : "user confirmed")")
+            facts.append("evaluation profile \(outfitClassification.scoringProfile.rawValue): \(outfitClassification.scoringProfile.evaluationCriteria.joined(separator: ", "))")
+            if !outfitClassification.detectedBranding.isEmpty {
+                facts.append("visible-brand evidence \(outfitClassification.detectedBranding.joined(separator: ", "))")
+            }
+        }
+        if imageReference != nil { facts.append("scan image remains on device") }
+        return "Authoritative completed scan: \(facts.joined(separator: "; ")). All facts in this block belong to this one scan ID."
+    }
+
+    var scoreBreakdownPrompt: String {
+        guard let scoreBreakdown else {
+            return "Overall score from authoritative scan: \(overallScore)/100. Category breakdown unavailable for this scan. Do not invent category scores."
+        }
+        return "Existing score only for scan ID \(scanID): \(scoreBreakdown.stylistChatSummary)"
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(500))
+    }
+}
+
 enum StylistActiveScanStateResolver {
     static func resolve(
         hasResult: Bool,
@@ -238,6 +342,7 @@ struct ChatContext: Codable, Equatable {
     var weatherConstraint: String
     var scoreBreakdown: String?
     var screenContext: StylistScreenContext?
+    var authoritativeScan: StylistAuthoritativeScanContext?
 
     init(
         profileSummary: String = "",
@@ -246,7 +351,8 @@ struct ChatContext: Codable, Equatable {
         historicalOutfits: String = "",
         weatherConstraint: String = "",
         scoreBreakdown: String? = nil,
-        screenContext: StylistScreenContext? = nil
+        screenContext: StylistScreenContext? = nil,
+        authoritativeScan: StylistAuthoritativeScanContext? = nil
     ) {
         self.profileSummary = Self.clamp(profileSummary, max: 600)
         self.recentOutfits = Self.clamp(recentOutfits, max: 800)
@@ -255,6 +361,7 @@ struct ChatContext: Codable, Equatable {
         self.weatherConstraint = Self.clamp(weatherConstraint, max: 300)
         self.scoreBreakdown = scoreBreakdown.map { Self.clamp($0, max: 500) }
         self.screenContext = screenContext
+        self.authoritativeScan = authoritativeScan
     }
 
     init(from decoder: Decoder) throws {
@@ -266,7 +373,8 @@ struct ChatContext: Codable, Equatable {
             historicalOutfits: try container.decodeIfPresent(String.self, forKey: .historicalOutfits) ?? "",
             weatherConstraint: try container.decodeIfPresent(String.self, forKey: .weatherConstraint) ?? "",
             scoreBreakdown: try container.decodeIfPresent(String.self, forKey: .scoreBreakdown),
-            screenContext: try container.decodeIfPresent(StylistScreenContext.self, forKey: .screenContext)
+            screenContext: try container.decodeIfPresent(StylistScreenContext.self, forKey: .screenContext),
+            authoritativeScan: try container.decodeIfPresent(StylistAuthoritativeScanContext.self, forKey: .authoritativeScan)
         )
     }
 
@@ -278,6 +386,7 @@ struct ChatContext: Codable, Equatable {
         case weatherConstraint
         case scoreBreakdown
         case screenContext
+        case authoritativeScan
     }
 
     private static func clamp(_ text: String, max: Int) -> String {
@@ -359,8 +468,146 @@ extension ChatContext {
         if previouslyHadActiveScan && currentScreenContext.activeScanState == .none {
             resolved.activeScan = ""
             resolved.scoreBreakdown = nil
+            resolved.authoritativeScan = nil
         }
         return resolved
+    }
+}
+
+extension ChatContext {
+    func validatingAuthoritativeScan() -> Self {
+        guard let authoritativeScan else { return self }
+        return applyingAuthoritativeScan(authoritativeScan)
+    }
+
+    func applyingAuthoritativeScan(_ scan: StylistAuthoritativeScanContext?) -> Self {
+        var resolved = self
+        guard let scan, scan.isComplete, scan.matches(screenContext) else {
+            resolved.authoritativeScan = nil
+            resolved.activeScan = ""
+            resolved.scoreBreakdown = nil
+            return resolved
+        }
+        resolved.authoritativeScan = scan
+        resolved.activeScan = scan.activeScanPrompt
+        resolved.scoreBreakdown = scan.scoreBreakdownPrompt
+        if var screenContext = resolved.screenContext {
+            if screenContext.activeScanState == .none {
+                screenContext.activeScanState = .saved
+            }
+            screenContext.activeScanID = scan.scanID
+            screenContext.visibleOverallScore = scan.overallScore
+            screenContext.selectedOccasion = scan.selectedOccasion ?? screenContext.selectedOccasion
+            resolved.screenContext = screenContext
+        }
+        return resolved
+    }
+}
+
+/// The sole constructor and resolver for scan facts consumed by conversational features.
+/// Callers provide observed UI/persistence facts; this provider decides which completed
+/// scan is authoritative and returns one immutable, typed context.
+enum CurrentScanContextProvider {
+    private struct StoredScan: Decodable {
+        let score: Int
+        let analysis: OutfitAnalysisResult?
+        let firstScannedAt: Date
+        let occasion: Occasion?
+        let hasThumbnailData: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case score
+            case analysis
+            case firstScannedAt
+            case occasion
+            case thumbnailData
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            score = try container.decode(Int.self, forKey: .score)
+            analysis = try container.decodeIfPresent(OutfitAnalysisResult.self, forKey: .analysis)
+            firstScannedAt = try container.decode(Date.self, forKey: .firstScannedAt)
+            occasion = try container.decodeIfPresent(Occasion.self, forKey: .occasion)
+            if container.contains(.thumbnailData) {
+                hasThumbnailData = try !container.decodeNil(forKey: .thumbnailData)
+            } else {
+                hasThumbnailData = false
+            }
+        }
+    }
+
+    static func latestCompleted(defaults: UserDefaults = .standard) -> StylistAuthoritativeScanContext? {
+        guard let data = defaults.data(forKey: "outfitScanHistoryData"), !data.isEmpty,
+              let scans = try? JSONDecoder().decode([String: StoredScan].self, from: data) else {
+            return nil
+        }
+        return scans.compactMap { scanID, stored -> StylistAuthoritativeScanContext? in
+            guard let analysis = stored.analysis,
+                  (0...100).contains(stored.score),
+                  analysis.score == stored.score else {
+                return nil
+            }
+            return StylistAuthoritativeScanContext(
+                scanID: scanID,
+                completedAt: stored.firstScannedAt,
+                overallScore: stored.score,
+                scoreBreakdown: analysis.scoreBreakdown,
+                detectedStyle: analysis.styleBalance,
+                selectedOccasion: stored.occasion?.rawValue,
+                occasionAssessment: analysis.occasionFit,
+                weatherContext: analysis.environment,
+                outfitClassification: analysis.outfitClassification,
+                imageReference: stored.hasThumbnailData ? .onDeviceOnly : nil,
+                source: .latestCompleted
+            )
+        }.sorted { left, right in
+            if left.completedAt == right.completedAt { return left.scanID > right.scanID }
+            return left.completedAt > right.completedAt
+        }.first
+    }
+
+    static func make(
+        scanID: String,
+        completedAt: Date,
+        analysis: OutfitAnalysisResult,
+        detectedStyle: String?,
+        styleConfidence: Int?,
+        selectedOccasion: String?,
+        occasionAssessment: String?,
+        weatherContext: String?,
+        imageReference: StylistScanImageReference?,
+        source: StylistScanContextSource
+    ) -> StylistAuthoritativeScanContext {
+        StylistAuthoritativeScanContext(
+            scanID: scanID,
+            completedAt: completedAt,
+            overallScore: analysis.score,
+            scoreBreakdown: analysis.scoreBreakdown,
+            detectedStyle: detectedStyle,
+            styleConfidence: styleConfidence,
+            selectedOccasion: selectedOccasion,
+            occasionAssessment: occasionAssessment,
+            weatherContext: weatherContext,
+            outfitClassification: analysis.outfitClassification,
+            imageReference: imageReference,
+            source: source
+        )
+    }
+
+    static func resolve(
+        preferred: StylistAuthoritativeScanContext?,
+        screenContext: StylistScreenContext?,
+        defaults: UserDefaults = .standard
+    ) -> StylistAuthoritativeScanContext? {
+        if let preferred, preferred.isComplete, preferred.matches(screenContext) {
+            if preferred.source == .savedSelection { return preferred }
+            if let latest = latestCompleted(defaults: defaults), latest.completedAt > preferred.completedAt {
+                return latest
+            }
+            return preferred
+        }
+        return latestCompleted(defaults: defaults)
     }
 }
 

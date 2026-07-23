@@ -48,6 +48,7 @@ struct OutfitAnalysisResult: Codable {
     let colorPaletteNotes: String
     let environment: String
     let imageQuality: String
+    let outfitClassification: OutfitClassificationResult
     // Legacy decode-only compatibility for saved scans created before Build 1.7 privacy isolation.
     let skinToneStyleNote: String?
     let detectedItemConfidences: [DetectedItemConfidence]
@@ -76,6 +77,7 @@ struct OutfitAnalysisResult: Codable {
         colorPaletteNotes: String? = nil,
         environment: String,
         imageQuality: String,
+        outfitClassification: OutfitClassificationResult = .uncertain(),
         skinToneStyleNote: String? = nil,
         detectedItemConfidences: [DetectedItemConfidence] = [],
         chatGPTStylistSections: [ChatGPTStylistSection] = [],
@@ -106,6 +108,7 @@ struct OutfitAnalysisResult: Codable {
                 : "Low confidence: colors were hard to read in this photo.")
         self.environment = environment
         self.imageQuality = imageQuality
+        self.outfitClassification = outfitClassification
         self.skinToneStyleNote = skinToneStyleNote
         self.detectedItemConfidences = detectedItemConfidences
         self.chatGPTStylistSections = chatGPTStylistSections
@@ -141,11 +144,47 @@ struct OutfitAnalysisResult: Codable {
                 : "Low confidence: colors were hard to read in this photo.")
         environment = try container.decode(String.self, forKey: .environment)
         imageQuality = try container.decode(String.self, forKey: .imageQuality)
+        outfitClassification = try container.decodeIfPresent(OutfitClassificationResult.self, forKey: .outfitClassification) ?? .uncertain()
         skinToneStyleNote = try container.decodeIfPresent(String.self, forKey: .skinToneStyleNote)
         detectedItemConfidences = try container.decodeIfPresent([DetectedItemConfidence].self, forKey: .detectedItemConfidences) ?? []
         chatGPTStylistSections = try container.decodeIfPresent([ChatGPTStylistSection].self, forKey: .chatGPTStylistSections) ?? []
         suggestions = try container.decode([String].self, forKey: .suggestions)
         recommendations = try container.decode([ClothingRecommendation].self, forKey: .recommendations)
+    }
+}
+
+extension OutfitAnalysisResult {
+    func replacingOutfitClassification(_ classification: OutfitClassificationResult) -> OutfitAnalysisResult {
+        OutfitAnalysisResult(
+            score: score,
+            scoreBreakdown: scoreBreakdown,
+            colorMatch: colorMatch,
+            occasionFit: occasionFit,
+            // A user correction changes the outfit category authority, not the
+            // independently detected style evidence stored on the scan.
+            styleBalance: styleBalance,
+            colorHarmony: colorHarmony,
+            styleCoordination: styleCoordination,
+            formality: formality,
+            seasonalMatch: seasonalMatch,
+            summary: summary,
+            outfitDescription: outfitDescription,
+            detectedClothingItems: detectedClothingItems,
+            colorPalette: colorPalette,
+            colorPaletteMaskingApplied: colorPaletteMaskingApplied,
+            colorPaletteMaskTier: colorPaletteMaskTier,
+            colorPaletteConfidence: colorPaletteConfidence,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence,
+            colorPaletteNotes: colorPaletteNotes,
+            environment: environment,
+            imageQuality: imageQuality,
+            outfitClassification: classification,
+            skinToneStyleNote: nil,
+            detectedItemConfidences: detectedItemConfidences,
+            chatGPTStylistSections: chatGPTStylistSections,
+            suggestions: suggestions,
+            recommendations: recommendations
+        )
     }
 }
 
@@ -244,6 +283,436 @@ extension OutfitAnalysisResult {
     }
 }
 
+enum OutfitCategory: String, Codable, CaseIterable, Equatable, Identifiable {
+    case workUniform
+    case brandedWorkwear
+    case schoolUniform
+    case medicalScrubs
+    case businessCasual
+    case businessFormal
+    case mensSuit
+    case tuxedo
+    case femaleBusinessDress
+    case cocktailDress
+    case eveningGown
+    case weddingDress
+    case bridesmaidDress
+    case casualDress
+    case casualWear
+    case traditionalCulturalAttire
+    case sportswear
+    case activewear
+    case outerwear
+    case swimwear
+    case footwear
+    case accessories
+    case otherUncertain
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .workUniform: return "Work Uniform"
+        case .brandedWorkwear: return "Branded Workwear"
+        case .schoolUniform: return "School Uniform"
+        case .medicalScrubs: return "Medical Scrubs"
+        case .businessCasual: return "Business Casual"
+        case .businessFormal: return "Business Formal"
+        case .mensSuit: return "Men's Suit"
+        case .tuxedo: return "Tuxedo"
+        case .femaleBusinessDress: return "Women's Business Attire"
+        case .cocktailDress: return "Cocktail Dress"
+        case .eveningGown: return "Evening Gown"
+        case .weddingDress: return "Wedding Dress"
+        case .bridesmaidDress: return "Bridesmaid Dress"
+        case .casualDress: return "Casual Dress"
+        case .casualWear: return "Casual Wear"
+        case .traditionalCulturalAttire: return "Traditional or Cultural Attire"
+        case .sportswear: return "Sportswear"
+        case .activewear: return "Activewear"
+        case .outerwear: return "Outerwear"
+        case .swimwear: return "Swimwear"
+        case .footwear: return "Footwear"
+        case .accessories: return "Accessories"
+        case .otherUncertain: return "Other / Uncertain"
+        }
+    }
+}
+
+enum OutfitClassificationConfidence: String, Codable, Equatable {
+    case high
+    case medium
+    case low
+}
+
+enum OutfitOccasionCompatibility: String, Codable, Equatable {
+    case compatible
+    case possible
+    case conflict
+    case uncertain
+}
+
+enum OutfitScoringProfile: String, Codable, Equatable {
+    case uniformWorkwear
+    case businessProfessional
+    case formalEvent
+    case weddingParty
+    case culturalTraditional
+    case athleticPerformance
+    case casualEveryday
+    case protectiveOuterwear
+    case swimwear
+    case accessoriesFootwear
+    case uncertain
+
+    var displayName: String {
+        switch self {
+        case .uniformWorkwear: return "Uniform and Workwear"
+        case .businessProfessional: return "Business and Professional"
+        case .formalEvent: return "Formal Event"
+        case .weddingParty: return "Wedding Party"
+        case .culturalTraditional: return "Traditional and Cultural"
+        case .athleticPerformance: return "Athletic Performance"
+        case .casualEveryday: return "Casual Everyday"
+        case .protectiveOuterwear: return "Protective Outerwear"
+        case .swimwear: return "Swimwear"
+        case .accessoriesFootwear: return "Accessories and Footwear"
+        case .uncertain: return "General Evidence"
+        }
+    }
+
+    var evaluationCriteria: [String] {
+        switch self {
+        case .uniformWorkwear:
+            return ["cleanliness", "fit", "coordination", "condition", "safety", "dress-code appropriateness", "weather suitability"]
+        case .businessProfessional:
+            return ["professional appropriateness", "fit", "length", "color coordination", "workplace context", "condition"]
+        case .formalEvent:
+            return ["silhouette", "fit", "fabric harmony", "event formality", "accessories", "venue appropriateness"]
+        case .weddingParty:
+            return ["silhouette", "fit", "fabric harmony", "ceremony formality", "accessories", "venue appropriateness"]
+        case .culturalTraditional:
+            return ["fit", "fabric presentation", "color harmony", "layering", "occasion context", "respectful accessories"]
+        case .athleticPerformance:
+            return ["movement", "comfort", "activity suitability", "fit", "footwear coordination", "weather suitability"]
+        case .casualEveryday:
+            return ["fit", "color harmony", "pattern balance", "condition", "occasion suitability", "weather suitability"]
+        case .protectiveOuterwear:
+            return ["condition", "fit", "layering", "weather protection", "safety", "occasion suitability"]
+        case .swimwear:
+            return ["fit", "condition", "activity suitability", "coverage preference", "weather suitability", "accessories"]
+        case .accessoriesFootwear:
+            return ["condition", "fit", "coordination", "function", "occasion suitability", "weather suitability"]
+        case .uncertain:
+            return ["visible condition", "fit where observable", "color coordination", "occasion context", "weather suitability"]
+        }
+    }
+}
+
+struct OutfitClassificationEvidence: Codable, Equatable, Identifiable {
+    enum Kind: String, Codable {
+        case silhouette
+        case construction
+        case visibleText
+        case branding
+        case occasion
+        case accessory
+        case uncertainty
+    }
+
+    let kind: Kind
+    let summary: String
+    let confidence: Double
+
+    var id: String { "\(kind.rawValue)|\(summary)" }
+
+    init(kind: Kind, summary: String, confidence: Double) {
+        self.kind = kind
+        self.summary = String(summary.trimmingCharacters(in: .whitespacesAndNewlines).prefix(180))
+        self.confidence = min(1, max(0, confidence))
+    }
+}
+
+struct OutfitVisualObservation: Codable, Equatable {
+    let identifier: String
+    let confidence: Double
+
+    init(identifier: String, confidence: Double) {
+        self.identifier = identifier
+        self.confidence = min(1, max(0, confidence))
+    }
+}
+
+struct OutfitTextObservation: Codable, Equatable {
+    let text: String
+    let confidence: Double
+
+    init(text: String, confidence: Double) {
+        self.text = String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
+        self.confidence = min(1, max(0, confidence))
+    }
+}
+
+struct OutfitClassificationResult: Codable, Equatable {
+    let primaryCategory: OutfitCategory
+    let secondaryCategories: [OutfitCategory]
+    let confidence: Double
+    let confidenceLevel: OutfitClassificationConfidence
+    let evidence: [OutfitClassificationEvidence]
+    /// Privacy-safe context tokens only. Raw OCR and probable names are never persisted here.
+    let detectedText: [String]
+    /// Generic evidence descriptions only; this is not a brand-identification result.
+    let detectedBranding: [String]
+    let selectedOccasion: String?
+    let occasionCompatibility: OutfitOccasionCompatibility
+    let userConfirmedCategory: OutfitCategory?
+    let scoringProfile: OutfitScoringProfile
+
+    var effectiveCategory: OutfitCategory { userConfirmedCategory ?? primaryCategory }
+    var requiresConfirmation: Bool {
+        guard userConfirmedCategory == nil, !isUncertain else { return false }
+        let confirmationRequiredCategories: Set<OutfitCategory> = [
+            .workUniform, .brandedWorkwear, .schoolUniform, .medicalScrubs
+        ]
+        return confidenceLevel == .medium || confirmationRequiredCategories.contains(primaryCategory)
+    }
+    var isUncertain: Bool {
+        effectiveCategory == .otherUncertain
+            || (userConfirmedCategory == nil && confidenceLevel == .low)
+    }
+
+    static func uncertain(selectedOccasion: String? = nil) -> Self {
+        Self(
+            primaryCategory: .otherUncertain,
+            secondaryCategories: [],
+            confidence: 0,
+            confidenceLevel: .low,
+            evidence: [.init(kind: .uncertainty, summary: "Not enough reliable garment evidence was available.", confidence: 1)],
+            detectedText: [],
+            detectedBranding: [],
+            selectedOccasion: selectedOccasion,
+            occasionCompatibility: .uncertain,
+            userConfirmedCategory: nil,
+            scoringProfile: .uncertain
+        )
+    }
+
+    func confirming(_ category: OutfitCategory) -> Self {
+        Self(
+            primaryCategory: primaryCategory,
+            secondaryCategories: secondaryCategories,
+            confidence: confidence,
+            confidenceLevel: confidenceLevel,
+            evidence: evidence + [.init(kind: .occasion, summary: "The user confirmed \(category.displayName) for this scan.", confidence: 1)],
+            detectedText: detectedText,
+            detectedBranding: detectedBranding,
+            selectedOccasion: selectedOccasion,
+            occasionCompatibility: OutfitClassificationEngine.occasionCompatibility(category: category, selectedOccasion: selectedOccasion),
+            userConfirmedCategory: category,
+            scoringProfile: OutfitClassificationEngine.scoringProfile(for: category)
+        )
+    }
+}
+
+enum OutfitClassificationEngine {
+    private struct Candidate {
+        let category: OutfitCategory
+        var score: Double
+        var evidence: [OutfitClassificationEvidence]
+    }
+
+    static func classify(
+        visualObservations: [OutfitVisualObservation],
+        textObservations: [OutfitTextObservation] = [],
+        selectedOccasion: String? = nil
+    ) -> OutfitClassificationResult {
+        let visual = visualObservations
+            .filter { $0.confidence >= 0.12 }
+            .map { (text: normalized($0.identifier), confidence: $0.confidence) }
+        let readableText = textObservations.filter { $0.confidence >= 0.35 && !$0.text.isEmpty }
+        let ocrText = readableText.map { normalized($0.text) }.joined(separator: " ")
+        let visualText = visual.map(\.text).joined(separator: " ")
+        let combined = "\(visualText) \(ocrText)"
+        let occasion = normalized(selectedOccasion ?? "")
+        let hasReadableText = !readableText.isEmpty
+        let brandingTerms = ["logo", "brand mark", "embroider", "monogram", "patch", "name badge"]
+        let constructionTerms = ["uniform", "scrub", "workwear", "coverall", "utility shirt", "name badge", "service shirt"]
+        let workSupportedTerms = ["work shirt", "polo", "polo shirt", "button down", "patch"]
+        let hasBrandingCue = containsAny(combined, brandingTerms)
+        let hasExplicitUniformConstruction = containsAny(combined, constructionTerms)
+        let hasWorkSupportedConstruction = occasion.contains("work")
+            && containsAny(combined, workSupportedTerms)
+        let hasUniformConstruction = hasExplicitUniformConstruction || hasWorkSupportedConstruction
+        let brandingConfidence = visual
+            .filter { observation in
+                brandingTerms.contains { containsTerm(observation.text, $0) }
+            }
+            .map(\.confidence)
+            .max() ?? 0
+        let constructionConfidence = visual
+            .filter { observation in
+                (constructionTerms + workSupportedTerms).contains {
+                    containsTerm(observation.text, $0)
+                }
+            }
+            .map(\.confidence)
+            .max() ?? 0
+        let textConfidence = readableText.map(\.confidence).max() ?? 0
+
+        var candidates: [Candidate] = []
+        func add(_ category: OutfitCategory, terms: [String], base: Double = 0) {
+            let matches = terms.filter { containsTerm(combined, $0) }
+            guard !matches.isEmpty || base > 0 else { return }
+            let strongest = visual.filter { observation in
+                terms.contains { containsTerm(observation.text, $0) }
+            }.map(\.confidence).max() ?? 0
+            var evidence: [OutfitClassificationEvidence] = []
+            if !matches.isEmpty {
+                evidence.append(.init(kind: .silhouette, summary: "Visible garment cues support \(category.displayName).", confidence: max(strongest, 0.55)))
+            }
+            candidates.append(Candidate(category: category, score: min(0.96, base + strongest + Double(matches.count - 1) * 0.08), evidence: evidence))
+        }
+
+        add(.medicalScrubs, terms: ["medical scrub", "scrubs", "scrub top", "scrub pants", "hospital uniform"])
+        add(.schoolUniform, terms: ["school uniform", "school blazer", "school crest", "student uniform"])
+        add(.tuxedo, terms: ["tuxedo", "dinner jacket", "bow tie", "black tie"])
+        add(.weddingDress, terms: ["wedding dress", "bridal gown", "bridal dress", "wedding gown"])
+        add(.bridesmaidDress, terms: ["bridesmaid", "bridesmaid dress"])
+        add(.eveningGown, terms: ["evening gown", "formal gown", "floor length gown", "gown"])
+        add(.cocktailDress, terms: ["cocktail dress", "party dress", "semi formal dress"])
+        add(.femaleBusinessDress, terms: ["business dress", "professional dress", "office dress", "sheath dress"])
+        add(.mensSuit, terms: ["business suit", "three piece suit", "two piece suit", "suit jacket", "suit", "necktie"])
+        add(.businessFormal, terms: ["business formal", "formal business", "tailored blazer", "dress shirt"])
+        add(.businessCasual, terms: ["business casual", "smart casual", "chino", "loafer", "polo shirt"])
+        add(.casualDress, terms: ["casual dress", "sundress", "day dress"])
+        add(.traditionalCulturalAttire, terms: ["traditional attire", "cultural attire", "ceremonial", "sari", "saree", "kimono", "hanbok", "kente", "ankara", "agbada", "dashiki", "thobe", "abaya", "kilt"])
+        add(.activewear, terms: ["activewear", "workout", "gym wear", "training wear", "running tights", "sports bra", "yoga pants"])
+        add(.sportswear, terms: ["sportswear", "sports jersey", "team jersey", "athletic uniform", "football uniform", "basketball uniform"])
+        add(.outerwear, terms: ["outerwear", "overcoat", "parka", "raincoat", "winter coat", "jacket"])
+        add(.swimwear, terms: ["swimwear", "swimsuit", "bikini", "swim trunks", "bathing suit"])
+        add(.footwear, terms: ["shoe", "sneaker", "loafer", "boot", "sandal", "heel"])
+        add(.accessories, terms: ["accessory", "handbag", "purse", "watch", "belt", "scarf", "jewelry", "necklace"])
+
+        if hasUniformConstruction {
+            var score = 0.32 + (0.25 * constructionConfidence)
+            var evidence: [OutfitClassificationEvidence] = [
+                .init(kind: .construction, summary: "Uniform or workwear construction cues are visible.", confidence: 0.65)
+            ]
+            if hasBrandingCue {
+                score += 0.16 * brandingConfidence
+                evidence.append(.init(kind: .branding, summary: "A visible logo, patch, badge, or embroidered branding cue is present; no brand or wearer identity was inferred.", confidence: brandingConfidence))
+            }
+            if hasReadableText {
+                score += 0.12 * textConfidence
+                evidence.append(.init(kind: .visibleText, summary: "Readable garment text is present; raw text and probable names are not retained.", confidence: textConfidence))
+            }
+            if occasion.contains("work") {
+                score += 0.10
+                evidence.append(.init(kind: .occasion, summary: "The selected Work occasion supports, but does not independently prove, a uniform context.", confidence: 1))
+            }
+            candidates.append(Candidate(category: hasBrandingCue ? .brandedWorkwear : .workUniform, score: min(score, 0.94), evidence: evidence))
+        }
+
+        if candidates.isEmpty, containsAny(combined, ["shirt", "t shirt", "jeans", "pants", "shorts", "casual"]) {
+            add(.casualWear, terms: ["shirt", "t shirt", "jeans", "pants", "shorts", "casual"])
+        }
+
+        let ranked = candidates
+            .sorted { left, right in left.score == right.score ? left.category.rawValue < right.category.rawValue : left.score > right.score }
+        guard let best = ranked.first, best.score >= 0.42 else {
+            return .uncertain(selectedOccasion: selectedOccasion)
+        }
+
+        let confidenceLevel: OutfitClassificationConfidence = best.score >= 0.82 ? .high : best.score >= 0.55 ? .medium : .low
+        let primary = confidenceLevel == .low ? OutfitCategory.otherUncertain : best.category
+        let secondary: [OutfitCategory]
+        if confidenceLevel == .low {
+            secondary = Array(ranked.prefix(3).map(\.category))
+        } else {
+            secondary = Array(ranked.dropFirst().filter { $0.score >= max(0.42, best.score - 0.20) }.prefix(3).map(\.category))
+        }
+        let privacySafeText = hasReadableText ? ["readable garment text present"] : []
+        let branding = hasBrandingCue ? ["visible logo, patch, badge, or embroidered branding cue"] : []
+        let evidence = confidenceLevel == .low
+            ? best.evidence + [.init(kind: .uncertainty, summary: "The strongest category evidence is below the confirmation threshold.", confidence: 1 - best.score)]
+            : best.evidence
+
+        return OutfitClassificationResult(
+            primaryCategory: primary,
+            secondaryCategories: secondary,
+            confidence: best.score,
+            confidenceLevel: confidenceLevel,
+            evidence: evidence,
+            detectedText: privacySafeText,
+            detectedBranding: branding,
+            selectedOccasion: selectedOccasion,
+            occasionCompatibility: occasionCompatibility(category: primary, selectedOccasion: selectedOccasion),
+            userConfirmedCategory: nil,
+            scoringProfile: scoringProfile(for: primary)
+        )
+    }
+
+    static func scoringProfile(for category: OutfitCategory) -> OutfitScoringProfile {
+        switch category {
+        case .workUniform, .brandedWorkwear, .schoolUniform, .medicalScrubs: return .uniformWorkwear
+        case .businessCasual, .businessFormal, .mensSuit, .femaleBusinessDress: return .businessProfessional
+        case .tuxedo, .cocktailDress, .eveningGown: return .formalEvent
+        case .weddingDress, .bridesmaidDress: return .weddingParty
+        case .traditionalCulturalAttire: return .culturalTraditional
+        case .sportswear, .activewear: return .athleticPerformance
+        case .casualWear, .casualDress: return .casualEveryday
+        case .outerwear: return .protectiveOuterwear
+        case .swimwear: return .swimwear
+        case .footwear, .accessories: return .accessoriesFootwear
+        case .otherUncertain: return .uncertain
+        }
+    }
+
+    static func occasionCompatibility(category: OutfitCategory, selectedOccasion: String?) -> OutfitOccasionCompatibility {
+        let occasion = normalized(selectedOccasion ?? "")
+        guard !occasion.isEmpty, occasion != "general" else { return .uncertain }
+        if occasion.contains("work") {
+            switch category {
+            case .workUniform, .brandedWorkwear, .medicalScrubs, .businessCasual, .businessFormal, .mensSuit, .femaleBusinessDress:
+                return .compatible
+            case .schoolUniform, .swimwear, .weddingDress, .bridesmaidDress, .eveningGown:
+                return .conflict
+            default:
+                return .possible
+            }
+        }
+        if occasion.contains("wedding") || occasion.contains("formal") {
+            switch category {
+            case .weddingDress, .bridesmaidDress, .eveningGown, .cocktailDress, .tuxedo, .mensSuit, .businessFormal, .traditionalCulturalAttire:
+                return .compatible
+            case .swimwear, .activewear, .sportswear, .schoolUniform, .medicalScrubs:
+                return .conflict
+            default:
+                return .possible
+            }
+        }
+        return .possible
+    }
+
+    private static func normalized(_ value: String) -> String {
+        value.lowercased()
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func containsAny(_ text: String, _ terms: [String]) -> Bool {
+        terms.contains { containsTerm(text, $0) }
+    }
+
+    private static func containsTerm(_ text: String, _ term: String) -> Bool {
+        let escaped = NSRegularExpression.escapedPattern(for: normalized(term))
+        let pattern = #"(?<![\p{L}\p{N}])"# + escaped + #"(?![\p{L}\p{N}])"#
+        return text.range(of: pattern, options: .regularExpression) != nil
+    }
+}
+
 private extension Array where Element: Hashable {
     func removingDuplicates() -> [Element] {
         var seen = Set<Element>()
@@ -251,7 +720,7 @@ private extension Array where Element: Hashable {
     }
 }
 
-struct OutfitScoreBreakdown: Codable {
+struct OutfitScoreBreakdown: Codable, Equatable {
     let colorHarmony: Int
     let patternBalance: Int
     let fitQuality: Int

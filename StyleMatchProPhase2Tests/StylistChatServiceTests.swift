@@ -1354,6 +1354,64 @@ final class StylistChatServiceTests: XCTestCase {
     }
 
     @MainActor
+    func testVoiceInputCanRestartAfterCancellationWithoutLosingDraft() async {
+        let controller = MockSpeechRecognitionController()
+        let service = StylistSpeechInputService(controller: controller)
+
+        await service.startListening(existingText: "Keep this draft")
+        controller.emitPartial("first attempt")
+        XCTAssertEqual(service.cancelListening(), "Keep this draft")
+
+        await service.startListening(existingText: service.transcript)
+        controller.emitPartial("second attempt")
+
+        XCTAssertEqual(controller.startCount, 2)
+        XCTAssertEqual(controller.stopCalls.filter { $0 }.count, 1)
+        XCTAssertEqual(service.transcript, "Keep this draft second attempt")
+        XCTAssertEqual(service.state, .listening)
+    }
+
+    @MainActor
+    func testVoiceInputCancelledDuringPermissionRequestCannotStartLater() async {
+        let controller = MockSpeechRecognitionController()
+        controller.suspendMicrophoneRequest = true
+        let service = StylistSpeechInputService(controller: controller)
+
+        let startTask = Task {
+            await service.startListening(existingText: "Keep draft")
+        }
+        await Task.yield()
+        XCTAssertEqual(service.state, .requestingPermission)
+
+        XCTAssertEqual(service.cancelListening(), "Keep draft")
+        controller.completeSuspendedMicrophoneRequest(with: .authorized)
+        await startTask.value
+
+        XCTAssertEqual(controller.startCount, 0)
+        XCTAssertEqual(controller.speechRequestCount, 0)
+        XCTAssertEqual(service.state, .idle)
+        XCTAssertEqual(service.transcript, "Keep draft")
+    }
+
+    func testSystemVoiceControllerOwnsOneValidatedTapPerSession() throws {
+        let source = try projectSource("StyleMatchAI/StylistChat/StylistSpeechInputService.swift")
+
+        XCTAssertTrue(source.contains("let engine = AVAudioEngine()"))
+        XCTAssertTrue(source.contains("recordInstallGuard(\"existing_session\")"))
+        XCTAssertTrue(source.contains("recordInstallGuard(\"existing_owned_tap\")"))
+        XCTAssertTrue(source.contains("recordInstallGuard(\"invalid_audio_route\")"))
+        XCTAssertTrue(source.contains("recordInstallGuard(\"invalid_input_format\")"))
+        XCTAssertTrue(source.contains("guard !session.currentRoute.inputs.isEmpty"))
+        XCTAssertTrue(source.contains("guard format.sampleRate > 0, format.channelCount > 0"))
+        XCTAssertTrue(source.contains("private weak var tappedInputNode: AVAudioInputNode?"))
+        XCTAssertTrue(source.contains("if let tappedInputNode {\n            tappedInputNode.removeTap(onBus: 0)"))
+        XCTAssertTrue(source.contains("guard self?.activeSessionID == sessionID else { return }"))
+        XCTAssertTrue(source.contains("#if DEBUG && canImport(OSLog)"))
+        XCTAssertTrue(source.contains("install_tap_guard="))
+        XCTAssertFalse(source.contains("audioEngine.inputNode.removeTap(onBus: 0)"))
+    }
+
+    @MainActor
     func testVoiceInputRecognitionUnavailableAndNoSpeechStates() async {
         let unavailable = MockSpeechRecognitionController()
         unavailable.supportsRecognition = false
@@ -1392,6 +1450,27 @@ final class StylistChatServiceTests: XCTestCase {
         recovered.deleteAll()
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertTrue(ChatConversationStore(fileURL: url).conversations.isEmpty)
+    }
+
+    func testChatConversationStoreRefreshesBackupBeforeEachAtomicWrite() throws {
+        let url = temporaryStoreURL()
+        let store = ChatConversationStore(fileURL: url)
+
+        for content in ["first", "second", "third"] {
+            var conversation = ChatConversation()
+            conversation.messages = [ChatMessage(role: .user, content: content)]
+            store.save(conversation)
+            XCTAssertNil(store.persistenceErrorMessage)
+        }
+
+        try Data("not-json".utf8).write(to: url)
+        let recovered = ChatConversationStore(fileURL: url)
+        let recoveredMessages = recovered.conversations.compactMap { $0.messages.first?.content }
+
+        XCTAssertEqual(recoveredMessages.count, 2)
+        XCTAssertTrue(recoveredMessages.contains("first"))
+        XCTAssertTrue(recoveredMessages.contains("second"))
+        XCTAssertFalse(recoveredMessages.contains("third"))
     }
 
     func testWarmWeatherWithholdsHistoricalJacketRecommendationEvidence() {
@@ -1656,6 +1735,161 @@ final class StylistChatServiceTests: XCTestCase {
         XCTAssertNotNil(context.scoreBreakdown)
     }
 
+    func testCurrentScanProviderPromotesNewerCompletedScanOverStaleLiveContext() throws {
+        let suiteName = "CurrentScanProvider-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let old = contextSelectionAnalysis(garments: ["shirt"], confidences: [])
+        let latest = OutfitAnalysisResult(
+            score: 80,
+            scoreBreakdown: old.scoreBreakdown,
+            colorMatch: old.colorMatch,
+            occasionFit: "Work",
+            styleBalance: old.styleBalance,
+            colorHarmony: old.colorHarmony,
+            styleCoordination: old.styleCoordination,
+            formality: old.formality,
+            seasonalMatch: old.seasonalMatch,
+            summary: old.summary,
+            outfitDescription: "Work Uniform",
+            detectedClothingItems: ["shirt"],
+            colorPalette: old.colorPalette,
+            environment: "86 F",
+            imageQuality: old.imageQuality,
+            outfitClassification: OutfitClassificationEngine.classify(
+                visualObservations: [.init(identifier: "uniform utility shirt", confidence: 0.95)],
+                selectedOccasion: "Work"
+            ),
+            suggestions: [],
+            recommendations: []
+        )
+        let history: [String: StoredScanFixture] = [
+            "scan-74": .init(score: 74, analysis: old, firstScannedAt: Date(timeIntervalSince1970: 74), occasion: .casual, thumbnailData: nil),
+            "scan-80": .init(score: 80, analysis: latest, firstScannedAt: Date(timeIntervalSince1970: 80), occasion: .work, thumbnailData: Data([1]))
+        ]
+        defaults.set(try JSONEncoder().encode(history), forKey: "outfitScanHistoryData")
+        let stale = StylistAuthoritativeScanContext(
+            scanID: "scan-74",
+            completedAt: Date(timeIntervalSince1970: 74),
+            overallScore: 74,
+            scoreBreakdown: nil,
+            source: .liveCompleted
+        )
+
+        let resolved = CurrentScanContextProvider.resolve(
+            preferred: stale,
+            screenContext: nil,
+            defaults: defaults
+        )
+
+        XCTAssertEqual(resolved?.scanID, "scan-80")
+        XCTAssertEqual(resolved?.overallScore, 80)
+        XCTAssertEqual(resolved?.selectedOccasion, "work")
+        XCTAssertEqual(resolved?.outfitClassification?.effectiveCategory, .workUniform)
+        XCTAssertEqual(resolved?.imageReference, .onDeviceOnly)
+    }
+
+    func testExplicitOlderSavedScanRemainsAuthoritativeForHistoricalQuestions() {
+        let saved = StylistAuthoritativeScanContext(
+            scanID: "saved-74",
+            completedAt: Date(timeIntervalSince1970: 74),
+            overallScore: 74,
+            scoreBreakdown: nil,
+            selectedOccasion: "Outdoor",
+            source: .savedSelection
+        )
+        let screen = StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: .saved,
+            activeScanID: "saved-74",
+            visibleOverallScore: 74,
+            entryPoint: .scanResult,
+            closetState: .unavailable
+        )
+
+        let resolved = CurrentScanContextProvider.resolve(preferred: saved, screenContext: screen)
+
+        XCTAssertEqual(resolved, saved)
+    }
+
+    @MainActor
+    func testChatRequestUsesAuthoritative80AndDropsStale74AssistantMemory() async throws {
+        let transport = MockChatTransport(chunks: ["Your most recent scan scored 80/100."])
+        var conversation = ChatConversation()
+        conversation.messages = [
+            ChatMessage(role: .user, content: "What was my last score?"),
+            ChatMessage(role: .assistant, content: "Your last score was 74/100.")
+        ]
+        let store = ChatConversationStore(fileURL: temporaryStoreURL())
+        store.save(conversation)
+        let scan = StylistAuthoritativeScanContext(
+            scanID: "scan-80",
+            completedAt: Date(timeIntervalSince1970: 80),
+            overallScore: 80,
+            scoreBreakdown: nil,
+            selectedOccasion: "Work",
+            source: .latestCompleted
+        )
+        let service = StylistChatService(store: store, transport: transport)
+
+        XCTAssertTrue(service.send("What was my score now?", forcedContext: ChatContext(authoritativeScan: scan)))
+        try await waitUntil { !service.isStreaming }
+
+        let request = try XCTUnwrap(transport.requests.last)
+        XCTAssertEqual(request.context.authoritativeScan?.scanID, "scan-80")
+        XCTAssertEqual(request.context.authoritativeScan?.overallScore, 80)
+        XCTAssertTrue(request.context.activeScan.contains("score 80/100"))
+        XCTAssertFalse(request.messages.contains { $0.content.contains("74/100") })
+    }
+
+    @MainActor
+    func testTypedScanIdentityDropsEntireOlderScanTurnWithoutTextGuessing() async throws {
+        let transport = MockChatTransport(chunks: ["The current scan is 80/100."])
+        var conversation = ChatConversation()
+        conversation.messages = [
+            ChatMessage(
+                role: .user,
+                content: "Why was that outfit weaker?",
+                scanContextID: "scan-74"
+            ),
+            ChatMessage(
+                role: .assistant,
+                content: "The fit needed improvement.",
+                scanContextID: "scan-74"
+            )
+        ]
+        let store = ChatConversationStore(fileURL: temporaryStoreURL())
+        store.save(conversation)
+        let scan = StylistAuthoritativeScanContext(
+            scanID: "scan-80",
+            completedAt: Date(timeIntervalSince1970: 80),
+            overallScore: 80,
+            scoreBreakdown: nil,
+            source: .latestCompleted
+        )
+        let service = StylistChatService(store: store, transport: transport)
+
+        XCTAssertTrue(service.send("What was my score now?", forcedContext: ChatContext(authoritativeScan: scan)))
+        try await waitUntil { !service.isStreaming }
+
+        let request = try XCTUnwrap(transport.requests.last)
+        XCTAssertFalse(request.messages.contains { $0.content == "Why was that outfit weaker?" })
+        XCTAssertFalse(request.messages.contains { $0.content == "The fit needed improvement." })
+        XCTAssertEqual(request.messages.last?.content, "What was my score now?")
+    }
+
+    func testLegacyChatMessageDecodesWithoutScanIdentity() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "id": UUID().uuidString,
+            "role": "user",
+            "content": "Hello",
+            "timestamp": Date().timeIntervalSinceReferenceDate
+        ])
+        let message = try JSONDecoder().decode(ChatMessage.self, from: data)
+
+        XCTAssertNil(message.scanContextID)
+    }
+
     func testAITabEntryPointsNeverCarryCurrentOutfitAuthority() {
         for entryPoint in [
             StylistEntryPoint.homeMorningBrief,
@@ -1769,6 +2003,14 @@ final class StylistChatServiceTests: XCTestCase {
         )
     }
 
+    private struct StoredScanFixture: Codable {
+        let score: Int
+        let analysis: OutfitAnalysisResult?
+        let firstScannedAt: Date
+        let occasion: Occasion?
+        let thumbnailData: Data?
+    }
+
     private func temporaryStoreURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("StyleMatchChatTests-\(UUID().uuidString)")
@@ -1867,6 +2109,8 @@ private final class MockSpeechRecognitionController: StylistSpeechRecognitionCon
     private(set) var speechRequestCount = 0
     private(set) var startCount = 0
     private(set) var stopCalls: [Bool] = []
+    var suspendMicrophoneRequest = false
+    private var microphoneContinuation: CheckedContinuation<StylistSpeechAuthorizationStatus, Never>?
 
     private var partialHandler: (@MainActor (String) -> Void)?
     private var finalHandler: (@MainActor (String) -> Void)?
@@ -1882,8 +2126,19 @@ private final class MockSpeechRecognitionController: StylistSpeechRecognitionCon
 
     func requestMicrophoneAuthorization() async -> StylistSpeechAuthorizationStatus {
         microphoneRequestCount += 1
+        if suspendMicrophoneRequest {
+            return await withCheckedContinuation { continuation in
+                microphoneContinuation = continuation
+            }
+        }
         microphoneStatus = microphoneRequestResult
         return microphoneRequestResult
+    }
+
+    func completeSuspendedMicrophoneRequest(with status: StylistSpeechAuthorizationStatus) {
+        microphoneStatus = status
+        microphoneContinuation?.resume(returning: status)
+        microphoneContinuation = nil
     }
 
     func requestSpeechAuthorization() async -> StylistSpeechAuthorizationStatus {

@@ -1,9 +1,17 @@
 import AVFoundation
 import ImageIO
 import PhotosUI
+import OSLog
 import SwiftUI
 import UIKit
 import Vision
+
+#if DEBUG
+private let scanIntelligenceLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.sabastine.stylematchai",
+    category: "ScanIntelligence"
+)
+#endif
 
 struct ScanView: View {
     @Binding var selectedTab: AppTab
@@ -125,7 +133,8 @@ struct ScanView: View {
         colorPaletteConfidence: GarmentPaletteConfidence? = nil,
         colorPaletteDetectionConfidence: Int? = nil,
         colorPaletteNotes: String? = nil,
-        scoreBreakdown: OutfitScoreBreakdown? = nil
+        scoreBreakdown: OutfitScoreBreakdown? = nil,
+        outfitClassification: OutfitClassificationResult = .uncertain()
     ) -> OutfitAnalysisResult {
         let paletteDetection = colorPalette == nil ? selectedUIImage?.garmentColorDetection() : nil
         let resolvedColorPalette = colorPalette ?? paletteDetection?.garmentColors ?? ["Neutral"]
@@ -163,14 +172,20 @@ struct ScanView: View {
             environment: environment
         )
         let isUnrecognized = !validation.isAccepted && noveltyStyle == nil && purposeStyle == nil && culturalStyle == nil
-        let occasionFit = isUnrecognized ? "Category Uncertain" : (noveltyStyle?.occasionCategory ?? purposeStyle?.occasionCategory ?? culturalStyle?.occasionCategory ?? plannedOccasionSummary(environment: environment))
+        let legacyOccasionFit = noveltyStyle?.occasionCategory ?? purposeStyle?.occasionCategory ?? culturalStyle?.occasionCategory ?? plannedOccasionSummary(environment: environment)
+        let occasionFit = isUnrecognized ? "Category Uncertain" : classificationOccasionSummary(outfitClassification, fallback: legacyOccasionFit)
         let formality = isUnrecognized ? "Unrecognized" : (noveltyStyle?.dressCode ?? purposeStyle?.dressCode ?? culturalStyle?.dressCode ?? (environment == "Business" || environment == "Office" ? "Polished" : "Flexible"))
-        let summary = isUnrecognized ? "Style Match Pro could not identify enough reliable clothing detail in this scan. Please retake the photo with the full outfit visible." : (noveltyStyle?.summary ?? purposeStyle?.summary ?? culturalStyle?.summary ?? "This outfit has a strong foundation. The colors feel intentional, the silhouette is balanced, and the fit advice uses your saved size profile for fashion guidance only.")
+        let legacySummary = noveltyStyle?.summary ?? purposeStyle?.summary ?? culturalStyle?.summary ?? "This outfit has a strong foundation. The colors feel intentional, the silhouette is balanced, and the fit advice uses your saved size profile for fashion guidance only."
+        let summary = isUnrecognized ? "Style Match Pro could not identify enough reliable clothing detail in this scan. Please retake the photo with the full outfit visible." : classificationSummary(outfitClassification, fallback: legacySummary)
         let itemConfidences = detectedItemConfidences(for: detectedItems, labels: labels, culturalStyle: culturalStyle)
-        let resolvedStyleCategory = isUnrecognized ? "Unrecognized Item" : (noveltyStyle?.styleCategory ?? purposeStyle?.styleCategory ?? culturalStyle?.styleCategory ?? "Casual Wear")
+        let legacyStyleCategory = isUnrecognized ? "Unrecognized Item" : (noveltyStyle?.styleCategory ?? purposeStyle?.styleCategory ?? culturalStyle?.styleCategory ?? "Casual Wear")
+        let resolvedStyleCategory = outfitClassification.isUncertain
+            ? legacyStyleCategory
+            : outfitClassification.effectiveCategory.displayName
         let calibratedScore = calibratedStyleScore(
             score,
-            styleCategory: resolvedStyleCategory,
+            // Classification changes evaluation context, never the numeric score authority.
+            styleCategory: legacyStyleCategory,
             evidence: [
                 detectedItems.joined(separator: " "),
                 occasionFit,
@@ -209,6 +224,7 @@ struct ScanView: View {
             colorPaletteNotes: colorPaletteNotes ?? paletteDetection?.notes,
             environment: environment,
             imageQuality: imageQuality,
+            outfitClassification: outfitClassification,
             skinToneStyleNote: nil,
             detectedItemConfidences: itemConfidences,
             suggestions: [
@@ -219,6 +235,34 @@ struct ScanView: View {
             ],
             recommendations: recommendations
         )
+    }
+
+    private func classificationOccasionSummary(
+        _ classification: OutfitClassificationResult,
+        fallback: String
+    ) -> String {
+        guard !classification.isUncertain else { return fallback }
+        let occasion = classification.selectedOccasion?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let context = occasion?.isEmpty == false ? occasion! : "the selected occasion"
+        switch classification.occasionCompatibility {
+        case .compatible:
+            return "\(classification.effectiveCategory.displayName) is compatible with \(context)."
+        case .possible:
+            return "\(classification.effectiveCategory.displayName) may fit \(context); confirm local dress-code expectations."
+        case .conflict:
+            return "\(classification.effectiveCategory.displayName) may not match \(context)."
+        case .uncertain:
+            return fallback
+        }
+    }
+
+    private func classificationSummary(
+        _ classification: OutfitClassificationResult,
+        fallback: String
+    ) -> String {
+        guard !classification.isUncertain else { return fallback }
+        let criteria = classification.scoringProfile.evaluationCriteria.joined(separator: ", ")
+        return "This appears to be \(classification.effectiveCategory.displayName.lowercased()). Evaluate it for \(criteria). The existing StyleMatch score is unchanged."
     }
 
     private func calibratedStyleScore(_ score: Int, styleCategory: String, evidence: String) -> Int {
@@ -1458,6 +1502,8 @@ struct ScanView: View {
 
             detectedStyleContextCard(for: result, darkMode: true)
 
+            outfitClassificationControl(for: result, darkMode: true)
+
             if let mismatch = formalityMismatch(for: result) {
                 formalityMismatchBanner(mismatch, result: result, darkMode: true)
             }
@@ -1507,11 +1553,16 @@ struct ScanView: View {
             if FeatureFlags.conversationalStylist,
                result.scoreBreakdown != nil {
                 NavigationLink {
+                    let authoritativeScan = authoritativeStylistScanContext(
+                        for: result,
+                        screenContext: currentScreenContext
+                    )
                     StylistChatView(
                         initialQuestion: "Why did this outfit score \(result.score)?",
                         initialContext: PersonalizationContextBuilder.scanStylistContext(
                             for: result,
-                            screenContext: currentScreenContext
+                            screenContext: currentScreenContext,
+                            authoritativeScan: authoritativeScan
                         ),
                         screenContext: currentScreenContext
                     )
@@ -1988,6 +2039,9 @@ struct ScanView: View {
     }
 
     private func detectedStyleTitle(for result: OutfitAnalysisResult) -> String {
+        if !result.outfitClassification.isUncertain {
+            return result.outfitClassification.effectiveCategory.displayName
+        }
         if let topStyle = styleRankings(for: result).first {
             return topStyle.name
         }
@@ -2033,7 +2087,124 @@ struct ScanView: View {
         return "Casual"
     }
 
+    private func outfitClassificationControl(
+        for analysis: OutfitAnalysisResult,
+        darkMode: Bool
+    ) -> some View {
+        let classification = analysis.outfitClassification
+        let textColor = darkMode ? Color.white : Color.primary
+        let muted = darkMode ? scanMuted : Color.secondary
+        let background = darkMode ? scanBackground.opacity(0.52) : AppTab.scan.palette.accent.opacity(0.08)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Outfit type")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(muted)
+                    Text(classification.effectiveCategory.displayName)
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(textColor)
+                }
+
+                Spacer()
+
+                Menu("Change") {
+                    ForEach(OutfitCategory.allCases.filter { $0 != .otherUncertain }) { category in
+                        Button(category.displayName) {
+                            updateOutfitClassification(category, for: analysis)
+                        }
+                    }
+                    Divider()
+                    Button("Other / Uncertain") {
+                        updateOutfitClassification(.otherUncertain, for: analysis)
+                    }
+                }
+                .font(.caption.weight(.bold))
+            }
+
+            if classification.requiresConfirmation {
+                Text("This appears to be \(classification.primaryCategory.displayName.lowercased()). Is that correct?")
+                    .font(.subheadline)
+                    .foregroundStyle(textColor)
+
+                HStack(spacing: 10) {
+                    Button("Yes") {
+                        updateOutfitClassification(classification.primaryCategory, for: analysis)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Not this") {
+                        updateOutfitClassification(.otherUncertain, for: analysis)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else if classification.isUncertain {
+                Text("Outfit type is uncertain. Choose a category only if you recognize it.")
+                    .font(.caption)
+                    .foregroundStyle(muted)
+                if !classification.secondaryCategories.isEmpty {
+                    Text("Likely options: \(classification.secondaryCategories.map(\.displayName).joined(separator: ", ")).")
+                        .font(.caption2)
+                        .foregroundStyle(muted)
+                }
+            } else if classification.userConfirmedCategory != nil {
+                Text("Confirmed by you for this scan.")
+                    .font(.caption)
+                    .foregroundStyle(muted)
+            }
+
+            if !classification.scoringProfile.evaluationCriteria.isEmpty {
+                Text("Evaluation: \(classification.scoringProfile.evaluationCriteria.joined(separator: ", ")).")
+                    .font(.caption2)
+                    .foregroundStyle(muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(background)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func updateOutfitClassification(
+        _ category: OutfitCategory,
+        for analysis: OutfitAnalysisResult
+    ) {
+        let classification = analysis.outfitClassification.confirming(category)
+        let updated = analysis.replacingOutfitClassification(classification)
+        result = updated
+        preparedAnalysis = updated
+
+        if let fingerprint = activeScanFingerprint {
+            var history = loadScanHistory()
+            if let stored = history[fingerprint] {
+                history[fingerprint] = StoredOutfitScan(
+                    score: stored.score,
+                    analysis: updated,
+                    firstScannedAt: stored.firstScannedAt,
+                    scanCount: stored.scanCount,
+                    thumbnailData: stored.thumbnailData,
+                    customTitle: stored.customTitle,
+                    occasion: stored.occasion,
+                    imageDigest: stored.imageDigest,
+                    deterministicInputs: stored.deterministicInputs
+                )
+                saveScanHistory(history)
+            }
+        }
+
+        dismissedFormalityMismatchSignatures.removeAll()
+        publishCurrentStylistScanHandoff(source: "outfit_category_confirmation")
+    }
+
     private func formalityMismatch(for result: OutfitAnalysisResult) -> FormalityMismatch? {
+        if !result.outfitClassification.isUncertain,
+           result.outfitClassification.occasionCompatibility == .compatible {
+            return nil
+        }
         guard let mismatch = FormalityMismatchEvaluator.evaluate(
             detectedStyle: detectedStyleTitle(for: result),
             occasion: selectedScanOccasion.canonical
@@ -2908,9 +3079,27 @@ struct ScanView: View {
         analysis: OutfitAnalysisResult,
         conversation: [AIChatMessage]
     ) async throws -> String {
+        let screenContext = currentScreenContext
+        let authoritativeScan = authoritativeStylistScanContext(
+            for: analysis,
+            screenContext: screenContext
+        )
         let scoreResult = lockedStyleScoreResult(from: analysis)
         let detectedAttributes = lockedDetectedAttributes(from: analysis)
         let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
+        let classificationFacts: [String]
+        if let classification = authoritativeScan?.outfitClassification {
+            classificationFacts = [
+                "outfit category: \(classification.effectiveCategory.displayName)",
+                "classification confidence: \(classification.confidenceLevel.rawValue) (\(Int((classification.confidence * 100).rounded()))%)",
+                "selected occasion: \(classification.selectedOccasion ?? authoritativeScan?.selectedOccasion ?? "not selected")",
+                "occasion compatibility: \(classification.occasionCompatibility.rawValue)",
+                "evaluation profile: \(classification.scoringProfile.displayName)",
+                "evaluation criteria: \(classification.scoringProfile.evaluationCriteria.joined(separator: ", "))"
+            ]
+        } else {
+            classificationFacts = []
+        }
         let prompt = PersonalizationContextBuilder.buildScanFollowUpPrompt(
             question: message,
             score: scoreResult.total,
@@ -2927,12 +3116,13 @@ struct ScanView: View {
             patterns: detectedAttributes.patterns,
             fitAssessment: detectedAttributes.fitAssessment,
             evidenceFacts: [
+                "authoritative scan ID: \(authoritativeScan?.scanID ?? "unavailable")",
                 "color harmony: \(analysis.colorHarmony)",
                 "coordination: \(analysis.styleCoordination)",
                 "formality: \(analysis.formality)",
                 "seasonal evidence: \(analysis.seasonalMatch)",
                 "occasion evidence: \(analysis.occasionFit)"
-            ] + analysis.suggestions.prefix(3).map { "improvement evidence: \($0)" },
+            ] + classificationFacts + analysis.suggestions.prefix(3).map { "improvement evidence: \($0)" },
             weatherFacts: phrasingContext.weatherFacts,
             historyFacts: phrasingContext.historyFacts,
             guardrails: [
@@ -3458,6 +3648,7 @@ struct ScanView: View {
             .padding(.bottom, 2)
 
             detectedStyleContextCard(for: result, darkMode: false)
+            outfitClassificationControl(for: result, darkMode: false)
 
             completeTheLookCard(for: result, darkMode: false)
 
@@ -4144,12 +4335,44 @@ struct ScanView: View {
     private var currentStylistScanHandoff: StylistScanHandoff? {
         let screenContext = currentScreenContext
         guard screenContext.activeScanState != .none, let result else { return nil }
+        let authoritativeScan = authoritativeStylistScanContext(
+            for: result,
+            screenContext: screenContext
+        )
         return StylistScanHandoff(
             context: PersonalizationContextBuilder.scanStylistContext(
                 for: result,
-                screenContext: screenContext
+                screenContext: screenContext,
+                authoritativeScan: authoritativeScan
             ),
             screenContext: screenContext
+        )
+    }
+
+    private func authoritativeStylistScanContext(
+        for analysis: OutfitAnalysisResult,
+        screenContext: StylistScreenContext
+    ) -> StylistAuthoritativeScanContext? {
+        guard let scanID = screenContext.activeScanID else { return nil }
+        let stored = loadScanHistory()[scanID]
+        let source: StylistScanContextSource = screenContext.activeScanState == .saved
+            ? .savedSelection
+            : .liveCompleted
+        let mismatch = FormalityMismatchEvaluator.evaluate(
+            detectedStyle: detectedStyleTitle(for: analysis),
+            occasion: selectedScanOccasion.canonical
+        )
+        return CurrentScanContextProvider.make(
+            scanID: scanID,
+            completedAt: stored?.firstScannedAt ?? Date(),
+            analysis: analysis,
+            detectedStyle: detectedStyleTitle(for: analysis),
+            styleConfidence: detectedStyleConfidence(for: analysis),
+            selectedOccasion: selectedScanOccasion.rawValue,
+            occasionAssessment: mismatch?.message ?? analysis.occasionFit,
+            weatherContext: compactWeatherRecommendation,
+            imageReference: (selectedUIImage != nil || stored?.thumbnailData != nil) ? .onDeviceOnly : nil,
+            source: source
         )
     }
 
@@ -5068,6 +5291,10 @@ struct ScanView: View {
     }
 
     private func occasionHonestyInstruction(for analysis: OutfitAnalysisResult) -> String {
+        if !analysis.outfitClassification.isUncertain,
+           analysis.outfitClassification.occasionCompatibility == .compatible {
+            return "- Confirmed outfit context: \(analysis.outfitClassification.effectiveCategory.displayName) is compatible with the selected occasion. Use its \(analysis.outfitClassification.scoringProfile.evaluationCriteria.joined(separator: ", ")) criteria and preserve the existing score."
+        }
         guard let mismatch = FormalityMismatchEvaluator.evaluate(
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: currentScanOccasionForContext
@@ -5231,6 +5458,7 @@ struct ScanView: View {
         let imageToAnalyze = selectedUIImage
         let scanSource = currentScanSource
         let historySnapshot = loadScanHistory()
+        let selectedOccasion = selectedScanOccasion.rawValue
         DispatchQueue.global(qos: .userInitiated).async {
             let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
             let validation = validateFashionImage(imageToAnalyze)
@@ -5267,6 +5495,14 @@ struct ScanView: View {
                 let detectedItems = storedInputs?.detectedItems ?? detectedClothingItems(from: scoringLabels)
                 let styleCategory = storedInputs?.styleCategory
                     ?? detectedStyleCategorySignal(validation: validation, labels: scoringLabels)
+                let textObservations = recognizeGarmentText(in: imageToAnalyze)
+                let outfitClassification = classifyOutfit(
+                    visualObservations: scoringLabels.map {
+                        OutfitVisualObservation(identifier: $0.identifier, confidence: Double($0.confidence))
+                    },
+                    textObservations: textObservations,
+                    selectedOccasion: selectedOccasion
+                )
                 let styleScore = exactStoredScan != nil && !forceReanalyze
                     ? nil
                     : calculateStyleScore(
@@ -5286,6 +5522,7 @@ struct ScanView: View {
                     scoringLabels: scoringLabels,
                     detectedItems: detectedItems,
                     styleCategory: styleCategory,
+                    outfitClassification: outfitClassification,
                     styleScore: styleScore
                 )
             } else {
@@ -5389,6 +5626,13 @@ struct ScanView: View {
         let scoringLabels = labels
         let detectedItems = detectedClothingItems(from: scoringLabels)
         let styleCategory = detectedStyleCategorySignal(validation: validation, labels: scoringLabels)
+        let outfitClassification = classifyOutfit(
+            visualObservations: scoringLabels.map {
+                OutfitVisualObservation(identifier: $0.identifier, confidence: Double($0.confidence))
+            },
+            textObservations: recognizeGarmentText(in: image),
+            selectedOccasion: selectedScanOccasion.rawValue
+        )
         let styleScore = calculateStyleScore(
             validation: validation,
             labels: scoringLabels,
@@ -5408,7 +5652,8 @@ struct ScanView: View {
             colorPaletteConfidence: colorDetection.confidenceLevel,
             colorPaletteDetectionConfidence: colorDetection.confidence,
             colorPaletteNotes: colorDetection.notes,
-            scoreBreakdown: styleScore.breakdown
+            scoreBreakdown: styleScore.breakdown,
+            outfitClassification: outfitClassification
         )
     }
 
@@ -5525,8 +5770,20 @@ struct ScanView: View {
         if let storedScan = exactStoredScan,
            !forceReanalyze,
            let cachedAnalysis = storedScan.analysis {
+            let resolvedAnalysis: OutfitAnalysisResult
+            if cachedAnalysis.outfitClassification.isUncertain,
+               !preparedFacts.outfitClassification.isUncertain {
+                resolvedAnalysis = cachedAnalysis.replacingOutfitClassification(
+                    preparedFacts.outfitClassification
+                )
+                // Enrich this in-memory result without mutating a legacy saved
+                // scan merely because it was opened again. Explicit user
+                // corrections remain the only classification write path.
+            } else {
+                resolvedAnalysis = cachedAnalysis
+            }
             return SavedScanResult(
-                analysis: cachedAnalysis,
+                analysis: resolvedAnalysis,
                 isRepeat: true,
                 isForced: false,
                 message: "Loaded from saved analysis. This outfit was already scanned, so Style Match Pro kept the saved \(storedScan.score) \(scoreRatingTitle(for: storedScan.score)) score instead of rescoring it."
@@ -5557,7 +5814,8 @@ struct ScanView: View {
             colorPaletteConfidence: storedInputs?.colorPaletteConfidence ?? colorDetection.confidenceLevel,
             colorPaletteDetectionConfidence: colorDetection.confidence,
             colorPaletteNotes: colorDetection.notes,
-            scoreBreakdown: styleScore.breakdown
+            scoreBreakdown: styleScore.breakdown,
+            outfitClassification: preparedFacts.outfitClassification
         )
         let storedScan = StoredOutfitScan(
             score: analysis.score,
@@ -6817,6 +7075,72 @@ struct ScanView: View {
         } catch {
             return []
         }
+    }
+
+    private func recognizeGarmentText(in image: UIImage) -> [OutfitTextObservation] {
+        #if DEBUG
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        defer {
+            let durationMilliseconds = (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+            scanIntelligenceLogger.debug(
+                "stage=ocr duration_ms=\(durationMilliseconds, privacy: .public)"
+            )
+        }
+        #endif
+
+        guard let cgImage = image.fastVisionCGImage() else { return [] }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.minimumTextHeight = 0.012
+        let handler = VNImageRequestHandler(
+            cgImage: cgImage,
+            orientation: image.cgImagePropertyOrientation
+        )
+
+        do {
+            try handler.perform([request])
+            return (request.results ?? [])
+                .compactMap { observation -> OutfitTextObservation? in
+                    guard let candidate = observation.topCandidates(1).first,
+                          candidate.confidence >= 0.35 else {
+                        return nil
+                    }
+                    return OutfitTextObservation(
+                        text: candidate.string,
+                        confidence: Double(candidate.confidence)
+                    )
+                }
+                .prefix(12)
+                .map { $0 }
+        } catch {
+            // OCR is supporting evidence. A failure must leave classification
+            // uncertain rather than inventing text or rejecting the scan.
+            return []
+        }
+    }
+
+    private func classifyOutfit(
+        visualObservations: [OutfitVisualObservation],
+        textObservations: [OutfitTextObservation],
+        selectedOccasion: String?
+    ) -> OutfitClassificationResult {
+        #if DEBUG
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        defer {
+            let durationMilliseconds = (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
+            scanIntelligenceLogger.debug(
+                "stage=classification duration_ms=\(durationMilliseconds, privacy: .public)"
+            )
+        }
+        #endif
+
+        return OutfitClassificationEngine.classify(
+            visualObservations: visualObservations,
+            textObservations: textObservations,
+            selectedOccasion: selectedOccasion
+        )
     }
 
     private func isSleepwearObservationWorthKeeping(_ observation: VNClassificationObservation) -> Bool {
@@ -8978,6 +9302,7 @@ private struct PreparedScanFacts {
     let scoringLabels: [DetectedLabel]
     let detectedItems: [String]
     let styleCategory: String
+    let outfitClassification: OutfitClassificationResult
     let styleScore: StyleScoreResult?
 }
 
@@ -9111,6 +9436,7 @@ private extension OutfitAnalysisResult {
             colorPaletteNotes: colorPaletteNotes,
             environment: environment,
             imageQuality: imageQuality,
+            outfitClassification: outfitClassification,
             skinToneStyleNote: nil,
             detectedItemConfidences: detectedItemConfidences,
             chatGPTStylistSections: chatGPTStylistSections,
@@ -9141,6 +9467,7 @@ private extension OutfitAnalysisResult {
             colorPaletteNotes: colorPaletteNotes,
             environment: environment,
             imageQuality: imageQuality,
+            outfitClassification: outfitClassification,
             skinToneStyleNote: nil,
             detectedItemConfidences: detectedItemConfidences,
             chatGPTStylistSections: sections,
@@ -9148,6 +9475,7 @@ private extension OutfitAnalysisResult {
             recommendations: recommendations
         )
     }
+
 }
 
 #if DEBUG
@@ -9694,7 +10022,7 @@ private extension UIImage {
         )
     }
 
-    private var cgImagePropertyOrientation: CGImagePropertyOrientation {
+    var cgImagePropertyOrientation: CGImagePropertyOrientation {
         switch imageOrientation {
         case .up: return .up
         case .down: return .down

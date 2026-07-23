@@ -78,18 +78,32 @@ final class StylistChatService: ObservableObject {
 
         guard validateAuthorization() else { return false }
 
+        let context = (forcedContext ?? contextProvider()).validatingAuthoritativeScan()
+        let scanContextID = context.authoritativeScan?.scanID
+
         requiresSignIn = false
         inlineError = nil
-        activeConversation.messages.append(ChatMessage(role: .user, content: prompt))
+        activeConversation.messages.append(
+            ChatMessage(role: .user, content: prompt, scanContextID: scanContextID)
+        )
         let assistantID = UUID()
         pendingAssistantID = assistantID
-        activeConversation.messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
+        activeConversation.messages.append(
+            ChatMessage(
+                id: assistantID,
+                role: .assistant,
+                content: "",
+                scanContextID: scanContextID
+            )
+        )
         activeConversation.updatedAt = Date()
         isStreaming = true
 
-        let context = forcedContext ?? contextProvider()
         let request = ChatRequest(
-            messages: requestMessages(from: activeConversation.messages),
+            messages: requestMessages(
+                from: activeConversation.messages,
+                authoritativeScan: context.authoritativeScan
+            ),
             context: context,
             stream: true
         )
@@ -172,18 +186,65 @@ final class StylistChatService: ObservableObject {
         return true
     }
 
-    private func requestMessages(from messages: [ChatMessage]) -> [ChatRequest.RequestMessage] {
-        messages
-            .compactMap { message -> ChatRequest.RequestMessage? in
-                guard message.role == .user || message.role == .assistant else { return nil }
-                let content = message.content
-                guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      StylistChatMessageLimit.isWithinLimit(content) else {
-                    return nil
-                }
-                return ChatRequest.RequestMessage(role: message.role.rawValue, content: content)
+    private func requestMessages(
+        from messages: [ChatMessage],
+        authoritativeScan: StylistAuthoritativeScanContext?
+    ) -> [ChatRequest.RequestMessage] {
+        var filtered: [ChatRequest.RequestMessage] = []
+        var skipLegacyUserTurn = false
+
+        for message in messages.reversed() {
+            guard message.role == .user || message.role == .assistant else { continue }
+            let content = message.content
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  StylistChatMessageLimit.isWithinLimit(content) else {
+                continue
             }
-            .suffix(StylistChatMessageLimit.retainedConversationMessages)
+
+            if let authoritativeScan {
+                if let scanContextID = message.scanContextID,
+                   scanContextID != authoritativeScan.scanID {
+                    continue
+                }
+                if message.role == .assistant,
+                   message.scanContextID == nil,
+                   Self.containsConflictingScore(
+                    content,
+                    authoritativeScore: authoritativeScan.overallScore
+                   ) {
+                    skipLegacyUserTurn = true
+                    continue
+                }
+                if message.role == .user, skipLegacyUserTurn {
+                    skipLegacyUserTurn = false
+                    continue
+                }
+            }
+
+            filtered.append(
+                ChatRequest.RequestMessage(role: message.role.rawValue, content: content)
+            )
+        }
+
+        return Array(
+            filtered
+                .reversed()
+                .suffix(StylistChatMessageLimit.retainedConversationMessages)
+        )
+    }
+
+    private static func containsConflictingScore(_ content: String, authoritativeScore: Int) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: #"\b(\d{1,3})\s*/\s*100\b"#) else {
+            return false
+        }
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        return regex.matches(in: content, range: range).contains { match in
+            guard let scoreRange = Range(match.range(at: 1), in: content),
+                  let score = Int(content[scoreRange]) else {
+                return false
+            }
+            return score != authoritativeScore
+        }
     }
 
     private static func removingEmptyAssistantMessages(_ conversation: ChatConversation) -> ChatConversation {

@@ -8878,6 +8878,24 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertLessThanOrEqual(message.count, VoiceScriptBuilder.maximumSpokenCharacters)
     }
 
+    func testVoiceScriptBuilderUsesConfirmedTypedOutfitCategory() {
+        var analysis = makeAnalysis(
+            score: 80,
+            styleBalance: "Casual",
+            summary: "The uniform is clean and coordinated."
+        )
+        analysis = analysis.replacingOutfitClassification(
+            OutfitClassificationResult.uncertain(selectedOccasion: "work")
+                .confirming(.workUniform)
+        )
+
+        let message = VoiceScriptBuilder.scanResult(from: analysis).text
+
+        XCTAssertTrue(message.contains("80 out of 100"))
+        XCTAssertTrue(message.contains("work uniform look"))
+        XCTAssertFalse(message.contains("casual look"))
+    }
+
     func testVoiceScriptBuilderAppGuideUsesKnownDestinations() {
         XCTAssertEqual(
             VoiceScriptBuilder.appGuide(destination: "Closet").text,
@@ -8959,6 +8977,14 @@ final class GarmentPaletteAndLabelSanitizationTests: XCTestCase {
         XCTAssertTrue(context.contains("screenContext: StylistScreenContext"))
         XCTAssertFalse(context.contains("declaredUndertone:"))
         XCTAssertFalse(context.contains("skinToneStyleNote:"))
+    }
+
+    func testStylistContextEncodingFailsClosedWithoutForcedCrash() throws {
+        let context = try projectSource("StyleMatchAI/PersonalStylist/StylistContextBuilder.swift")
+
+        XCTAssertFalse(context.contains("try! encoder.encode(payload)"))
+        XCTAssertTrue(context.contains("Verified scan context could not be encoded."))
+        XCTAssertTrue(context.contains("Do not infer a score, garment, occasion, or weather fact."))
     }
 
     func testScreenContextLifecycleUsesSendTimeStateAndInvalidatesCancelledOrDeletedScans() throws {

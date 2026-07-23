@@ -3,6 +3,7 @@ import Combine
 
 final class ChatConversationStore: ObservableObject {
     @Published private(set) var conversations: [ChatConversation]
+    @Published private(set) var persistenceErrorMessage: String?
 
     private let fileURL: URL
     private let backupURL: URL
@@ -16,6 +17,7 @@ final class ChatConversationStore: ObservableObject {
         self.fileURL = resolvedURL
         self.backupURL = resolvedURL.deletingLastPathComponent().appendingPathComponent("\(resolvedURL.lastPathComponent).bak")
         conversations = Self.load(fileURL: resolvedURL, backupURL: backupURL)
+        persistenceErrorMessage = nil
     }
 
     func save(_ conversation: ChatConversation) {
@@ -54,11 +56,14 @@ final class ChatConversationStore: ObservableObject {
                 at: fileURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try? FileManager.default.copyItem(at: fileURL, to: backupURL)
+            if let priorData = try? Data(contentsOf: fileURL) {
+                try atomicWrite(priorData, to: backupURL)
             }
             try atomicWrite(data, to: fileURL)
-        } catch {}
+            persistenceErrorMessage = nil
+        } catch {
+            persistenceErrorMessage = "Chat history could not be saved."
+        }
     }
 
     private func atomicWrite(_ data: Data, to url: URL) throws {

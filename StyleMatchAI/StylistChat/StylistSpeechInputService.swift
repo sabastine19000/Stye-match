@@ -1,6 +1,10 @@
 import Foundation
 import Combine
 
+#if DEBUG && canImport(OSLog)
+import OSLog
+#endif
+
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
@@ -68,6 +72,7 @@ enum StylistSpeechAuthorizationStatus: Equatable {
     case unavailable
 }
 
+@MainActor
 protocol StylistSpeechRecognitionControlling: AnyObject {
     var supportsRecognition: Bool { get }
     func microphoneAuthorizationStatus() -> StylistSpeechAuthorizationStatus
@@ -90,6 +95,7 @@ final class StylistSpeechInputService: ObservableObject {
     private let controller: StylistSpeechRecognitionControlling
     private var originalText = ""
     private var hasRecognizedSpeech = false
+    private var activeStartAttemptID: UUID?
     private var interruptionObserver: NSObjectProtocol?
     private var backgroundObserver: NSObjectProtocol?
 
@@ -114,6 +120,8 @@ final class StylistSpeechInputService: ObservableObject {
             return
         }
 
+        let attemptID = UUID()
+        activeStartAttemptID = attemptID
         originalText = existingText
         transcript = existingText
         hasRecognizedSpeech = false
@@ -121,20 +129,25 @@ final class StylistSpeechInputService: ObservableObject {
         announce(state)
 
         let microphoneStatus = await resolvedMicrophoneAuthorization()
+        guard isCurrentStartAttempt(attemptID) else { return }
         guard microphoneStatus == .authorized else {
+            activeStartAttemptID = nil
             state = microphoneStatus == .restricted ? .speechRestricted : .microphoneDenied
             announce(state)
             return
         }
 
         let speechStatus = await resolvedSpeechAuthorization()
+        guard isCurrentStartAttempt(attemptID) else { return }
         guard speechStatus == .authorized else {
+            activeStartAttemptID = nil
             state = speechState(for: speechStatus)
             announce(state)
             return
         }
 
         do {
+            guard isCurrentStartAttempt(attemptID) else { return }
             try controller.startRecognition { [weak self] partial in
                 self?.applyRecognizedText(partial)
             } onFinalTranscript: { [weak self] final in
@@ -146,6 +159,7 @@ final class StylistSpeechInputService: ObservableObject {
             state = .listening
             announce(state)
         } catch {
+            activeStartAttemptID = nil
             handleRecognitionError(error)
         }
     }
@@ -154,7 +168,6 @@ final class StylistSpeechInputService: ObservableObject {
         guard state.isActive else { return }
         state = .processingFinalTranscript
         announce(state)
-        controller.stopRecognition(cancel: false)
         finishListening()
     }
 
@@ -164,6 +177,7 @@ final class StylistSpeechInputService: ObservableObject {
             return originalText
         }
         controller.stopRecognition(cancel: true)
+        activeStartAttemptID = nil
         transcript = originalText
         hasRecognizedSpeech = false
         state = .idle
@@ -212,6 +226,7 @@ final class StylistSpeechInputService: ObservableObject {
     }
 
     private func finishListening() {
+        activeStartAttemptID = nil
         controller.stopRecognition(cancel: false)
         if hasRecognizedSpeech || !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             state = .idle
@@ -223,6 +238,7 @@ final class StylistSpeechInputService: ObservableObject {
     }
 
     private func handleRecognitionError(_ error: Error) {
+        activeStartAttemptID = nil
         controller.stopRecognition(cancel: true)
         let nsError = error as NSError
         if nsError.domain == "kAFAssistantErrorDomain", nsError.code == 1110 {
@@ -267,6 +283,10 @@ final class StylistSpeechInputService: ObservableObject {
         #endif
     }
 
+    private func isCurrentStartAttempt(_ attemptID: UUID) -> Bool {
+        activeStartAttemptID == attemptID && state == .requestingPermission
+    }
+
     private func announce(_ state: StylistSpeechInputState) {
         if let message = state.userMessage {
             announce(message)
@@ -281,15 +301,25 @@ final class StylistSpeechInputService: ObservableObject {
 }
 
 #if os(iOS) && canImport(Speech) && canImport(AVFoundation)
+@MainActor
 final class SystemStylistSpeechRecognitionController: StylistSpeechRecognitionControlling {
     var supportsRecognition: Bool {
         recognizer?.isAvailable == true
     }
 
     private let recognizer = SFSpeechRecognizer(locale: Locale.current)
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine: AVAudioEngine?
+    private weak var tappedInputNode: AVAudioInputNode?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private var activeSessionID: UUID?
+
+    #if DEBUG && canImport(OSLog)
+    private let diagnosticLogger = Logger(
+        subsystem: "com.sabastine.stylematchai",
+        category: "StylistSpeechInput"
+    )
+    #endif
 
     func microphoneAuthorizationStatus() -> StylistSpeechAuthorizationStatus {
         switch AVAudioSession.sharedInstance().recordPermission {
@@ -353,35 +383,73 @@ final class SystemStylistSpeechRecognitionController: StylistSpeechRecognitionCo
         onFinalTranscript: @escaping @MainActor (String) -> Void,
         onError: @escaping @MainActor (Error) -> Void
     ) throws {
-        stopRecognition(cancel: true)
+        if activeSessionID != nil || recognitionRequest != nil || recognitionTask != nil {
+            recordInstallGuard("existing_session")
+            throw StylistSpeechInputError.recognitionAlreadyActive
+        }
+        if tappedInputNode != nil {
+            recordInstallGuard("existing_owned_tap")
+            throw StylistSpeechInputError.recognitionAlreadyActive
+        }
+        if audioEngine != nil {
+            recordInstallGuard("existing_audio_engine")
+            throw StylistSpeechInputError.recognitionAlreadyActive
+        }
 
         guard let recognizer, recognizer.isAvailable else {
+            recordInstallGuard("recognizer_unavailable")
             throw StylistSpeechInputError.recognitionUnavailable
         }
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        guard !session.currentRoute.inputs.isEmpty else {
+            recordInstallGuard("invalid_audio_route")
+            resetRecognitionState(cancel: true)
+            throw StylistSpeechInputError.invalidAudioRoute
+        }
+
+        let sessionID = UUID()
+        activeSessionID = sessionID
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         recognitionRequest = request
 
-        let inputNode = audioEngine.inputNode
-        inputNode.removeTap(onBus: 0)
+        // A fresh engine gives each recognition attempt sole ownership of its
+        // input tap. Reusing an engine can leave an AVAudioNode tap behind
+        // across cancellation or audio-route changes; installTap then raises
+        // an Objective-C exception that Swift cannot catch.
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            recordInstallGuard("invalid_input_format")
+            resetRecognitionState(cancel: true)
+            throw StylistSpeechInputError.invalidAudioInput
+        }
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
             guard buffer.frameLength > 0 else { return }
             request?.append(buffer)
         }
+        tappedInputNode = inputNode
+        audioEngine = engine
 
-        audioEngine.prepare()
-        try audioEngine.start()
+        do {
+            engine.prepare()
+            try engine.start()
+        } catch {
+            recordInstallGuard("audio_engine_start_failed")
+            resetRecognitionState(cancel: true)
+            throw error
+        }
 
-        recognitionTask = recognizer.recognitionTask(with: request) { result, error in
+        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             if let result {
                 let transcript = result.bestTranscription.formattedString
                 Task { @MainActor in
+                    guard self?.activeSessionID == sessionID else { return }
                     if result.isFinal {
                         onFinalTranscript(transcript)
                     } else {
@@ -392,17 +460,30 @@ final class SystemStylistSpeechRecognitionController: StylistSpeechRecognitionCo
 
             if let error {
                 Task { @MainActor in
+                    guard self?.activeSessionID == sessionID else { return }
                     onError(error)
                 }
             }
         }
+
+        recordLifecycle("recognition_started")
     }
 
     func stopRecognition(cancel: Bool) {
-        if audioEngine.isRunning {
-            audioEngine.stop()
+        resetRecognitionState(cancel: cancel)
+    }
+
+    private func resetRecognitionState(cancel: Bool) {
+        activeSessionID = nil
+        if audioEngine?.isRunning == true {
+            audioEngine?.stop()
         }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        if let tappedInputNode {
+            tappedInputNode.removeTap(onBus: 0)
+        }
+        tappedInputNode = nil
+        audioEngine?.reset()
+        audioEngine = nil
         if cancel {
             recognitionTask?.cancel()
         } else {
@@ -411,6 +492,19 @@ final class SystemStylistSpeechRecognitionController: StylistSpeechRecognitionCo
         recognitionTask = nil
         recognitionRequest = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        recordLifecycle(cancel ? "recognition_cancelled" : "recognition_stopped")
+    }
+
+    private func recordInstallGuard(_ reason: String) {
+        #if DEBUG && canImport(OSLog)
+        diagnosticLogger.error("install_tap_guard=\(reason, privacy: .public)")
+        #endif
+    }
+
+    private func recordLifecycle(_ event: String) {
+        #if DEBUG && canImport(OSLog)
+        diagnosticLogger.debug("speech_lifecycle=\(event, privacy: .public)")
+        #endif
     }
 }
 #else
@@ -433,8 +527,18 @@ final class SystemStylistSpeechRecognitionController: StylistSpeechRecognitionCo
 
 enum StylistSpeechInputError: LocalizedError {
     case recognitionUnavailable
+    case recognitionAlreadyActive
+    case invalidAudioRoute
+    case invalidAudioInput
 
     var errorDescription: String? {
-        "Speech recognition is unavailable right now."
+        switch self {
+        case .recognitionUnavailable:
+            return "Speech recognition is unavailable right now."
+        case .recognitionAlreadyActive:
+            return "Voice input is already active."
+        case .invalidAudioRoute, .invalidAudioInput:
+            return "Microphone input is unavailable right now."
+        }
     }
 }

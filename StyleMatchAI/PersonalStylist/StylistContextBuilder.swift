@@ -113,14 +113,15 @@ struct PersonalizationContextBuilder {
 
     static func scanStylistContext(
         for analysis: OutfitAnalysisResult,
-        screenContext: StylistScreenContext? = nil
+        screenContext: StylistScreenContext? = nil,
+        authoritativeScan: StylistAuthoritativeScanContext? = nil
     ) -> ChatContext {
         let garments = compactList(analysis.safeDetectedClothingItems, fallback: "outfit")
         let colors = compactList(analysis.colorPalette, fallback: "")
         let colorText = colors.isEmpty ? "not confidently available" : colors
         let breakdown = analysis.scoreBreakdown?.stylistChatSummary
 
-        return ChatContext(
+        let context = ChatContext(
             profileSummary: """
             Conversational Personal Stylist Phase 3C scan context.
             Use only these selected scan facts and the user's message.
@@ -135,8 +136,10 @@ struct PersonalizationContextBuilder {
             \(outfitCombinationGuidance)
             """,
             scoreBreakdown: breakdown.map { "Existing score only: \($0)" },
-            screenContext: screenContext
+            screenContext: screenContext,
+            authoritativeScan: authoritativeScan
         )
+        return authoritativeScan.map(context.applyingAuthoritativeScan) ?? context
     }
 
     private static let outfitCombinationGuidance = """
@@ -836,7 +839,12 @@ struct ScanUpgradePrompt: Equatable {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let data = try! encoder.encode(payload)
+        guard let data = try? encoder.encode(payload) else {
+            return """
+            \(instruction) FACTS_UNAVAILABLE:
+            Verified scan context could not be encoded. Do not infer a score, garment, occasion, or weather fact.
+            """
+        }
         let json = String(decoding: data, as: UTF8.self)
         return "\(instruction) FACTS:\n\(json)"
     }

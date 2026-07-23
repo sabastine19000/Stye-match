@@ -441,7 +441,12 @@ struct StylistChatView: View {
         let context = activeConversationContext ?? PersonalizationContextBuilder.conversationalStylistContext(
             screenContext: currentScreenContext
         )
-        return context.applyingCurrentScreenContext(currentScreenContext)
+        let current = context.applyingCurrentScreenContext(currentScreenContext)
+        let authoritativeScan = CurrentScanContextProvider.resolve(
+            preferred: current.authoritativeScan,
+            screenContext: current.screenContext
+        )
+        return current.applyingAuthoritativeScan(authoritativeScan)
     }
 
     private var selectedScanContextNote: some View {
@@ -460,7 +465,7 @@ struct StylistChatView: View {
     private func applyCurrentScanHandoff() {
         if screenContext.activeScanState != .none {
             activeConversationContext = initialContext
-        } else if activeConversationContext?.screenContext?.activeScanState != .none {
+        } else if activeConversationContext?.screenContext?.activeScanState != StylistActiveScanState.none {
             activeConversationContext = nil
         }
     }
