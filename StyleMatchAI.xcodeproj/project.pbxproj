@@ -91,6 +91,12 @@
 		AA0000000000000000000168 /* AppBackendConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000169 /* AppBackendConfiguration.swift */; };
 		CE1000000000000000000001 /* OutfitContextContracts.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1000000000000000000011 /* OutfitContextContracts.swift */; };
 		CE1000000000000000000002 /* LegacyContextAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1000000000000000000012 /* LegacyContextAdapter.swift */; };
+		CE2A00000000000000000001 /* ContextInferenceInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000011 /* ContextInferenceInput.swift */; };
+		CE2A00000000000000000002 /* PurposeClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000012 /* PurposeClassifier.swift */; };
+		CE2A00000000000000000003 /* WorkplaceProfileClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000013 /* WorkplaceProfileClassifier.swift */; };
+		CE2A00000000000000000004 /* SuitabilityEvaluator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000014 /* SuitabilityEvaluator.swift */; };
+		CE2A00000000000000000005 /* ContextInferenceValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000015 /* ContextInferenceValidator.swift */; };
+		CE2A00000000000000000006 /* OutfitContextEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2A00000000000000000016 /* OutfitContextEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -119,6 +125,12 @@
 		AA000000000000000000002D /* AIStyleAdvisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStyleAdvisor.swift; sourceTree = "<group>"; };
 		CE1000000000000000000011 /* OutfitContextContracts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitContextContracts.swift; sourceTree = "<group>"; };
 		CE1000000000000000000012 /* LegacyContextAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyContextAdapter.swift; sourceTree = "<group>"; };
+		CE2A00000000000000000011 /* ContextInferenceInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInferenceInput.swift; sourceTree = "<group>"; };
+		CE2A00000000000000000012 /* PurposeClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurposeClassifier.swift; sourceTree = "<group>"; };
+		CE2A00000000000000000013 /* WorkplaceProfileClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkplaceProfileClassifier.swift; sourceTree = "<group>"; };
+		CE2A00000000000000000014 /* SuitabilityEvaluator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuitabilityEvaluator.swift; sourceTree = "<group>"; };
+		CE2A00000000000000000015 /* ContextInferenceValidator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextInferenceValidator.swift; sourceTree = "<group>"; };
+		CE2A00000000000000000016 /* OutfitContextEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutfitContextEngine.swift; sourceTree = "<group>"; };
 		AA0000000000000000000039 /* ShoppingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShoppingView.swift; sourceTree = "<group>"; };
 		AA000000000000000000003A /* AffiliateProduct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AffiliateProduct.swift; sourceTree = "<group>"; };
 		AA000000000000000000003B /* ProductCatalogProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductCatalogProvider.swift; sourceTree = "<group>"; };
@@ -274,6 +286,12 @@
 			children = (
 				CE1000000000000000000011 /* OutfitContextContracts.swift */,
 				CE1000000000000000000012 /* LegacyContextAdapter.swift */,
+				CE2A00000000000000000011 /* ContextInferenceInput.swift */,
+				CE2A00000000000000000012 /* PurposeClassifier.swift */,
+				CE2A00000000000000000013 /* WorkplaceProfileClassifier.swift */,
+				CE2A00000000000000000014 /* SuitabilityEvaluator.swift */,
+				CE2A00000000000000000015 /* ContextInferenceValidator.swift */,
+				CE2A00000000000000000016 /* OutfitContextEngine.swift */,
 			);
 			path = ContextEngine;
 			sourceTree = "<group>";
@@ -447,6 +465,12 @@
 				AA0000000000000000000003 /* Models.swift in Sources */,
 				CE1000000000000000000001 /* OutfitContextContracts.swift in Sources */,
 				CE1000000000000000000002 /* LegacyContextAdapter.swift in Sources */,
+				CE2A00000000000000000001 /* ContextInferenceInput.swift in Sources */,
+				CE2A00000000000000000002 /* PurposeClassifier.swift in Sources */,
+				CE2A00000000000000000003 /* WorkplaceProfileClassifier.swift in Sources */,
+				CE2A00000000000000000004 /* SuitabilityEvaluator.swift in Sources */,
+				CE2A00000000000000000005 /* ContextInferenceValidator.swift in Sources */,
+				CE2A00000000000000000006 /* OutfitContextEngine.swift in Sources */,
 				AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */,
 				AA0000000000000000000004 /* RoadmapData.swift in Sources */,
 				AA0000000000000000000005 /* HomeView.swift in Sources */,

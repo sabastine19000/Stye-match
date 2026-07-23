@@ -17,7 +17,7 @@ extension FailClosedStringEnum {
     }
 }
 
-enum OutfitPurpose: String, CaseIterable, Equatable, FailClosedStringEnum {
+enum OutfitPurpose: String, CaseIterable, Equatable, Hashable, FailClosedStringEnum {
     case factoryManufacturing
     case warehouse
     case office
@@ -204,6 +204,8 @@ struct ContextConfidence: Codable, Equatable {
 enum ContextValueOrigin: String, CaseIterable, Equatable, FailClosedStringEnum {
     case legacyDerived
     case userConfirmed
+    case scanAuthoritative
+    case runtimeInferred
     case unknown
 
     static let unknownFallback = ContextValueOrigin.unknown
@@ -227,7 +229,7 @@ struct EvidenceBackedValue<Value: Codable & Equatable>: Codable, Equatable {
     let confirmationState: ContextConfirmationState
 }
 
-enum ContextEvidenceKind: String, CaseIterable, Equatable, FailClosedStringEnum {
+enum ContextEvidenceKind: String, CaseIterable, Equatable, Hashable, FailClosedStringEnum {
     case visualStyle
     case garmentSilhouette
     case garmentConstruction
@@ -299,6 +301,11 @@ enum ContextProvenanceField: String, CaseIterable, Equatable, FailClosedStringEn
     case weather
     case safety
     case scoringProfile
+    case occasionCompatibility
+    case workplaceSuitability
+    case weatherSuitability
+    case safetySuitability
+    case overallConfidence
 
     static let unknownFallback = ContextProvenanceField.outfitPurpose
 }
