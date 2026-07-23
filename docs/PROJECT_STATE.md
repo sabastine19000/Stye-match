@@ -476,3 +476,33 @@ Rollback evidence: CE1 is isolated in implementation commit `369c464737386e6ae21
 Exceptions and expiration: None for CE1. Physical evidence is explicitly NOT APPLICABLE only because no runtime path consumes CE1. This exception does not extend to CE2 or any later runtime, persistence, AI, UI, voice, scoring, or device checkpoint.
 
 Open follow-up: CE1 is formally accepted. Overall release readiness remains BLOCKED. Q2/CE2 planning and implementation remain unopened and require separate authorization. No physical Context Engine behavior, release candidate, Shopping refinement, deployment, TestFlight, or App Store action is accepted by this record.
+
+### 2026-07-23 — CE2A deterministic runtime Context Engine inference accepted
+
+Decision ID and checkpoint: CE2A — Deterministic transient outfit-context inference
+
+Date: 2026-07-23
+
+Status: Accepted
+
+Governing decisions: ADR-001, ADR-002, ADR-003, ADR-006, ADR-007
+
+Repository HEAD(s): `STYLEMATCH_EXPANDED_GARMENT_CLASSIFICATION` implementation commit `82daaf9627a51fcff0dc8fbba238e1771b13ad15` on `feature/expanded-garment-classification`; parent `63d24999087424181594dad5830c4d57d908a9bb`. Implementation patch SHA-256: `953bfe198437a6b685482c2e5aa778b2baa41feed6e0e042cc0c4a6d58b70818`.
+
+Files/hunks owned: Ten implementation and test files with 2,006 insertions and 2 deletions: `Package.swift`; `StyleMatchAI.xcodeproj/project.pbxproj`; `StyleMatchAI/ContextEngine/ContextInferenceInput.swift`; `StyleMatchAI/ContextEngine/ContextInferenceValidator.swift`; `StyleMatchAI/ContextEngine/OutfitContextContracts.swift`; `StyleMatchAI/ContextEngine/OutfitContextEngine.swift`; `StyleMatchAI/ContextEngine/PurposeClassifier.swift`; `StyleMatchAI/ContextEngine/SuitabilityEvaluator.swift`; `StyleMatchAI/ContextEngine/WorkplaceProfileClassifier.swift`; and `StyleMatchProPhase2Tests/ContextEngineCE2ATests.swift`. This acceptance checkpoint owns only this append-only ledger entry. No production source or test file changed during acceptance reconciliation.
+
+Automated evidence: CE1 plus CE2A focused tests passed 48/48, including 32 CE2A cases. The full Swift suite passed 755/755. Debug simulator build passed. Release simulator compile passed. Static analysis passed, with only the two documented pre-existing warnings in protected `ShoppingView.swift`. `git diff --check` and `git show --check` passed. Persistence-write, privacy, debug-residue, runtime-consumer, and source-drift audits were clean. The acceptance review did not rerun these unchanged green gates because commit, parent, plan, and patch identities matched exactly and no contradictory evidence was found.
+
+Physical evidence: NOT APPLICABLE to CE2A itself. CE2A is a pure, transient, behaviorally inactive inference layer with no AI, UI, voice, screen-awareness, persistence, scoring, Shopping, or device consumer. This classification does not constitute physical acceptance of Context Engine presentation, AI behavior, UI behavior, voice stability, screen awareness, persistence, or any later consumer integration. Overall physical reliability and release readiness remain BLOCKED.
+
+Environment, deployment and artifact identity: No app artifact was installed, signed, or deployed by CE2A implementation or acceptance. No device, B5, certificate, provisioning, TestFlight, App Store Connect, Worker, or production action occurred. Protected Shopping and catalog files remained byte-identical: `ShoppingView.swift` SHA-256 `9a1c08de953f528d04a2355e05758f49629fb8aa388253dd01035d1b4d1f9471`; `StoreSearchView.swift` SHA-256 `4ef79d81b804c0423f447e50d0e85f8e426105e7f126da210caad8535ca99fa4`; `ProductCatalog.json` SHA-256 `6c7abb5e08905334d0e0e3196d32c03153db5a830330f69819c49c63997819e3`.
+
+Authority and compatibility assessment: CE2A is accepted against `docs/design/context-engine/CE2A_RUNTIME_INFERENCE_PLAN.md` SHA-256 `1e98d0ad9dda9b75d8d42b0cd0b004e00f509abcefaf13c96d161e2c13f3dea3` and the accepted CE1 contracts. Identical inputs produce deterministic snapshots. Authoritative numeric score and score breakdown are copied unchanged. Existing garment classification remains authoritative; detected visual style remains separate from inferred purpose; and same-scan user confirmation has precedence without rewriting scan authority. Unsupported purpose, workplace, and environment remain explicitly uncertain. Conflicting evidence lowers confidence or fails closed. Uniform and specialized-workwear purposes remain proposed until confirmed. Occasion, workplace, weather, and safety suitability are independent. Provenance distinguishes scan-authoritative, runtime-inferred, user-confirmed, legacy-derived, and unknown values; new runtime inference does not misuse `legacyDerived`. Raw OCR text, names, employer or wearer identity, speech content, and private evidence do not enter the snapshot. No persistence write, migration, legacy-record rewrite, score mutation, or runtime consumer adoption exists.
+
+Continuity compliance record: User-visible behavior is unchanged because no production consumer invokes CE2A. Chat impact is none at runtime. Binding, authentication, persistence, current-scan selection, transport, prompts, Worker contracts, response validation, voice, UI, screen context, supported-version contracts, and live health remain unchanged. Worker and live-health evidence are NOT APPLICABLE to this unconsumed local engine.
+
+Rollback evidence: CE2A is isolated in implementation commit `82daaf9627a51fcff0dc8fbba238e1771b13ad15`. Before any consumer or persistence adoption, rollback is a source-only revert with no data migration, cleanup, or retained-data action. The parent `63d24999087424181594dad5830c4d57d908a9bb` remains the committed CE2A planning authority.
+
+Exceptions and expiration: Physical evidence is NOT APPLICABLE only while CE2A remains unconsumed. This exception expires when any persistence, AI, UI, voice, screen-awareness, scoring, Shopping, or device path adopts CE2A output. The two pre-existing protected Shopping warnings are not CE2A regressions and remain outside this checkpoint.
+
+Open follow-up: CE2A is formally accepted. Overall physical reliability and release readiness remain BLOCKED. CE2B, persistence adoption, AI/UI/voice adoption, screen-context adoption, device work, deployment, TestFlight, App Store Connect, and all downstream checkpoints remain unopened and require separate authorization.
