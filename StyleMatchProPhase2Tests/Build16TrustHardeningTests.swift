@@ -79,7 +79,7 @@ final class Build16TrustHardeningTests: XCTestCase {
 
     func testScanRecommendationRenderingHasHonestEmptyState() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
-        XCTAssertTrue(source.contains("RecommendationGroundingValidator.honestEmptyState"))
+        XCTAssertTrue(source.contains("RecommendationGroundingResult.honestEmptyState"))
         XCTAssertTrue(source.contains("if let emptyState = groundedResult.emptyStateMessage"))
     }
 
@@ -551,5 +551,22 @@ final class Build16TrustHardeningTests: XCTestCase {
         XCTAssertTrue(source.contains("regionIntersectionOverUnion("))
         XCTAssertTrue(source.contains("if candidateArea < existingArea"))
         XCTAssertTrue(source.contains("result[duplicateIndex] = candidate"))
+    }
+
+    func testScanScrollViewportUsesRuntimeTopSafeArea() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let bodyStart = source.range(of: "var body: some View {"),
+              let fullScreenCover = source.range(
+                of: ".fullScreenCover(isPresented: $isShowingCamera)",
+                range: bodyStart.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the primary Scan view body.")
+        }
+
+        let scanBody = String(source[bodyStart.lowerBound..<fullScreenCover.lowerBound])
+        XCTAssertTrue(scanBody.contains(".safeAreaInset(edge: .top, spacing: 0)"))
+        XCTAssertTrue(scanBody.contains("Color.clear.frame(height: 8)"))
+        XCTAssertFalse(scanBody.contains(".statusBar(hidden: true)"))
+        XCTAssertFalse(scanBody.contains(".ignoresSafeArea(edges: .top)"))
     }
 }

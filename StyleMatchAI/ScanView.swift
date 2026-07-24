@@ -376,6 +376,9 @@ struct ScanView: View {
                     .padding(.top, 34)
                     .padding(.bottom, 28)
                 }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Color.clear.frame(height: 8)
+                }
                 .scrollContentBackground(.hidden)
                 .background(scanBackground.ignoresSafeArea())
             }
