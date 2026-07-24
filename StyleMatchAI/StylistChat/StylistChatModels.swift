@@ -224,6 +224,7 @@ struct StylistAuthoritativeScanContext: Codable, Equatable {
     let weatherContext: String?
     let outfitClassification: OutfitClassificationResult?
     let imageReference: StylistScanImageReference?
+    let groundedRecommendations: [GroundedRecommendation]?
     let source: StylistScanContextSource
 
     init(
@@ -238,6 +239,7 @@ struct StylistAuthoritativeScanContext: Codable, Equatable {
         weatherContext: String? = nil,
         outfitClassification: OutfitClassificationResult? = nil,
         imageReference: StylistScanImageReference? = nil,
+        groundedRecommendations: [GroundedRecommendation]? = nil,
         source: StylistScanContextSource
     ) {
         self.scanID = Self.nonEmpty(scanID) ?? ""
@@ -251,6 +253,9 @@ struct StylistAuthoritativeScanContext: Codable, Equatable {
         self.weatherContext = Self.nonEmpty(weatherContext)
         self.outfitClassification = outfitClassification
         self.imageReference = imageReference
+        self.groundedRecommendations = groundedRecommendations.map {
+            Array($0.prefix(RecommendationGroundingValidator.maximumRecommendations))
+        }
         self.source = source
     }
 
@@ -282,6 +287,15 @@ struct StylistAuthoritativeScanContext: Codable, Equatable {
             if !outfitClassification.detectedBranding.isEmpty {
                 facts.append("visible-brand evidence \(outfitClassification.detectedBranding.joined(separator: ", "))")
             }
+        }
+        if let groundedRecommendations, !groundedRecommendations.isEmpty {
+            facts.append(
+                AIRecommendationContextFormatter.promptFragment(
+                    for: groundedRecommendations
+                )
+            )
+        } else {
+            facts.append("grounded suggestions unavailable; do not invent specific garments, fit details, or improvements")
         }
         if imageReference != nil { facts.append("scan image remains on device") }
         return "Authoritative completed scan: \(facts.joined(separator: "; ")). All facts in this block belong to this one scan ID."
@@ -577,6 +591,7 @@ enum CurrentScanContextProvider {
         occasionAssessment: String?,
         weatherContext: String?,
         imageReference: StylistScanImageReference?,
+        groundedRecommendations: [GroundedRecommendation] = [],
         source: StylistScanContextSource
     ) -> StylistAuthoritativeScanContext {
         StylistAuthoritativeScanContext(
@@ -591,6 +606,7 @@ enum CurrentScanContextProvider {
             weatherContext: weatherContext,
             outfitClassification: analysis.outfitClassification,
             imageReference: imageReference,
+            groundedRecommendations: groundedRecommendations,
             source: source
         )
     }

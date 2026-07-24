@@ -7,6 +7,7 @@ struct PersonalStylistEngineInput {
     let detectedGarments: [String]
     let detectedItemConfidences: [DetectedItemConfidence]
     let colors: [String]
+    let groundedRecommendations: [GroundedRecommendation]
     let detectedStyle: String
     let occasion: String
     let weather: WeatherAdvisorAdvice?
@@ -24,6 +25,7 @@ struct PersonalStylistEngineInput {
         detectedGarments: [String],
         detectedItemConfidences: [DetectedItemConfidence] = [],
         colors: [String],
+        groundedRecommendations: [GroundedRecommendation] = [],
         detectedStyle: String,
         occasion: String,
         weather: WeatherAdvisorAdvice? = nil,
@@ -40,6 +42,9 @@ struct PersonalStylistEngineInput {
         self.detectedGarments = detectedGarments
         self.detectedItemConfidences = detectedItemConfidences
         self.colors = colors
+        self.groundedRecommendations = Array(
+            groundedRecommendations.prefix(RecommendationGroundingValidator.maximumRecommendations)
+        )
         self.detectedStyle = detectedStyle
         self.occasion = occasion
         self.weather = weather
@@ -133,6 +138,7 @@ enum PersonalStylistEngine {
             detectedGarments: input.detectedGarments,
             detectedItemConfidences: input.detectedItemConfidences,
             colors: input.colors,
+            groundedRecommendations: input.groundedRecommendations,
             detectedStyle: input.detectedStyle,
             occasion: input.occasion,
             weather: input.legacyWeather,

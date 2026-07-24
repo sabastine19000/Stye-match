@@ -1,5 +1,24 @@
 import Foundation
 
+enum AIRecommendationContextFormatter {
+    static func promptFragment(
+        for recommendations: [GroundedRecommendation]
+    ) -> String {
+        let allowed = recommendations
+            .prefix(RecommendationGroundingValidator.maximumRecommendations)
+            .filter { !$0.sources.isEmpty && $0.producer != .unknown }
+            .map { recommendation in
+                let presentation = GroundedRecommendationPresenter.presentation(for: recommendation)
+                return "\(presentation.sourceLabel): \(presentation.detail)"
+            }
+
+        guard !allowed.isEmpty else {
+            return "grounded suggestions unavailable; do not invent specific garments, fit details, or improvements"
+        }
+        return "validated grounded suggestions only: \(allowed.joined(separator: " | "))"
+    }
+}
+
 struct ScanNarrativeFacts: Equatable {
     // Garment-specific narrative claims require the same high-confidence evidence
     // already used by the stylist composer; lower-confidence labels stay generic.

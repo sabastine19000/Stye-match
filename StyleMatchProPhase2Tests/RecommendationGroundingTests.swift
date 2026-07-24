@@ -402,6 +402,101 @@ final class RecommendationGroundingTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(GroundedRecommendation.self, from: data), candidate)
     }
 
+    func testStylistComposerUsesValidatedTypedAdviceInsteadOfWeakestScoreTemplate() {
+        let candidate = recommendation(
+            sources: [.photo],
+            references: [
+                .color(.blue, role: .observed),
+                .color(.charcoal, role: .observed)
+            ],
+            content: .coordinateObservedPalette
+        )
+        let message = StylistMessageComposer.scoreEncouragement(
+            input: StylistScoreMessageInput(
+                score: 64,
+                scoreTier: "Style Tune-Up",
+                scoreBreakdown: OutfitScoreBreakdown(
+                    colorHarmony: 20,
+                    patternBalance: 18,
+                    fitQuality: 3,
+                    occasionMatch: 14,
+                    accessoryUse: 9
+                ),
+                detectedGarments: [],
+                colors: ["blue", "charcoal"],
+                groundedRecommendations: [candidate]
+            )
+        )
+
+        XCTAssertTrue(message.body.contains("Based on the photo"))
+        XCTAssertTrue(message.body.contains("blue"))
+        XCTAssertTrue(message.body.contains("charcoal"))
+        XCTAssertFalse(message.body.contains("hems"))
+        XCTAssertFalse(message.body.contains("sleeves"))
+        XCTAssertFalse(message.body.contains("waist"))
+    }
+
+    func testStylistComposerFailsClosedWhenNoGroundedAdviceExists() {
+        let message = StylistMessageComposer.scoreEncouragement(
+            input: StylistScoreMessageInput(
+                score: 64,
+                scoreTier: "Style Tune-Up",
+                scoreBreakdown: nil,
+                detectedGarments: [],
+                colors: []
+            )
+        )
+
+        XCTAssertTrue(message.body.contains(RecommendationGroundingResult.honestEmptyState))
+        XCTAssertFalse(message.body.localizedCaseInsensitiveContains("jacket"))
+        XCTAssertFalse(message.body.localizedCaseInsensitiveContains("shoe"))
+        XCTAssertFalse(message.body.localizedCaseInsensitiveContains("accessor"))
+    }
+
+    func testAIRecommendationFormatterRetainsEvidenceAttribution() {
+        let candidate = recommendation(
+            sources: [.savedProfile],
+            fit: .limited,
+            content: .profileFitGuidance
+        )
+        let prompt = AIRecommendationContextFormatter.promptFragment(for: [candidate])
+
+        XCTAssertTrue(prompt.contains("Based on your saved size profile"))
+        XCTAssertTrue(prompt.contains("does not prove exact measurements"))
+    }
+
+    func testAIRecommendationFormatterRejectsUnknownProducer() {
+        let candidate = recommendation(
+            sources: [.photo],
+            producer: .unknown,
+            content: .clearerFullOutfitScan
+        )
+        let prompt = AIRecommendationContextFormatter.promptFragment(for: [candidate])
+
+        XCTAssertTrue(prompt.contains("grounded suggestions unavailable"))
+        XCTAssertFalse(prompt.contains("clearer full-outfit"))
+    }
+
+    func testAuthoritativeScanPromptCarriesOnlyTypedGroundedAdvice() {
+        let candidate = recommendation(
+            sources: [.weather],
+            content: .weatherBreathability
+        )
+        let context = StylistAuthoritativeScanContext(
+            scanID: "scan-grounded",
+            completedAt: Date(timeIntervalSince1970: 10),
+            overallScore: 74,
+            scoreBreakdown: nil,
+            detectedStyle: "Casual",
+            groundedRecommendations: [candidate],
+            source: .liveCompleted
+        )
+
+        XCTAssertTrue(context.activeScanPrompt.contains("Based on current weather"))
+        XCTAssertTrue(context.activeScanPrompt.contains("breathable"))
+        XCTAssertFalse(context.activeScanPrompt.contains("jacket"))
+    }
+
     private func recommendation(
         id: String = "candidate",
         sources: Set<RecommendationEvidenceSource>,

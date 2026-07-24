@@ -7,6 +7,7 @@ struct PersonalStylistIntelligenceInput {
     let detectedGarments: [String]
     let detectedItemConfidences: [DetectedItemConfidence]
     let colors: [String]
+    let groundedRecommendations: [GroundedRecommendation]
     let detectedStyle: String
     let occasion: String
     let weather: WeatherContextRecommendation?
@@ -23,6 +24,7 @@ struct PersonalStylistIntelligenceInput {
         detectedGarments: [String],
         detectedItemConfidences: [DetectedItemConfidence] = [],
         colors: [String],
+        groundedRecommendations: [GroundedRecommendation] = [],
         detectedStyle: String,
         occasion: String,
         weather: WeatherContextRecommendation?,
@@ -38,6 +40,9 @@ struct PersonalStylistIntelligenceInput {
         self.detectedGarments = detectedGarments
         self.detectedItemConfidences = detectedItemConfidences
         self.colors = colors
+        self.groundedRecommendations = Array(
+            groundedRecommendations.prefix(RecommendationGroundingValidator.maximumRecommendations)
+        )
         self.detectedStyle = detectedStyle
         self.occasion = occasion
         self.weather = weather
@@ -158,7 +163,8 @@ enum PersonalStylistIntelligenceBuilder {
                 scoreBreakdown: input.scoreBreakdown,
                 detectedGarments: input.detectedGarments,
                 detectedItemConfidences: input.detectedItemConfidences,
-                colors: input.colors
+                colors: input.colors,
+                groundedRecommendations: input.groundedRecommendations
             )
         )
     }

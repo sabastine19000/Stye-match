@@ -7,6 +7,7 @@ struct StylistScoreMessageInput {
     let detectedGarments: [String]
     let detectedItemConfidences: [DetectedItemConfidence]
     let colors: [String]
+    let groundedRecommendations: [GroundedRecommendation]
 
     init(
         score: Int,
@@ -14,7 +15,8 @@ struct StylistScoreMessageInput {
         scoreBreakdown: OutfitScoreBreakdown?,
         detectedGarments: [String],
         detectedItemConfidences: [DetectedItemConfidence] = [],
-        colors: [String]
+        colors: [String],
+        groundedRecommendations: [GroundedRecommendation] = []
     ) {
         self.score = min(100, max(0, score))
         self.scoreTier = scoreTier.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -22,6 +24,9 @@ struct StylistScoreMessageInput {
         self.detectedGarments = detectedGarments
         self.detectedItemConfidences = detectedItemConfidences
         self.colors = colors
+        self.groundedRecommendations = Array(
+            groundedRecommendations.prefix(RecommendationGroundingValidator.maximumRecommendations)
+        )
     }
 }
 
@@ -55,7 +60,9 @@ enum StylistMessageComposer {
             confidences: input.detectedItemConfidences,
             colors: input.colors
         )
-        let improvement = concreteImprovement(input)
+        let groundedImprovement = input.groundedRecommendations.first.map {
+            GroundedRecommendationPresenter.presentation(for: $0)
+        }
         let scoreText = "\(input.score)/100"
 
         let body: String
@@ -65,9 +72,9 @@ enum StylistMessageComposer {
         case .confidentPositive:
             body = "This is a strong look at \(scoreText). \(attribute) is working well, and the outfit has a solid foundation."
         case .encouragingImprovement:
-            body = "This outfit has a useful base at \(scoreText), especially with \(attribute). One concrete improvement: \(improvement)."
+            body = "This outfit has a useful base at \(scoreText), especially with \(attribute). \(groundedImprovementText(groundedImprovement))"
         case .constructiveKind:
-            body = "This scan landed at \(scoreText), so keep the feedback practical and kind. Start with \(attribute), then make one fix: \(improvement)."
+            body = "This scan landed at \(scoreText), so keep the feedback practical and kind. Start with \(attribute). \(groundedImprovementText(groundedImprovement))"
         }
 
         return PersonalStylistMessageSection(
@@ -131,27 +138,13 @@ enum StylistMessageComposer {
         return strongest.item
     }
 
-    private static func concreteImprovement(_ input: StylistScoreMessageInput) -> String {
-        guard let breakdown = input.scoreBreakdown else {
-            return "tighten one visible detail such as fit, shoe coordination, or accessories"
+    private static func groundedImprovementText(
+        _ presentation: GroundedRecommendationPresentation?
+    ) -> String {
+        guard let presentation else {
+            return RecommendationGroundingResult.honestEmptyState
         }
-
-        let weakest = [
-            ("color harmony", breakdown.colorHarmony, 25, "simplify the color mix or repeat one color intentionally"),
-            ("pattern balance", breakdown.patternBalance, 20, "keep one pattern as the focus and let the other pieces stay quieter"),
-            ("fit quality", breakdown.fitQuality, 25, "adjust the fit so hems, sleeves, and waist sit cleaner"),
-            ("occasion match", breakdown.occasionMatch, 20, "swap one piece so the outfit matches the planned occasion more clearly"),
-            ("accessories", breakdown.accessoryUse, 10, "add one simple accessory that supports the outfit without overpowering it")
-        ]
-        .sorted { first, second in
-            let firstRatio = Double(first.1) / Double(first.2)
-            let secondRatio = Double(second.1) / Double(second.2)
-            if firstRatio == secondRatio { return first.0 < second.0 }
-            return firstRatio < secondRatio
-        }
-        .first
-
-        return weakest?.3 ?? "tighten one visible detail such as fit, shoe coordination, or accessories"
+        return "One grounded next step (\(presentation.sourceLabel)): \(presentation.detail)"
     }
 
 }

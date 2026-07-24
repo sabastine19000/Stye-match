@@ -4304,6 +4304,7 @@ struct ScanView: View {
             occasionAssessment: mismatch?.message ?? analysis.occasionFit,
             weatherContext: compactWeatherRecommendation,
             imageReference: (selectedUIImage != nil || stored?.thumbnailData != nil) ? .onDeviceOnly : nil,
+            groundedRecommendations: groundedRecommendationResult(for: analysis).accepted,
             source: source
         )
     }
@@ -5848,6 +5849,7 @@ struct ScanView: View {
             detectedGarments: narrativeFacts.qualifiedGarments,
             detectedItemConfidences: analysis.detectedItemConfidences,
             colors: narrativeFacts.palette,
+            groundedRecommendations: groundedRecommendationResult(for: analysis).accepted,
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: activeScanOccasionText(environment: analysis.environment),
             weather: weatherAdvisorAdvice(for: analysis, qualifiedGarments: narrativeFacts.qualifiedGarments),
@@ -5888,6 +5890,7 @@ struct ScanView: View {
             detectedGarments: narrativeFacts.qualifiedGarments,
             detectedItemConfidences: analysis.detectedItemConfidences,
             colors: narrativeFacts.palette,
+            groundedRecommendations: groundedRecommendationResult(for: analysis).accepted,
             detectedStyle: detectedStyleTitle(for: analysis),
             occasion: activeScanOccasionText(environment: analysis.environment),
             weather: weatherAdvisorAdvice(for: analysis, qualifiedGarments: narrativeFacts.qualifiedGarments),
