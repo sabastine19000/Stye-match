@@ -133,6 +133,204 @@ final class StyleMatchRuntimeEndpointTests: XCTestCase {
     }
 }
 
+final class StylistConversationContextTests: XCTestCase {
+    private func snapshot(
+        score: Int? = 80,
+        selectedOccasion: String? = "Work",
+        workplace: WorkplaceContext = .unknown,
+        weather: StylistWeatherContext? = nil
+    ) -> StylistConversationSnapshot {
+        StylistConversationSnapshot(
+            scanID: "scan-current",
+            score: score,
+            breakdown: StylistScoreBreakdownSnapshot(
+                colorHarmony: 25,
+                patternBalance: 20,
+                fitQuality: 13,
+                occasionMatch: 10,
+                accessoryUse: 6
+            ),
+            detectedStyle: "Casual",
+            selectedOccasion: selectedOccasion,
+            observedGarments: ["polo shirt", "pants"],
+            observedColors: ["black", "royal blue"],
+            weather: weather,
+            workplace: workplace
+        )
+    }
+
+    func testIntentRouterSeparatesFootwearWorkplaceLatestScoreAndTomorrow() {
+        XCTAssertEqual(StylistConversationRouter.classify("What shoes match?"), .footwear)
+        XCTAssertEqual(StylistConversationRouter.classify("Dress me for work."), .workplace)
+        XCTAssertEqual(StylistConversationRouter.classify("What was my latest score?"), .latestScore)
+        XCTAssertEqual(StylistConversationRouter.classify("What should I wear tomorrow?"), .futureOrTomorrow)
+    }
+
+    func testUnknownWorkplaceFailsClosedBeforeFootwearRecommendation() {
+        let result = StylistConversationRouter.preflight(
+            message: "What shoes match for work?",
+            snapshot: snapshot(),
+            state: StylistConversationState()
+        )
+
+        XCTAssertEqual(result.intent, .footwear)
+        XCTAssertEqual(result.semanticResponseID, .workplaceSafetyClarification)
+        XCTAssertTrue(result.localReply?.contains("safety shoes or PPE") == true)
+        XCTAssertFalse(result.localReply?.localizedCaseInsensitiveContains("sneakers") == true)
+        XCTAssertFalse(result.localReply?.localizedCaseInsensitiveContains("loafers") == true)
+    }
+
+    func testRepeatedWorkplaceClarificationUsesStructuredSemanticState() {
+        var state = StylistConversationState()
+        state.emittedSemanticResponses.insert(.workplaceSafetyClarification)
+
+        let result = StylistConversationRouter.preflight(
+            message: "Dress me for work.",
+            snapshot: snapshot(),
+            state: state
+        )
+
+        XCTAssertEqual(result.semanticResponseID, .workplaceSafetyClarification)
+        XCTAssertTrue(result.localReply?.hasPrefix("I still need") == true)
+    }
+
+    func testExplicitThreadWorkplaceCorrectionOverridesUnknownScanContext() {
+        var state = StylistConversationState()
+        state.applyExplicitWorkplaceDetails(
+            from: "I work in a factory and need steel toe, slip resistant shoes."
+        )
+
+        XCTAssertEqual(state.workplaceOverride?.environment, .factoryOrManufacturing)
+        XCTAssertEqual(state.workplaceOverride?.confirmation, .userConfirmed)
+        XCTAssertEqual(
+            state.workplaceOverride?.footwearConstraints,
+            [.safetyToe, .slipResistant]
+        )
+
+        let result = StylistConversationRouter.preflight(
+            message: "What shoes match for work?",
+            snapshot: snapshot(),
+            state: state
+        )
+        XCTAssertNil(result.localReply)
+    }
+
+    func testLatestScoreReturnsExactAuthoritativeValue() {
+        let result = StylistConversationRouter.preflight(
+            message: "What was my score now?",
+            snapshot: snapshot(score: 80),
+            state: StylistConversationState()
+        )
+
+        XCTAssertEqual(result.localReply, "Your latest completed StyleMatch scan scored 80/100.")
+    }
+
+    func testWeakestAreaUsesRealBreakdown() {
+        let result = StylistConversationRouter.preflight(
+            message: "What is my weakest area?",
+            snapshot: snapshot(),
+            state: StylistConversationState()
+        )
+
+        XCTAssertEqual(
+            result.localReply,
+            "Your lowest scored area in this scan is fit at 13/25."
+        )
+    }
+
+    func testTomorrowDoesNotReuseCurrentWeather() {
+        let currentWeather = StylistWeatherContext(
+            target: .current,
+            condition: "clear",
+            temperatureFahrenheit: 87,
+            observedAt: Date(),
+            validUntil: Date().addingTimeInterval(3_600)
+        )
+        let result = StylistConversationRouter.preflight(
+            message: "Dress me for work tomorrow.",
+            snapshot: snapshot(weather: currentWeather),
+            state: StylistConversationState()
+        )
+
+        XCTAssertEqual(result.semanticResponseID, .tomorrowWeatherUnavailable)
+        XCTAssertTrue(result.localReply?.contains("will not reuse today’s weather") == true)
+    }
+
+    func testAuthoritativeScanAdapterSuppressesPreciseWeatherLocation() throws {
+        let scan = StylistAuthoritativeScanContext(
+            scanID: "scan-80",
+            completedAt: Date(),
+            overallScore: 80,
+            scoreBreakdown: nil,
+            detectedStyle: "Casual",
+            selectedOccasion: "Work",
+            weatherContext: "Clear, 87°F in Fortson",
+            source: .latestCompleted
+        )
+
+        let context = StylistConversationSnapshot.from(scan)
+        XCTAssertEqual(context.weather?.condition, "clear")
+        XCTAssertEqual(context.weather?.temperatureFahrenheit, 87)
+
+        let request = try AIInsightChatPromptBuilder.build(
+            displayedMessages: [],
+            latestQuestion: "What should I wear?",
+            cardFacts: AIInsightChatCardFacts(
+                screen: "Scan",
+                title: "AI Stylist",
+                featurePrompt: "Explain this scan.",
+                extraContext: "",
+                snapshot: context
+            )
+        )
+        XCTAssertFalse(request.primaryMessage.localizedCaseInsensitiveContains("Fortson"))
+        XCTAssertTrue(request.primaryMessage.contains("temperature=87F"))
+    }
+
+    func testPromptCarriesTypedIntentAndWorkplaceContext() throws {
+        let workplace = WorkplaceContext(
+            environment: .warehouseOrDistribution,
+            dressCode: .safetyWorkwear,
+            footwearConstraints: [.closedToe, .safetyToe],
+            ppeRequirements: [],
+            activityLevel: .mostlyStandingOrWalking,
+            exposure: .indoorVariableTemperature,
+            floorAndOfficeMix: false,
+            source: .explicitThreadCorrection,
+            confirmation: .userConfirmed,
+            lastConfirmedAt: Date()
+        )
+        let request = try AIInsightChatPromptBuilder.build(
+            displayedMessages: [],
+            latestQuestion: "What shoes match?",
+            cardFacts: AIInsightChatCardFacts(
+                screen: "Scan",
+                title: "AI Stylist",
+                featurePrompt: "Answer this scan question.",
+                extraContext: "",
+                snapshot: snapshot(workplace: workplace)
+            )
+        )
+
+        XCTAssertTrue(request.primaryMessage.contains("Typed query intent: footwear"))
+        XCTAssertTrue(request.primaryMessage.contains("warehouseOrDistribution"))
+        XCTAssertTrue(request.primaryMessage.contains("safetyToe"))
+        XCTAssertTrue(request.primaryMessage.contains("Hard workplace safety constraints override style"))
+    }
+
+    func testEncodedSnapshotContainsNoIdentityOrPreciseLocationFields() throws {
+        let encoded = try JSONEncoder().encode(snapshot())
+        let text = try XCTUnwrap(String(data: encoded, encoding: .utf8)?.lowercased())
+
+        XCTAssertFalse(text.contains("employer"))
+        XCTAssertFalse(text.contains("wearer"))
+        XCTAssertFalse(text.contains("occupation"))
+        XCTAssertFalse(text.contains("city"))
+        XCTAssertFalse(text.contains("location"))
+        XCTAssertFalse(text.contains("name"))
+    }
+}
+
 final class AIInsightChatPromptBuilderTests: XCTestCase {
     private let emptyFacts = AIInsightChatCardFacts(
         screen: "",

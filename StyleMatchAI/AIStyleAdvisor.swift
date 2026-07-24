@@ -141,10 +141,9 @@ enum AIStyleAdvisor {
     }
 
     private static func weatherSummary(defaults: UserDefaults) -> String {
-        let city = stringValue("weatherCity", fallback: "", defaults: defaults)
         let weather = stringValue("weather", fallback: "", defaults: defaults)
         let condition = stringValue("weatherCondition", fallback: "", defaults: defaults)
-        let parts = [condition, weather, city].filter { !$0.isEmpty }
+        let parts = [condition, weather].filter { !$0.isEmpty }
         return parts.isEmpty ? "No weather saved" : parts.joined(separator: ", ")
     }
 
@@ -245,6 +244,7 @@ struct AIStyleInsightCard: View {
     @State private var isSendingMessage = false
     @State private var chatInput = ""
     @State private var messages: [AIInsightChatMessage] = []
+    @State private var conversationState = StylistConversationState()
     @AppStorage("aiInsightConversationData") private var aiInsightConversationData = Data()
 
     var body: some View {
@@ -362,6 +362,7 @@ struct AIStyleInsightCard: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Clear") {
                         messages.removeAll()
+                        conversationState = StylistConversationState()
                         saveMessages()
                     }
                 }
@@ -428,6 +429,7 @@ struct AIStyleInsightCard: View {
 
     private func openStylistChat() {
         loadMessages()
+        restoreConversationState()
         if messages.isEmpty {
             messages.append(
                 AIInsightChatMessage(
@@ -443,6 +445,17 @@ struct AIStyleInsightCard: View {
     private func sendChatMessage(_ rawText: String) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+
+        conversationState.applyExplicitWorkplaceDetails(from: text)
+        var snapshot = StylistConversationSnapshot.latestCompleted()
+        if let workplaceOverride = conversationState.workplaceOverride {
+            snapshot.workplace = workplaceOverride
+        }
+        let preflight = StylistConversationRouter.preflight(
+            message: text,
+            snapshot: snapshot,
+            state: conversationState
+        )
 
         let displayedHistory = messages.map { message in
             AIInsightConversationEntry(
@@ -460,7 +473,8 @@ struct AIStyleInsightCard: View {
                     screen: screen,
                     title: title,
                     featurePrompt: prompt,
-                    extraContext: extraContext
+                    extraContext: extraContext,
+                    snapshot: snapshot
                 )
             )
         } catch {
@@ -470,6 +484,15 @@ struct AIStyleInsightCard: View {
 
         chatInput = ""
         messages.append(AIInsightChatMessage(role: .client, text: text))
+        if let localReply = preflight.localReply {
+            messages.append(AIInsightChatMessage(role: .stylist, text: localReply))
+            if let semanticResponseID = preflight.semanticResponseID {
+                conversationState.emittedSemanticResponses.insert(semanticResponseID)
+            }
+            statusText = nil
+            saveMessages()
+            return
+        }
         isSendingMessage = true
         statusText = "ChatGPT is writing your styling answer."
         saveMessages()
@@ -543,6 +566,14 @@ struct AIStyleInsightCard: View {
         if messages.count != decoded.count {
             saveMessages()
         }
+    }
+
+    private func restoreConversationState() {
+        var restored = StylistConversationState()
+        for message in messages where message.role == .client {
+            restored.applyExplicitWorkplaceDetails(from: message.text)
+        }
+        conversationState = restored
     }
 
     private func saveMessages() {

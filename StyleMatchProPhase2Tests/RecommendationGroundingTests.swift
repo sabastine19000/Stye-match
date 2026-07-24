@@ -14,7 +14,7 @@ final class RecommendationGroundingTests: XCTestCase {
     func testEveryEvidenceSourceHasStableRawValue() {
         XCTAssertEqual(
             RecommendationEvidenceSource.allCases.map(\.rawValue),
-            ["photo", "selectedOccasion", "weather", "savedProfile"]
+            ["photo", "selectedOccasion", "workplace", "weather", "savedProfile"]
         )
     }
 

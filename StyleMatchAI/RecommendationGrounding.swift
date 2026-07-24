@@ -3,6 +3,7 @@ import Foundation
 enum RecommendationEvidenceSource: String, Codable, CaseIterable, Hashable {
     case photo
     case selectedOccasion
+    case workplace
     case weather
     case savedProfile
 }
@@ -461,6 +462,7 @@ enum GroundedRecommendationPresenter {
             switch source {
             case .photo: return "Based on the photo"
             case .selectedOccasion: return "Based on the selected occasion"
+            case .workplace: return "Based on your confirmed workplace context"
             case .weather: return "Based on current weather"
             case .savedProfile: return "Based on your saved size profile"
             }
