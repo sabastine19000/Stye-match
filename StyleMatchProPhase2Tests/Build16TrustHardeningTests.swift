@@ -39,6 +39,161 @@ final class Build16TrustHardeningTests: XCTestCase {
         )
     }
 
+    func testScanResultsUseTypedGroundingValidator() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertTrue(source.contains("private func groundedRecommendationResult(for result: OutfitAnalysisResult)"))
+        XCTAssertTrue(source.contains("RecommendationGroundingValidator.validate(candidates, facts: facts)"))
+    }
+
+    func testQuickResultCardRendersOnlyGroundedRecommendations() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func quickResultCard("),
+              let end = source.range(
+                of: "private func groundedRecommendationResult(",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the quick-result rendering boundary.")
+        }
+
+        let card = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(card.contains("groundedRecommendationResult(for: result)"))
+        XCTAssertTrue(card.contains("groundedRecommendationRow("))
+        XCTAssertFalse(card.contains("result.suggestions"))
+        XCTAssertFalse(card.contains("result.recommendations"))
+    }
+
+    func testScanAccessibilitySummaryUsesGroundedPresentations() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func scanResultAccessibilitySummary("),
+              let end = source.range(
+                of: "private func",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the scan-result accessibility summary.")
+        }
+
+        let summary = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(summary.contains("groundedRecommendationResult(for: result)"))
+        XCTAssertFalse(summary.contains("result.suggestions"))
+    }
+
+    func testScanRecommendationRenderingHasHonestEmptyState() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertTrue(source.contains("RecommendationGroundingValidator.honestEmptyState"))
+        XCTAssertTrue(source.contains("if let emptyState = groundedResult.emptyStateMessage"))
+    }
+
+    func testScanRecommendationsDoNotUseLegacyViewSimilarLabel() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertFalse(source.contains("\"View Similar\""))
+        XCTAssertTrue(source.contains("\"See examples\""))
+        XCTAssertTrue(source.contains("\"Shop similar\""))
+    }
+
+    func testScanRecommendationsDoNotUseLegacyTapToShopLabel() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertFalse(source.contains("\"Tap to Shop\""))
+    }
+
+    func testScanResultsLabelStyleMatchConfidenceExplicitly() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertTrue(source.contains("Text(\"Style match\")"))
+        XCTAssertTrue(source.contains("detectedStyleTitle(for: result)"))
+        XCTAssertTrue(source.contains("detectedStyleConfidence(for: result)"))
+    }
+
+    func testScanRecommendationsDoNotRetainUnsupportedCleanestPartCopy() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        XCTAssertFalse(source.localizedCaseInsensitiveContains("Tighten the cleanest part"))
+    }
+
+    func testDynamicRecommendationsAreEvidenceLimitedAndCapped() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func dynamicRecommendations("),
+              let end = source.range(
+                of: "var body: some View",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the dynamic recommendation builder.")
+        }
+
+        let builder = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(builder.contains("CanonicalGarmentReference"))
+        XCTAssertTrue(builder.contains("CanonicalColorReference"))
+        XCTAssertTrue(builder.contains("Array(recommendations.prefix(2))"))
+        XCTAssertFalse(builder.contains("jacket"))
+        XCTAssertFalse(builder.contains("chinos"))
+        XCTAssertFalse(builder.contains("saved sizes"))
+    }
+
+    func testProfileFitAdviceCarriesSavedProfileSource() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func groundedRecommendationResult("),
+              let end = source.range(
+                of: "private func groundedRecommendationRow(",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the grounded recommendation builder.")
+        }
+
+        let builder = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(builder.contains("id: \"profile-fit\""))
+        XCTAssertTrue(builder.contains("sources: [.savedProfile]"))
+        XCTAssertTrue(builder.contains("content: .profileFitGuidance"))
+    }
+
+    func testWeatherAdviceRequiresReliableWeatherEvidence() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func groundedRecommendationResult("),
+              let end = source.range(
+                of: "private func groundedRecommendationRow(",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the grounded recommendation builder.")
+        }
+
+        let builder = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertTrue(builder.contains("weatherConfidenceScore() >= 90"))
+        XCTAssertTrue(builder.contains("canGiveSpecificWeatherClothingAdvice"))
+        XCTAssertTrue(builder.contains("sources: [.weather]"))
+    }
+
+    func testFitRecommendationDoesNotExposeExactSavedMeasurements() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func fitRecommendationNote("),
+              let end = source.range(
+                of: "private func",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected fit recommendation note.")
+        }
+
+        let note = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(note.contains("shirtSize"))
+        XCTAssertFalse(note.contains("pantsSize"))
+        XCTAssertFalse(note.contains("shoeSize"))
+        XCTAssertFalse(note.contains("waist"))
+        XCTAssertFalse(note.contains("inseam"))
+    }
+
+    func testGroundedRenderingDoesNotInferAccessoriesFromScore() throws {
+        let source = try projectSource("StyleMatchAI/ScanView.swift")
+        guard let start = source.range(of: "private func groundedRecommendationResult("),
+              let end = source.range(
+                of: "private func groundedRecommendationRow(",
+                range: start.upperBound..<source.endIndex
+              ) else {
+            return XCTFail("Expected the grounded recommendation builder.")
+        }
+
+        let builder = String(source[start.lowerBound..<end.lowerBound])
+        XCTAssertFalse(builder.contains("watch"))
+        XCTAssertFalse(builder.contains("belt"))
+        XCTAssertFalse(builder.contains("jewelry"))
+        XCTAssertFalse(builder.contains("score >"))
+        XCTAssertFalse(builder.contains("score <"))
+    }
+
     func testOutfitSharingOpensPrivacyPreviewBeforeSystemShareSheet() throws {
         let source = try projectSource("StyleMatchAI/ScanView.swift")
 

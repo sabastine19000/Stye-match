@@ -80,6 +80,7 @@ struct ScanView: View {
     @State private var selectedScannerInsight = "Colors"
     @State private var scannerExampleIndex = 0
     @State private var selectedTryNextRecommendation: ClothingRecommendation?
+    @State private var selectedTryNextGroundedAction: GroundedRecommendationAction?
     @State private var isShowingTryNextActions = false
     @State private var isShowingFullAnalysis = false
     @State private var isScoreAnalysisExpanded = false
@@ -242,8 +243,9 @@ struct ScanView: View {
         fallback: String
     ) -> String {
         guard !classification.isUncertain else { return fallback }
-        let occasion = classification.selectedOccasion?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let context = occasion?.isEmpty == false ? occasion! : "the selected occasion"
+        let occasion = classification.selectedOccasion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let context = occasion.flatMap { $0.isEmpty ? nil : $0 } ?? "the selected occasion"
         switch classification.occasionCompatibility {
         case .compatible:
             return "\(classification.effectiveCategory.displayName) is compatible with \(context)."
@@ -301,248 +303,50 @@ struct ScanView: View {
         colorPalette: [String],
         environment: String
     ) -> [ClothingRecommendation] {
-        let paletteText = colorPalette.isEmpty ? favoriteColors : colorPalette.joined(separator: ", ")
-        let itemText = detectedItems.isEmpty ? "the visible outfit" : detectedItems.joined(separator: ", ").lowercased()
-        if sleepwearOrLoungewearCategory(from: "\(itemText) \(environment.lowercased())") != nil {
-            return validatedRecommendations([
-                ClothingRecommendation(
-                    category: "Comfort",
-                    title: "Cozy indoor styling",
-                    reason: "This reads as sleepwear or loungewear, so comfort, softness, and home use matter more than business polish.",
-                    personalization: "Keep the robe, pajama set, or slippers coordinated for a relaxed bedtime or at-home look."
-                ),
-                ClothingRecommendation(
-                    category: "Fit",
-                    title: "Roomy, comfortable fit",
-                    reason: "Sleepwear should allow easy movement and feel soft rather than structured or tailored.",
-                    personalization: "Choose relaxed sizing and avoid tight layers for bedtime or lounging."
-                )
-            ], environment: environment)
-        }
-        if isRuggedCasualEvidence("\(itemText) \(environment.lowercased())") {
-            return validatedRecommendations([
-                ClothingRecommendation(
-                    category: "Footwear",
-                    title: "Lean into rugged casual shoes",
-                    reason: "The hoodie, plaid or flannel layer, denim, and casual footwear read everyday casual rather than business casual.",
-                    personalization: "Clean boots, casual leather sneakers, or trail-inspired shoes will support the outdoor/workwear feel."
-                ),
-                ClothingRecommendation(
-                    category: "Layering",
-                    title: "Keep the shacket structured",
-                    reason: "A rugged casual outfit looks strongest when the top layer fits cleanly through the shoulders and does not bunch over the hoodie.",
-                    personalization: "Use darker denim or a plain tee underneath if you want the plaid layer to look sharper."
-                )
-            ], environment: environment)
-        }
-        let needsPolish = score < 88
-        let needsOnlyFinish = score >= 92
-        let hasPantsSignal = detectedItems.contains { item in
-            ["pant", "jean", "short", "trouser"].contains { item.localizedCaseInsensitiveContains($0) }
-        }
-        let hasShirtSignal = detectedItems.contains { item in
-            ["shirt", "top", "hoodie", "sweater", "blouse"].contains { item.localizedCaseInsensitiveContains($0) }
-        }
-
         var recommendations: [ClothingRecommendation] = []
+        let canonicalItems = detectedItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+        }
+        let canonicalColors = colorPalette.compactMap(CanonicalColorReference.init(paletteTerm:))
 
-        if needsPolish {
+        if !canonicalColors.isEmpty {
+            let palette = canonicalColors
+                .map(\.displayName)
+                .removingDuplicates()
+                .joined(separator: ", ")
             recommendations.append(
                 ClothingRecommendation(
-                    category: "Fit",
-                    title: "Tighten the cleanest part of the outfit",
-                    reason: "A \(score) \(scoreRatingTitle(for: score)) look usually needs one sharper fit detail before changing the whole outfit.",
-                    personalization: "Use your saved sizes: shirt \(shirtSize), pants \(pantsSize), shoes \(shoeSize); preferred pant fit \(PantFitPreference.fromProfileInput(preferredPantFit).displayName.lowercased())."
-                )
-            )
-        } else if needsOnlyFinish {
-            recommendations.append(
-                ClothingRecommendation(
-                    category: "Finish",
-                    title: "Keep the outfit and add one premium detail",
-                    reason: "A \(score) \(scoreRatingTitle(for: score)) look is already strong, so the best upgrade is a small finishing piece instead of a full change.",
-                    personalization: isHotWeatherContext
-                        ? "Choose a watch, belt, sunglasses, breathable shoe finish, or lightweight accessory that matches \(paletteText)."
-                        : "Choose a watch, belt, jacket, or shoe finish that matches \(paletteText)."
-                )
-            )
-        } else {
-            recommendations.append(
-                ClothingRecommendation(
-                    category: "Balance",
-                    title: "Improve the top-to-bottom balance",
-                    reason: "The outfit is working, but one cleaner color bridge would make \(itemText) feel more intentional.",
-                    personalization: "Favorite colors saved: \(favoriteColors). Current palette: \(paletteText)."
+                    category: "Coordination",
+                    title: "Coordinate the observed palette",
+                    reason: "The scan detected \(palette).",
+                    personalization: "Photo evidence only. Keep any added piece within this observed color family."
                 )
             )
         }
 
-        if hasShirtSignal || !hasPantsSignal {
+        if let garment = canonicalItems.first {
             recommendations.append(
                 ClothingRecommendation(
-                    category: "Pants",
-                    title: needsOnlyFinish ? "Pressed dark denim or tailored chinos" : "Better tapered pants in a neutral color",
-                    reason: "A cleaner pant shape can lift the full outfit without fighting the shirt.",
-                    personalization: pantsPersonalization
+                    category: "Evidence",
+                    title: "Review the visible \(garment.displayName)",
+                    reason: "StyleMatch Pro detected this garment in the photo.",
+                    personalization: "Use a clearer full-outfit scan before relying on advice about garments or fit that are not visible."
                 )
             )
         }
 
-        if hasPantsSignal || !hasShirtSignal {
+        if recommendations.isEmpty {
             recommendations.append(
                 ClothingRecommendation(
-                    category: "Shirts",
-                    title: needsOnlyFinish ? "Crisp shirt in the same color family" : "Sharper shirt with cleaner structure",
-                    reason: "A structured shirt improves the outfit line and helps the score feel more trustworthy.",
-                    personalization: shirtPersonalization
+                    category: "Evidence",
+                    title: "Try a clearer full-outfit scan",
+                    reason: RecommendationGroundingResult.honestEmptyState,
+                    personalization: "No specific garment, fit, or color recommendation was generated."
                 )
             )
         }
 
-        recommendations.append(
-            ClothingRecommendation(
-                category: "Shoes",
-                title: shoeRecommendationTitle(score: score, palette: colorPalette, environment: environment),
-                reason: shoeRecommendationReason(score: score, environment: environment),
-                personalization: "Saved shoe size: \(shoeSize). Match with \(paletteText.lowercased())."
-            )
-        )
-
-        recommendations.append(
-            ClothingRecommendation(
-                category: weatherAccessoryRecommendationCategory,
-                title: weatherAccessoryRecommendationTitle,
-                reason: weatherAccessoryRecommendationReason,
-                personalization: "Weather: \(weatherLocationText). Occasion: \(plannedOccasionSummary(environment: environment))."
-            )
-        )
-
-        return validatedRecommendations(recommendations, environment: environment)
-    }
-
-    private var weatherAccessoryRecommendationCategory: String {
-        let recommendation = weatherContextRecommendation(environment: result?.environment ?? "Unspecified")
-        if !recommendation.canGiveSpecificWeatherClothingAdvice {
-            return "Weather Context"
-        }
-        if isHotWeatherContext {
-            return "Hot Weather"
-        }
-
-        return weatherCondition.localizedCaseInsensitiveContains("rain") ? "Rain Ready" : "Accessories"
-    }
-
-    private var weatherAccessoryRecommendationTitle: String {
-        let recommendation = weatherContextRecommendation(environment: result?.environment ?? "Unspecified")
-        if !recommendation.canGiveSpecificWeatherClothingAdvice {
-            return "Confirm current weather before changing clothes"
-        }
-        if isHotWeatherContext {
-            return "Breathable polish for the heat"
-        }
-
-        return weatherCondition.localizedCaseInsensitiveContains("rain") ? "Light rain shell or water-friendly shoes" : "One watch, belt, or simple chain"
-    }
-
-    private var weatherAccessoryRecommendationReason: String {
-        let recommendation = weatherContextRecommendation(environment: result?.environment ?? "Unspecified")
-        if !recommendation.canGiveSpecificWeatherClothingAdvice {
-            return recommendation.rationale
-        }
-        if isHotWeatherContext {
-            return recommendation.rationale
-        }
-
-        return weatherCondition.localizedCaseInsensitiveContains("rain") ? "The outfit should still work if the weather turns wet without adding unnecessary bulk." : "One controlled detail makes the outfit look styled instead of accidental."
-    }
-
-    private func validatedRecommendations(_ recommendations: [ClothingRecommendation], environment: String) -> [ClothingRecommendation] {
-        recommendations
-            .map { validateRecommendation($0, environment: environment) }
-            .removingDuplicates(by: { "\($0.category)-\($0.title)" })
-    }
-
-    private func validateRecommendation(_ recommendation: ClothingRecommendation, environment: String) -> ClothingRecommendation {
-        let weatherRecommendation = weatherContextRecommendation(environment: environment)
-        if !weatherRecommendation.canGiveSpecificWeatherClothingAdvice,
-           containsSpecificWeatherAdvice("\(recommendation.category) \(recommendation.title) \(recommendation.reason) \(recommendation.personalization)") {
-            return ClothingRecommendation(
-                category: "Weather Context",
-                title: "Confirm current weather before changing clothes",
-                reason: weatherRecommendation.rationale,
-                personalization: "Weather confidence is below 90%, so StyleMatch Pro will keep this advice general."
-            )
-        }
-
-        guard weatherRecommendation.severity.isWarmOrHot else {
-            return recommendation
-        }
-
-        let combined = "\(recommendation.category) \(recommendation.title) \(recommendation.reason) \(recommendation.personalization)"
-        guard containsHeavyLayerAdvice(combined) else {
-            return recommendation
-        }
-
-        return ClothingRecommendation(
-            category: "Hot Weather",
-            title: "Breathable polish for the heat",
-            reason: "The original layer idea conflicted with \(weatherLocationText). Use a crisp lightweight shirt, breathable pants or shorts when appropriate, clean shoes, sunglasses, a hat, belt, or watch instead.",
-            personalization: "Validated against weather, occasion \(plannedOccasionSummary(environment: environment)), favorite colors \(favoriteColors), and saved closet context."
-        )
-    }
-
-    private func containsHeavyLayerAdvice(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        return lowered.contains("jacket")
-            || lowered.contains("blazer")
-            || lowered.contains("coat")
-            || lowered.contains("sweater")
-            || lowered.contains("shacket")
-            || lowered.contains("heavy layer")
-            || lowered.contains("structured layer")
-    }
-
-    private func containsSpecificWeatherAdvice(_ text: String) -> Bool {
-        let lowered = text.lowercased()
-        return lowered.contains("rain")
-            || lowered.contains("snow")
-            || lowered.contains("hot")
-            || lowered.contains("cold")
-            || lowered.contains("humid")
-            || lowered.contains("uv")
-            || lowered.contains("wind")
-            || lowered.contains("umbrella")
-            || lowered.contains("linen")
-            || lowered.contains("coat")
-            || lowered.contains("jacket")
-    }
-
-    private func shoeRecommendationTitle(score: Int, palette: [String], environment: String) -> String {
-        if score >= 92 {
-            return environment == "Business" || environment == "Office" ? "Polished black or dark brown loafers" : "Premium low-profile sneakers"
-        }
-
-        if palette.contains(where: { $0.localizedCaseInsensitiveContains("black") || $0.localizedCaseInsensitiveContains("gray") }) {
-            return "Black loafers or clean dark sneakers"
-        }
-
-        if palette.contains(where: { $0.localizedCaseInsensitiveContains("tan") || $0.localizedCaseInsensitiveContains("green") }) {
-            return "Tan loafers or cream sneakers"
-        }
-
-        return "Clean sneakers that match the outfit palette"
-    }
-
-    private func shoeRecommendationReason(score: Int, environment: String) -> String {
-        if score >= 92 {
-            return "The outfit is already scoring high, so shoes should refine the look instead of changing its direction."
-        }
-
-        if environment == "Business" || environment == "Office" {
-            return "A polished shoe makes the outfit feel more intentional for a work setting."
-        }
-
-        return "A cleaner shoe choice anchors the outfit and helps the lower half look finished."
+        return Array(recommendations.prefix(2))
     }
 
     var body: some View {
@@ -646,12 +450,26 @@ struct ScanView: View {
             isPresented: $isShowingTryNextActions,
             titleVisibility: .visible
         ) {
-            Button("Tap to Shop") {
-                handleTryNextAction(.shop)
+            if selectedTryNextGroundedAction == .shopSimilar {
+                Button("Shop similar") {
+                    handleTryNextAction(.shop)
+                }
             }
 
-            Button("View Similar") {
-                handleTryNextAction(.similar)
+            if selectedTryNextGroundedAction == .seeExamples {
+                Button("See examples") {
+                    handleTryNextAction(.similar)
+                }
+            }
+
+            if selectedTryNextGroundedAction == nil {
+                Button("Shop similar") {
+                    handleTryNextAction(.shop)
+                }
+
+                Button("See examples") {
+                    handleTryNextAction(.similar)
+                }
             }
 
             Button("Already in Closet") {
@@ -829,7 +647,7 @@ struct ScanView: View {
     }
 
     private var photoPicker: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        return VStack(alignment: .leading, spacing: 14) {
             scannerPanel
 
             if let result {
@@ -1395,38 +1213,42 @@ struct ScanView: View {
             return "After a scan, this shows the outfit color palette and matching color ideas."
         case "Patterns":
             if let result {
-                return "Pattern check uses detected items: \(result.safeDetectedClothingItems.isEmpty ? "outfit" : result.safeDetectedClothingItems.joined(separator: ", ")). Keep one strong pattern as the focus."
+                let items = result.safeDetectedClothingItems
+                return items.isEmpty
+                    ? "The scan did not retain enough garment evidence for a pattern-specific suggestion."
+                    : "Photo evidence retained these detected items: \(items.joined(separator: ", ")). No pattern-specific recommendation is made without clearer evidence."
             }
             return "After a scan, this checks whether prints, solids, and statement pieces feel balanced."
         case "Fit":
-            if let result {
+            if result != nil {
                 if hasSavedSizeProfileForFitCopy {
-                    return "Current fit score: \(result.score) \(scoreRatingTitle(for: result.score)). Uses your saved size profile: \(savedSizeProfileSummaryForFitCopy)."
+                    return "Based on your saved size profile: use \(savedSizeProfileSummaryForFitCopy) as general guidance. The photo does not prove exact measurements."
                 }
-                return "Current fit score: \(result.score) \(scoreRatingTitle(for: result.score)). No saved sizes yet; add them in Profile for tailored fit guidance."
+                return "The photo does not provide enough evidence for exact fit guidance. Add saved sizes in Profile and use a clearer full-outfit scan."
             }
             return hasSavedSizeProfileForFitCopy
                 ? "After a scan, this uses your saved size profile to explain fit, tailoring, and size-up or size-down suggestions."
                 : "After a scan, this checks visible fit. Add your sizes in Profile for tailored size-up or size-down suggestions."
         case "Accessories":
             if let result {
-                let footwearVisible = hasVisibleFootwear(in: result)
-                let accessory = result.recommendations.first { recommendation in
-                    let category = recommendation.category.lowercased()
-                    if category.contains("shoe") {
-                        return footwearVisible
-                    }
-                    return ["watches", "handbags", "accessories", "finish"].contains(category)
+                let accessories = result.safeDetectedClothingItems.compactMap {
+                    CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+                }.filter {
+                    [.shoes, .hat, .bag, .belt, .watch, .scarf, .tie, .accessory].contains($0)
                 }
-                let fallback = isHotWeatherContext
-                    ? "This outfit can be finished with one clean detail: watch, belt, bag, sunglasses, or hat."
-                    : "This outfit can be finished with one clean detail: watch, belt, bag, or weather-appropriate layer."
-                return accessory.map { "\($0.title). \($0.reason)" } ?? fallback
+                return accessories.isEmpty
+                    ? "No accessory-specific evidence was retained from this photo."
+                    : "Photo evidence detected: \(accessories.map(\.displayName).joined(separator: ", "))."
             }
-            return "After a scan, this suggests the best shoes, watches, bags, belts, and small finishing pieces."
+            return "After a scan, accessory guidance appears only when the photo contains supporting evidence."
         case "Occasion":
             if let result {
-                return "Occasion match: \(result.occasionFit). Formality: \(result.formality). Style Match Pro checks if the look fits work, church, travel, dinner, and events."
+                let selected = result.outfitClassification.selectedOccasion?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let occasion = selected.flatMap { $0.isEmpty ? nil : $0 } ?? plannedOccasion
+                return occasion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "No occasion was selected for this scan. Detected style remains \(detectedStyleTitle(for: result))."
+                    : "Selected occasion: \(occasion). Detected style: \(detectedStyleTitle(for: result)). Occasion context does not change the owned score."
             }
             return "After a scan, this checks whether the outfit fits the moment: work, church, travel, date night, gym, wedding, or interview."
         case "Weather":
@@ -1436,27 +1258,17 @@ struct ScanView: View {
             return "After a scan, this compares the outfit with local weather and suggests practical shoes, accessories, breathable pieces, or warm layers only when needed."
         case "Tips":
             if let result {
-                return result.suggestions.first ?? "Try one stronger color bridge, cleaner shoes, or a better-fitting layer to lift the outfit."
+                let grounded = groundedRecommendationResult(for: result)
+                if let recommendation = grounded.accepted.first {
+                    let presentation = GroundedRecommendationPresenter.presentation(for: recommendation)
+                    return "\(presentation.sourceLabel): \(presentation.title). \(presentation.detail)"
+                }
+                return grounded.emptyStateMessage ?? RecommendationGroundingResult.honestEmptyState
             }
             return "After a scan, this gives the fastest next step to improve the outfit without judging the customer."
         default:
             return "Select a scan tool to see personalized outfit feedback."
         }
-    }
-
-    private func hasVisibleFootwear(in result: OutfitAnalysisResult) -> Bool {
-        let evidence = (
-            result.detectedClothingItems.joined(separator: " ") + " " +
-            result.outfitDescription + " " +
-            result.summary + " " +
-            result.recommendations.map { "\($0.category) \($0.title) \($0.reason)" }.joined(separator: " ")
-        ).lowercased()
-
-        let footwearTerms = [
-            "shoe", "shoes", "sneaker", "sneakers", "loafer", "loafers",
-            "boot", "boots", "sandal", "sandals", "slipper", "slippers"
-        ]
-        return footwearTerms.contains { evidence.contains($0) }
     }
 
     private var analyzingCard: some View {
@@ -1787,12 +1599,19 @@ struct ScanView: View {
                 "Accessory Use \(breakdown.accessoryUse) out of 10"
             ]
         }
+        let grounded = groundedRecommendationResult(for: result)
+        let recommendations = grounded.accepted.map {
+            let presentation = GroundedRecommendationPresenter.presentation(for: $0)
+            return "\(presentation.sourceLabel): \(presentation.title). \(presentation.detail)"
+        }
         return StyleMatchAccessibilityText.scanResultSummary(
             score: result.score,
             rating: scoreRatingTitle(for: result.score),
             categoryScores: categories,
             detectedItems: Array(result.safeDetectedClothingItems.prefix(6)),
-            recommendations: Array(result.suggestions.prefix(2))
+            recommendations: recommendations.isEmpty
+                ? [grounded.emptyStateMessage ?? RecommendationGroundingResult.honestEmptyState]
+                : recommendations
         )
     }
 
@@ -2007,15 +1826,17 @@ struct ScanView: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text("Confidence")
+                    Text("Style match")
                         .font(.caption2)
                         .fontWeight(.bold)
                         .foregroundStyle(titleColor)
 
-                    Text("\(primary.confidence)%")
+                    Text("\(primary.name) — \(primary.confidence)%")
                         .font(.subheadline)
                         .fontWeight(.bold)
                         .foregroundStyle(accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
                 }
             }
 
@@ -3479,60 +3300,33 @@ struct ScanView: View {
 
     private func scoreExplanationBullets(for result: OutfitAnalysisResult) -> [String] {
         var explanations: [String] = []
-        let paletteText = scorePaletteDescription(for: result)
-        let detectedText = result.detectedClothingItems.joined(separator: " ").lowercased()
 
-        if result.score >= 84 {
-            explanations.append("The \(paletteText) palette creates strong visual balance.")
-        } else {
-            explanations.append("The \(paletteText) palette is close, but one clearer color anchor would make it stronger.")
+        if result.colorPaletteConfidence == .confident {
+            let colors = result.colorPalette
+                .compactMap(CanonicalColorReference.init(paletteTerm:))
+                .map(\.displayName)
+                .prefix(3)
+            if !colors.isEmpty {
+                explanations.append("Photo evidence detected this palette: \(colors.joined(separator: ", ")).")
+            }
         }
 
-        if result.score >= 80 {
-            explanations.append("The outfit proportions feel balanced and easy to wear.")
-        } else {
-            let sharperAnchor = isHotWeatherContext ? "belt, breathable shoe, or crisp lightweight shirt" : "weather-appropriate layer, belt, or shoe choice"
-            explanations.append("The proportions need one sharper anchor, like a cleaner \(sharperAnchor).")
+        let garments = result.safeDetectedClothingItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+        }.map(\.displayName)
+        if !garments.isEmpty {
+            explanations.append("Photo evidence detected: \(garments.joined(separator: ", ")).")
         }
 
-        let recommendationText = result.recommendations
-            .map { "\($0.category) \($0.title) \($0.reason)" }
-            .joined(separator: " ")
-            .lowercased()
-
-        if recommendationText.contains("shoe") || result.detectedClothingItems.contains(where: { $0.localizedCaseInsensitiveContains("shoe") }) {
-            explanations.append("The shoe color blends well with the outfit, but a brighter sneaker would create more contrast.")
-        } else {
-            explanations.append("One intentional accessory, like a watch, belt, or clean bag, would make the outfit feel more styled.")
+        for recommendation in groundedRecommendationResult(for: result).accepted {
+            let presentation = GroundedRecommendationPresenter.presentation(for: recommendation)
+            explanations.append("\(presentation.sourceLabel): \(presentation.detail)")
         }
 
-        if recommendationText.contains("shirt") || detectedText.contains("shirt") || detectedText.contains("top") {
-            explanations.append("The oversized shirt gives a relaxed streetwear aesthetic while still leaving room for a cleaner fit.")
-        } else {
-            explanations.append("The fit reads relaxed and wearable; one cleaner layer would make the silhouette sharper.")
-        }
-
-        return Array(explanations.prefix(4))
-    }
-
-    private func scorePaletteDescription(for result: OutfitAnalysisResult) -> String {
-        guard result.colorPaletteConfidence == .confident else {
-            return "uncertain color"
-        }
-        let colors = result.colorPalette
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .filter { !$0.isEmpty }
-            .prefix(2)
-
-        if colors.count == 2 {
-            return colors.joined(separator: " and ")
-        }
-
-        if let color = colors.first {
-            return color
-        }
-
-        return "main color"
+        let limited = Array(explanations.prefix(2))
+        return limited.isEmpty
+            ? [RecommendationGroundingResult.honestEmptyState]
+            : limited
     }
 
     private func scoreExplanationIcon(for explanation: String) -> String {
@@ -3565,12 +3359,24 @@ struct ScanView: View {
         let paletteText = result.colorPaletteConfidence == .confident
             ? result.colorPalette.prefix(3).joined(separator: ", ")
             : ""
-        let fitDetail = scoreExplanationBullets(for: result).first { $0.localizedCaseInsensitiveContains("fit") || $0.localizedCaseInsensitiveContains("shirt") } ?? "Fit is reviewed using your saved size profile and visible proportions."
-        let accessoryDetail = result.recommendations.first { recommendation in
-            let category = recommendation.category.lowercased()
-            return category.contains("shoe") || category.contains("accessor") || category.contains("watch") || category.contains("bag") || category.contains("finish")
-        }.map { "\($0.title). \($0.reason)" } ?? "One intentional accessory can make the outfit feel more finished."
-        let improvementDetail = result.suggestions.first ?? "Try one cleaner color bridge, sharper shoes, or a better-fitting layer."
+        let grounded = groundedRecommendationResult(for: result)
+        let presentations = grounded.accepted.map {
+            GroundedRecommendationPresenter.presentation(for: $0)
+        }
+        let fitDetail = hasSavedSizeProfileForFitCopy
+            ? "Based on your saved size profile: use it as general guidance; the photo does not prove exact measurements."
+            : "The photo does not provide enough evidence for exact fit guidance."
+        let observedAccessories = result.safeDetectedClothingItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+        }.filter {
+            [.shoes, .hat, .bag, .belt, .watch, .scarf, .tie, .accessory].contains($0)
+        }
+        let accessoryDetail = observedAccessories.isEmpty
+            ? "No accessory-specific evidence was retained from this photo."
+            : "Photo evidence detected: \(observedAccessories.map(\.displayName).joined(separator: ", "))."
+        let improvementDetail = presentations.first.map {
+            "\($0.sourceLabel): \($0.title). \($0.detail)"
+        } ?? grounded.emptyStateMessage ?? RecommendationGroundingResult.honestEmptyState
 
         return [
             AnalysisCategoryItem(
@@ -3583,7 +3389,7 @@ struct ScanView: View {
             AnalysisCategoryItem(
                 title: "Patterns",
                 icon: "circle.grid.cross.fill",
-                detail: "Patterns and solids read balanced; keep one statement texture or print as the main focus."
+                detail: "No pattern-specific suggestion is made without retained visual evidence."
             ),
             AnalysisCategoryItem(
                 title: "Fit",
@@ -3598,7 +3404,7 @@ struct ScanView: View {
             AnalysisCategoryItem(
                 title: "Occasion",
                 icon: "calendar",
-                detail: "\(result.occasionFit). The outfit reads \(detectedStyleTitle(for: result).lowercased()) with \(result.formality.lowercased()) formality."
+                detail: "Selected occasion is context only. Style match: \(detectedStyleTitle(for: result)) — \(detectedStyleConfidence(for: result))%."
             ),
             AnalysisCategoryItem(
                 title: "Weather",
@@ -3718,53 +3524,42 @@ struct ScanView: View {
 
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Suggestions")
-                    .font(.headline)
-
-                ForEach(result.suggestions, id: \.self) { suggestion in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .padding(.top, 2)
-                        Text(suggestion)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("AI Clothing Recommendations")
-                    .font(.headline)
-
-                ForEach(result.recommendations) { recommendation in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(recommendation.category)
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                        }
-
-                        Text(recommendation.title)
-                            .fontWeight(.semibold)
-
-                        Text(recommendation.reason)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                        Label(recommendation.personalization, systemImage: "person.crop.circle")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .appCard(.scan, radius: 14)
-                }
-            }
+            groundedAnalysisGuidance(for: result)
         }
         .padding()
         .appCard(.scan, radius: 18)
+    }
+
+    private func groundedAnalysisGuidance(for result: OutfitAnalysisResult) -> some View {
+        let grounded = groundedRecommendationResult(for: result)
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Grounded guidance")
+                .font(.headline)
+
+            ForEach(grounded.accepted) { recommendation in
+                let presentation = GroundedRecommendationPresenter.presentation(for: recommendation)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(presentation.title)
+                        .fontWeight(.semibold)
+                    Text(presentation.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text(presentation.sourceLabel)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
+                .appCard(.scan, radius: 14)
+            }
+
+            if let emptyState = grounded.emptyStateMessage {
+                Label(emptyState, systemImage: "camera.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private func detectedItemsConfidenceCard(for result: OutfitAnalysisResult) -> some View {
@@ -3989,25 +3784,29 @@ struct ScanView: View {
     }
 
     private func quickResultCard(_ result: OutfitAnalysisResult) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let groundedResult = groundedRecommendationResult(for: result)
+        let presented = groundedResult.accepted.map {
+            GroundedRecommendationPresenter.presentation(for: $0)
+        }
+
+        return VStack(alignment: .leading, spacing: 14) {
             Text("Try this next")
                 .font(.headline)
                 .foregroundStyle(.white)
 
-            ForEach(Array(result.recommendations.prefix(3).enumerated()), id: \.element.id) { index, recommendation in
-                tryNextRecommendationRow(recommendation)
+            ForEach(Array(zip(groundedResult.accepted, presented).enumerated()), id: \.element.0.id) { index, pair in
+                groundedRecommendationRow(pair.0, presentation: pair.1)
                     .opacity(resultRevealStep >= 6 + index ? 1 : 0)
                     .offset(y: resultRevealStep >= 6 + index ? 0 : 10)
             }
 
-            Divider()
-                .opacity(resultRevealStep >= 8 ? 1 : 0)
-
-            Text(result.suggestions.first ?? "Add one sharper piece to make the outfit feel more complete.")
-                .font(.subheadline)
-                .foregroundStyle(scanMuted)
-                .opacity(resultRevealStep >= 8 ? 1 : 0)
-                .offset(y: resultRevealStep >= 8 ? 0 : 8)
+            if let emptyState = groundedResult.emptyStateMessage {
+                Label(emptyState, systemImage: "camera.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(scanMuted)
+                    .opacity(resultRevealStep >= 6 ? 1 : 0)
+                    .offset(y: resultRevealStep >= 6 ? 0 : 8)
+            }
         }
         .padding()
         .background(scanPanel)
@@ -4018,76 +3817,191 @@ struct ScanView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    private func tryNextRecommendationRow(_ recommendation: ClothingRecommendation) -> some View {
-        Button {
-            selectedTryNextRecommendation = recommendation
-            isShowingTryNextActions = true
-        } label: {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: recommendationIcon(for: recommendation.category))
-                    .font(.headline)
+    private func groundedRecommendationResult(for result: OutfitAnalysisResult) -> RecommendationGroundingResult {
+        let observedGarments = Set(
+            result.safeDetectedClothingItems.compactMap {
+                CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+            }
+        )
+        let observedColors: Set<CanonicalColorReference> = result.colorPaletteConfidence == .confident
+            ? Set(result.colorPalette.compactMap(CanonicalColorReference.init(paletteTerm:)))
+            : []
+        let selectedOccasion = result.outfitClassification.selectedOccasion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedOccasion = (selectedOccasion?.isEmpty == false ? selectedOccasion : nil)
+            ?? {
+                let stored = plannedOccasion.trimmingCharacters(in: .whitespacesAndNewlines)
+                return stored.isEmpty ? nil : stored
+            }()
+        let hasReliableWeather = weatherConfidenceScore() >= 90
+            && weatherContextRecommendation(environment: result.environment).canGiveSpecificWeatherClothingAdvice
+        let fitObservability: FitObservability = result.imageQuality.localizedCaseInsensitiveContains("clear")
+            ? .limited
+            : .unavailable
+
+        let facts = RecommendationGroundingFacts(
+            observedGarments: observedGarments,
+            observedColors: observedColors,
+            fitObservability: fitObservability,
+            hasSelectedOccasion: resolvedOccasion != nil,
+            hasWeatherEvidence: hasReliableWeather,
+            hasSavedProfile: hasSavedSizeProfileForFitCopy
+        )
+        var candidates: [GroundedRecommendation] = []
+
+        if !observedColors.isEmpty {
+            let references = observedColors
+                .sorted { $0.rawValue < $1.rawValue }
+                .map { RecommendationReference.color($0, role: .observed) }
+            candidates.append(
+                GroundedRecommendation(
+                    id: "palette-coordination",
+                    category: .coordination,
+                    sources: [.photo],
+                    producer: .deterministicClientRule,
+                    references: Set(references),
+                    content: .coordinateObservedPalette,
+                    action: .none
+                )
+            )
+        }
+
+        if hasSavedSizeProfileForFitCopy {
+            let garment = observedGarments.sorted { $0.rawValue < $1.rawValue }.first
+            let references = garment.map {
+                [RecommendationReference.garment($0, role: .observed)]
+            } ?? []
+            candidates.append(
+                GroundedRecommendation(
+                    id: "profile-fit",
+                    category: .fit,
+                    sources: [.savedProfile],
+                    producer: .deterministicClientRule,
+                    references: Set(references),
+                    fitObservability: fitObservability,
+                    content: .profileFitGuidance,
+                    action: .none
+                )
+            )
+        }
+
+        if resolvedOccasion != nil {
+            candidates.append(
+                GroundedRecommendation(
+                    id: "occasion-alignment",
+                    category: .occasion,
+                    sources: [.selectedOccasion],
+                    producer: .deterministicClientRule,
+                    references: [],
+                    content: .occasionAlignment,
+                    action: .none
+                )
+            )
+        }
+
+        if hasReliableWeather {
+            candidates.append(
+                GroundedRecommendation(
+                    id: "weather-breathability",
+                    category: .weather,
+                    sources: [.weather],
+                    producer: .deterministicClientRule,
+                    references: [],
+                    content: .weatherBreathability,
+                    action: .none
+                )
+            )
+        }
+
+        if candidates.isEmpty {
+            candidates.append(
+                GroundedRecommendation(
+                    id: "clearer-scan",
+                    category: .evidence,
+                    sources: [.photo],
+                    producer: .validatedFallback,
+                    references: [],
+                    content: .clearerFullOutfitScan,
+                    action: .none
+                )
+            )
+        }
+
+        return RecommendationGroundingValidator.validate(candidates, facts: facts)
+    }
+
+    private func groundedRecommendationRow(
+        _ recommendation: GroundedRecommendation,
+        presentation: GroundedRecommendationPresentation
+    ) -> some View {
+        let content = HStack(alignment: .center, spacing: 12) {
+            Image(systemName: recommendationIcon(for: recommendation.category.rawValue))
+                .font(.headline)
+                .foregroundStyle(scanCream)
+                .frame(width: 38, height: 38)
+                .background(scanCream.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(presentation.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .lineLimit(3)
+
+                Text(presentation.detail)
+                    .font(.caption)
+                    .foregroundStyle(scanMuted)
+                    .lineLimit(3)
+
+                Text(presentation.sourceLabel)
+                    .font(.caption2)
+                    .fontWeight(.bold)
                     .foregroundStyle(scanCream)
-                    .frame(width: 38, height: 38)
-                    .background(scanCream.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(recommendation.title)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-
-                    Text(tryNextActionLabel(for: recommendation))
+                if let actionLabel = presentation.actionLabel {
+                    Text(actionLabel)
                         .font(.caption)
                         .fontWeight(.bold)
                         .foregroundStyle(scanCream)
                 }
+            }
 
-                Spacer()
+            Spacer()
 
+            if presentation.actionLabel != nil {
                 Image(systemName: "chevron.right.circle.fill")
                     .font(.title3)
                     .foregroundStyle(scanCream.opacity(0.9))
             }
-            .padding(10)
-            .background(scanBackground.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(scanPanelBorder, lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
-    }
+        .padding(10)
+        .background(scanBackground.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
 
-    private func tryNextActionLabel(for recommendation: ClothingRecommendation) -> String {
-        if recommendationLooksInCloset(recommendation) {
-            return "Already in Closet"
-        }
-
-        let category = recommendation.category.lowercased()
-        if category.contains("shoe") || category.contains("jacket") || category.contains("watch") || category.contains("handbag") || category.contains("finish") {
-            return "Tap to Shop"
-        }
-
-        return "View Similar"
-    }
-
-    private func recommendationLooksInCloset(_ recommendation: ClothingRecommendation) -> Bool {
-        let closetText = closetInventory.lowercased()
-        guard !closetText.isEmpty else {
-            return false
-        }
-
-        let terms = (recommendation.title + " " + recommendation.category)
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { term in
-                term.count > 3 && !["with", "that", "look", "outfit", "clean", "style", "match", "finish"].contains(term)
+        return Group {
+            if presentation.actionLabel != nil {
+                Button {
+                    selectedTryNextRecommendation = ClothingRecommendation(
+                        category: recommendation.category.rawValue,
+                        title: presentation.title,
+                        reason: presentation.detail,
+                        personalization: presentation.sourceLabel
+                    )
+                    selectedTryNextGroundedAction = recommendation.action
+                    isShowingTryNextActions = true
+                } label: {
+                    content
+                }
+                .buttonStyle(.plain)
+            } else {
+                content
             }
-
-        return terms.contains { closetText.contains($0) }
+        }
     }
 
     private func handleTryNextAction(_ action: TryNextAction) {
@@ -5245,11 +5159,14 @@ struct ScanView: View {
     }
 
     private func fitRecommendationNote(for detectedItems: [String]) -> String {
-        let items = detectedItems.isEmpty ? "the visible outfit" : detectedItems.joined(separator: ", ").lowercased()
-        if hasSavedSizeProfileForFitCopy {
-            return "Fit check: using your saved size profile (\(savedSizeProfileSummaryForFitCopy)), review \(items) for pulling, extra bunching, dragging hems, or sleeves that pass the wrist. If needed, size up, size down, tailor the inseam, adjust the waist, or shorten the sleeve."
+        let observedItems = detectedItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)?.displayName
         }
-        return "Fit check: no saved sizes yet. Review \(items) for pulling, extra bunching, dragging hems, or sleeves that pass the wrist. Add your sizes in Profile for tailored fit guidance."
+        let items = observedItems.isEmpty ? "the visible outfit" : observedItems.joined(separator: ", ")
+        if hasSavedSizeProfileForFitCopy {
+            return "Based on your saved size profile: compare \(items) with your usual fit preferences. This scan does not verify exact measurements or unseen fit details."
+        }
+        return "Fit guidance is limited: no saved size profile is available, and this scan does not verify exact measurements or unseen fit details."
     }
 
     private func weatherRecommendationNote(environment: String) -> String {
