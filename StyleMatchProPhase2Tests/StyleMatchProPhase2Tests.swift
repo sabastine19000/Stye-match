@@ -7496,8 +7496,8 @@ final class StyleMatchProPhase2Tests: XCTestCase {
         let scanSource = try projectSource("StyleMatchAI/ScanView.swift")
 
         XCTAssertTrue(scanSource.contains("hasSavedSizeProfileForFitCopy"))
-        XCTAssertTrue(scanSource.contains("No saved sizes yet"))
-        XCTAssertTrue(scanSource.contains("Fit check: no saved sizes yet"))
+        XCTAssertTrue(scanSource.contains("no saved size profile is available"))
+        XCTAssertTrue(scanSource.contains("does not verify exact measurements or unseen fit details"))
         XCTAssertFalse(scanSource.contains("After a scan, this uses your saved sizes"))
         XCTAssertFalse(scanSource.contains("Fit check: using your saved sizes ("))
     }
