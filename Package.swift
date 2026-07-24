@@ -50,6 +50,7 @@ let package = Package(
                 "AppBackendConfiguration.swift",
                 "ShareableScoreCard.swift",
                 "Models.swift",
+                "RecommendationGrounding.swift",
                 "ContextEngine/OutfitContextContracts.swift",
                 "ContextEngine/LegacyContextAdapter.swift",
                 "ContextEngine/ContextInferenceInput.swift",

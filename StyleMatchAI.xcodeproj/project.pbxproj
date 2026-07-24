@@ -10,6 +10,7 @@
 		AA0000000000000000000001 /* StyleMatchAIApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* StyleMatchAIApp.swift */; };
 		AA0000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000012 /* ContentView.swift */; };
 		AA0000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000013 /* Models.swift */; };
+		RG1800200000000000000001 /* RecommendationGrounding.swift in Sources */ = {isa = PBXBuildFile; fileRef = RG1800200000000000000011 /* RecommendationGrounding.swift */; };
 		AA0000000000000000000004 /* RoadmapData.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000014 /* RoadmapData.swift */; };
 		AA0000000000000000000005 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000015 /* HomeView.swift */; };
 		AA0000000000000000000006 /* RoadmapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000016 /* RoadmapView.swift */; };
@@ -111,6 +112,7 @@
 		AA0000000000000000000011 /* StyleMatchAIApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleMatchAIApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		RG1800200000000000000011 /* RecommendationGrounding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecommendationGrounding.swift; sourceTree = "<group>"; };
 		AA0000000000000000000014 /* RoadmapData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadmapData.swift; sourceTree = "<group>"; };
 		AA0000000000000000000015 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		AA0000000000000000000016 /* RoadmapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoadmapView.swift; sourceTree = "<group>"; };
@@ -246,6 +248,7 @@
 				AA0000000000000000000167 /* ShareableScoreCardViews.swift */,
 				AA0000000000000000000012 /* ContentView.swift */,
 				AA0000000000000000000013 /* Models.swift */,
+				RG1800200000000000000011 /* RecommendationGrounding.swift */,
 				CE1000000000000000000010 /* ContextEngine */,
 				CE2R100000000000000000010 /* ScanAuthority */,
 				AA0000000000000000000111 /* GarmentColorPaletteEngine.swift */,
@@ -489,6 +492,7 @@
 				AA0000000000000000000001 /* StyleMatchAIApp.swift in Sources */,
 				AA0000000000000000000002 /* ContentView.swift in Sources */,
 				AA0000000000000000000003 /* Models.swift in Sources */,
+				RG1800200000000000000001 /* RecommendationGrounding.swift in Sources */,
 				CE1000000000000000000001 /* OutfitContextContracts.swift in Sources */,
 				CE1000000000000000000002 /* LegacyContextAdapter.swift in Sources */,
 				CE2A00000000000000000001 /* ContextInferenceInput.swift in Sources */,
