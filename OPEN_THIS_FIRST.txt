@@ -1,0 +1,10 @@
+This is the clean StyleMatch AI Xcode app folder.
+
+To open the app:
+1. Double-click StyleMatchAI.xcodeproj
+2. Xcode will open.
+3. Plug in your iPhone.
+4. Select your iPhone at the top of Xcode.
+5. Press the Run button.
+
+Your Swift source code is in the StyleMatchAI folder.

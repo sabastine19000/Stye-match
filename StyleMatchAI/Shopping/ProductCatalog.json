@@ -1,0 +1,595 @@
+[
+  {
+    "id": "macys-white-oxford-001",
+    "name": "White Oxford Shirt",
+    "category": "clothing",
+    "subcategory": "white shirt",
+    "colors": [
+      "white"
+    ],
+    "sizes": [
+      "S",
+      "M",
+      "L",
+      "XL"
+    ],
+    "priceRange": null,
+    "occasionTags": [
+      "work",
+      "formalEvent"
+    ],
+    "brand": "Macy's",
+    "imageURL": null,
+    "retailer": {
+      "name": "Macy's",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Macy's"
+    },
+    "affiliateURL": "https://www.macys.com/shop/mens-clothing/mens-dress-shirts",
+    "price": 89.5,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "formal",
+      "office",
+      "summer",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "macys"
+  },
+  {
+    "id": "nike-white-sneaker-001",
+    "name": "Clean White Sneaker",
+    "category": "shoes",
+    "subcategory": "sneakers",
+    "colors": [
+      "white"
+    ],
+    "sizes": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12"
+    ],
+    "priceRange": null,
+    "occasionTags": [
+      "casual",
+      "travel"
+    ],
+    "brand": "Nike",
+    "imageURL": null,
+    "retailer": {
+      "name": "Nike",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Nike"
+    },
+    "affiliateURL": "https://www.nike.com/w/mens-shoes-nik1zy7ok",
+    "price": 110,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "casual",
+      "walking",
+      "travel",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "nike"
+  },
+  {
+    "id": "footlocker-nike-airmax-001",
+    "name": "Nike Air Max Sneaker",
+    "category": "shoes",
+    "subcategory": "sneakers",
+    "colors": [
+      "white",
+      "black"
+    ],
+    "sizes": [
+      "8",
+      "9",
+      "10",
+      "11",
+      "12",
+      "13"
+    ],
+    "priceRange": null,
+    "occasionTags": [
+      "casual",
+      "travel"
+    ],
+    "brand": "Nike",
+    "imageURL": null,
+    "retailer": {
+      "name": "Foot Locker",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "SID",
+      "disclosureName": "Foot Locker"
+    },
+    "affiliateURL": "https://www.footlocker.com/search?query=nike%20air%20max",
+    "price": null,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "casual",
+      "walking",
+      "travel",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "foot-locker"
+  },
+  {
+    "id": "amazon-fabric-steamer-001",
+    "name": "Portable Fabric Steamer",
+    "category": "styleTools",
+    "subcategory": "fabric steamer",
+    "colors": [
+      "white"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Amazon",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "tag",
+      "disclosureName": "Amazon"
+    },
+    "affiliateURL": "https://www.amazon.com/s?k=portable+fabric+steamer",
+    "price": 39.99,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "travel",
+      "office",
+      "formal",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "amazon"
+  },
+  {
+    "id": "bestbuy-smartwatch-001",
+    "name": "Fitness Smartwatch",
+    "category": "electronics",
+    "subcategory": "smartwatch",
+    "colors": [
+      "black"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Best Buy",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "irclickid",
+      "disclosureName": "Best Buy"
+    },
+    "affiliateURL": "https://www.bestbuy.com/site/searchpage.jsp?st=fitness+smartwatch",
+    "price": 199.99,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "gym",
+      "travel",
+      "electronics",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "best-buy"
+  },
+  {
+    "id": "macys-black-belt-001",
+    "name": "Black Leather Belt",
+    "category": "accessories",
+    "subcategory": "belt",
+    "colors": [
+      "black"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Macy's",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Macy's"
+    },
+    "affiliateURL": "https://www.macys.com/shop/mens-accessories/mens-belts",
+    "price": 65,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "formal",
+      "office",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "macys"
+  },
+  {
+    "id": "target-umbrella-001",
+    "name": "Compact Black Umbrella",
+    "category": "accessories",
+    "subcategory": "umbrella",
+    "colors": [
+      "black"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Target",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "clkid",
+      "disclosureName": "Target"
+    },
+    "affiliateURL": "https://www.target.com/s?searchTerm=compact+umbrella",
+    "price": 22,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "rain",
+      "umbrella",
+      "waterproof",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "target"
+  },
+  {
+    "id": "nordstrom-navy-blazer-001",
+    "name": "Structured Navy Blazer",
+    "category": "clothing",
+    "subcategory": "blazer",
+    "colors": [
+      "navy"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Nordstrom",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "utm_source",
+      "disclosureName": "Nordstrom"
+    },
+    "affiliateURL": "https://www.nordstrom.com/browse/men/clothing/blazers-sportcoats",
+    "price": 198,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "formal",
+      "office",
+      "jacket",
+      "heavy",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "nordstrom"
+  },
+  {
+    "id": "levi-dark-denim-001",
+    "name": "Dark Denim Jeans",
+    "category": "clothing",
+    "subcategory": "pants",
+    "colors": [
+      "denim",
+      "black"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Levi's",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "camp",
+      "disclosureName": "Levi's"
+    },
+    "affiliateURL": "https://www.levi.com/US/en_US/clothing/men/jeans/c/levi_clothing_men_jeans",
+    "price": 79.5,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "casual",
+      "travel",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "levis"
+  },
+  {
+    "id": "amazon-sunglasses-001",
+    "name": "Classic Sunglasses",
+    "category": "accessories",
+    "subcategory": "sunglasses",
+    "colors": [
+      "black"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Amazon",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "tag",
+      "disclosureName": "Amazon"
+    },
+    "affiliateURL": "https://www.amazon.com/s?k=classic+sunglasses",
+    "price": 24.99,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "sun",
+      "uv",
+      "summer",
+      "outdoor",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "amazon"
+  },
+  {
+    "id": "nike-gym-duffel-001",
+    "name": "Gym Duffel Bag",
+    "category": "accessories",
+    "subcategory": "bag",
+    "colors": [
+      "black"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Nike",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Nike"
+    },
+    "affiliateURL": "https://www.nike.com/w/bags-backpacks-9xy71",
+    "price": 55,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "gym",
+      "travel",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "nike"
+  },
+  {
+    "id": "macys-linen-shirt-001",
+    "name": "Lightweight Linen Shirt",
+    "category": "clothing",
+    "subcategory": "shirt",
+    "colors": [
+      "cream"
+    ],
+    "imageURL": null,
+    "retailer": {
+      "name": "Macy's",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Macy's"
+    },
+    "affiliateURL": "https://www.macys.com/shop/mens-clothing/mens-shirts",
+    "price": 74.5,
+    "salePrice": null,
+    "saleEndsAt": null,
+    "tags": [
+      "summer",
+      "hot",
+      "linen",
+      "fallback-static"
+    ],
+    "genderPresentation": null,
+    "availableCountries": [
+      "*"
+    ],
+    "availability": "in_stock",
+    "retailer_id": "macys"
+  },
+  {
+    "id": "gucci-840330aae801066-g75-sneaker",
+    "name": "Men’s G75 sneaker",
+    "category": "shoes",
+    "subcategory": "sneakers",
+    "colors": [
+      "black"
+    ],
+    "brand": "Gucci",
+    "retailer": {
+      "name": "Gucci",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Gucci"
+    },
+    "affiliateURL": "https://www.gucci.com/us/en/pr/men/shoes-for-men/sneakers-for-men/mens-g75-sneaker-p-840330AAE801066",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "gucci"
+  },
+  {
+    "id": "prada-sc810-re-nylon-shirt",
+    "name": "Re-Nylon shirt",
+    "category": "clothing",
+    "subcategory": "shirt",
+    "colors": [
+      "black"
+    ],
+    "brand": "Prada",
+    "retailer": {
+      "name": "Prada",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Prada"
+    },
+    "affiliateURL": "https://www.prada.com/us/en/p/re-nylon-shirt/SC810_16HH_F0002_S_OOO",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "prada"
+  },
+  {
+    "id": "ssense-hope-18999901-regular-fit-shirt",
+    "name": "Black Regular Fit Shirt",
+    "category": "clothing",
+    "subcategory": "shirt",
+    "colors": [
+      "black"
+    ],
+    "brand": "HOPE",
+    "retailer": {
+      "name": "SSENSE",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "SSENSE"
+    },
+    "affiliateURL": "https://www.ssense.com/en-us/men/product/hope-mens/black-regular-fit-shirt/18999901",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "ssense"
+  },
+  {
+    "id": "ssense-hope-18998871-gray-short-sleeve-shirt",
+    "name": "Gray Short-Sleeve Shirt",
+    "category": "clothing",
+    "subcategory": "shirt",
+    "colors": [
+      "gray"
+    ],
+    "brand": "HOPE",
+    "retailer": {
+      "name": "SSENSE",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "SSENSE"
+    },
+    "affiliateURL": "https://www.ssense.com/en-us/men/product/hope-mens/gray-short-sleeve-shirt/18998871",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "ssense"
+  },
+  {
+    "id": "nike-ah8050-005-air-max-270",
+    "name": "Nike Air Max 270",
+    "category": "shoes",
+    "subcategory": "sneakers",
+    "colors": [
+      "black"
+    ],
+    "brand": "Nike",
+    "retailer": {
+      "name": "Nike",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Nike"
+    },
+    "affiliateURL": "https://www.nike.com/t/air-max-270-mens-shoes-KkLcGR/AH8050-005",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "nike"
+  },
+  {
+    "id": "adidas-b75807-samba-og",
+    "name": "Samba OG Shoes",
+    "category": "shoes",
+    "subcategory": "sneakers",
+    "colors": [
+      "black",
+      "white"
+    ],
+    "brand": "adidas",
+    "retailer": {
+      "name": "Adidas",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Adidas"
+    },
+    "affiliateURL": "https://www.adidas.com/us/samba-og-shoes/B75807.html",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "adidas"
+  },
+  {
+    "id": "target-54190290-goodfellow-every-wear-tee",
+    "name": "Men’s Every Wear Short Sleeve T-Shirt",
+    "category": "clothing",
+    "subcategory": "shirt",
+    "colors": [
+      "black"
+    ],
+    "brand": "Goodfellow & Co.",
+    "retailer": {
+      "name": "Target",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Target"
+    },
+    "affiliateURL": "https://www.target.com/p/-/A-54190290",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "target"
+  },
+  {
+    "id": "levis-005010660-501-original-jeans",
+    "name": "501® Original Men’s Jeans",
+    "category": "clothing",
+    "subcategory": "pants",
+    "colors": [
+      "black"
+    ],
+    "brand": "Levi's",
+    "retailer": {
+      "name": "Levi's",
+      "trackingID": "PENDING-APPROVAL",
+      "trackingParamName": "stylematch_affiliate",
+      "disclosureName": "Levi's"
+    },
+    "affiliateURL": "https://www.levi.com/US/en_US/clothing/men/jeans/straight/501-original-mens-jeans/p/005010660",
+    "tags": [
+      "fallback-static"
+    ],
+    "retailer_id": "levis"
+  }
+]

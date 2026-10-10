@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>KigoStylist uses your camera to scan outfit and clothing photos.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>KigoStylist uses selected upcoming calendar context on this device to improve outfit recommendations when you enable Calendar Context.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>KigoStylist uses selected upcoming calendar context on this device to improve outfit recommendations when you enable Calendar Context.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>KigoStylist uses the microphone only when you tap voice input to dictate a stylist question.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>KigoStylist uses your location only when you request local weather guidance for outfit recommendations.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>KigoStylist uses speech recognition only after you tap voice input, so you can review and send a transcribed stylist question.</string>
+	<key>STYLEMATCH_API_BASE_URL</key>
+	<string>$(STYLEMATCH_API_BASE_URL)</string>
+	<key>STYLEMATCH_STYLE_FRIENDS_DM_RUNTIME_AUTHORITY</key>
+	<string>$(STYLEMATCH_STYLE_FRIENDS_DM_RUNTIME_AUTHORITY)</string>
+	<key>STYLEMATCH_STYLE_FRIENDS_DM_ATTACHMENTS_RUNTIME_AUTHORITY</key>
+	<string>$(STYLEMATCH_STYLE_FRIENDS_DM_ATTACHMENTS_RUNTIME_AUTHORITY)</string>
+	<key>STYLEMATCH_STYLE_FRIENDS_FEED_RUNTIME_AUTHORITY</key>
+	<string>$(STYLEMATCH_STYLE_FRIENDS_FEED_RUNTIME_AUTHORITY)</string>
+	<key>STYLEMATCH_SUPPORT_RUNTIME_AUTHORITY</key>
+	<string>$(STYLEMATCH_SUPPORT_RUNTIME_AUTHORITY)</string>
+	<key>STYLEMATCH_APNS_RUNTIME_AUTHORITY</key>
+	<string>$(STYLEMATCH_APNS_RUNTIME_AUTHORITY)</string>
+	<key>STYLEMATCH_SOCIAL_IMAGES_RUNTIME_AUTHORITY</key>
+	<string>$(STYLEMATCH_SOCIAL_IMAGES_RUNTIME_AUTHORITY)</string>
+	<key>STYLEMATCH_APNS_WORKER_URL</key>
+	<string>$(STYLEMATCH_APNS_WORKER_URL)</string>
+	<key>STYLEMATCH_APS_ENVIRONMENT</key>
+	<string>$(APS_ENVIRONMENT)</string>
+	<key>STYLEMATCH_SHARE_DOMAIN</key>
+	<string>$(STYLEMATCH_SHARE_DOMAIN)</string>
+	<key>STYLEMATCH_SOURCE_CHECKPOINT</key>
+	<string>$(STYLEMATCH_SOURCE_CHECKPOINT)</string>
+	<key>STYLEMATCH_BACKEND_LANE</key>
+	<string>$(STYLEMATCH_BACKEND_LANE)</string>
+</dict>
+</plist>

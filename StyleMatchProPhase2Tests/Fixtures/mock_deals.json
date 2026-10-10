@@ -1,0 +1,18 @@
+[
+  {
+    "itemName": "Oxford Shirt",
+    "category": "shirt",
+    "colors": ["white"],
+    "salePrice": 59.99,
+    "originalPrice": 89.99,
+    "url": "https://www.macys.com/white-shirt"
+  },
+  {
+    "itemName": "Everyday Shirt",
+    "category": "shirt",
+    "colors": ["black"],
+    "salePrice": 39.99,
+    "originalPrice": 69.99,
+    "url": "https://www.example.com/black-shirt"
+  }
+]

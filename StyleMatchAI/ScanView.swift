@@ -1,0 +1,12393 @@
+import AVFoundation
+import CoreImage
+import ImageIO
+import PhotosUI
+import OSLog
+import SwiftUI
+import UIKit
+import Vision
+
+#if DEBUG
+private let scanIntelligenceLogger = Logger(
+    subsystem: Bundle.main.bundleIdentifier ?? "com.sabastine.stylematchai",
+    category: "ScanIntelligence"
+)
+#endif
+
+struct ScanView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Binding var selectedTab: AppTab
+    let bottomNavigationClearance: CGFloat
+    let recentScoresScrollRequestID: Int
+    let onStylistScanHandoffChanged: (StylistScanHandoff?) -> Void
+    let onOpenStylistScanConversation: (StylistScanHandoff) -> Void
+    let onOpenStylistComparison: (CompareStylistRouteRequest) -> Void
+
+    init(
+        selectedTab: Binding<AppTab>,
+        bottomNavigationClearance: CGFloat = 0,
+        recentScoresScrollRequestID: Int = 0,
+        onStylistScanHandoffChanged: @escaping (StylistScanHandoff?) -> Void = { _ in },
+        onOpenStylistScanConversation: @escaping (StylistScanHandoff) -> Void = { _ in },
+        onOpenStylistComparison: @escaping (CompareStylistRouteRequest) -> Void = { _ in }
+    ) {
+        _selectedTab = selectedTab
+        self.bottomNavigationClearance = max(0, bottomNavigationClearance)
+        self.recentScoresScrollRequestID = recentScoresScrollRequestID
+        self.onStylistScanHandoffChanged = onStylistScanHandoffChanged
+        self.onOpenStylistScanConversation = onOpenStylistScanConversation
+        self.onOpenStylistComparison = onOpenStylistComparison
+    }
+
+    @AppStorage("outfitScanHistoryData") private var outfitScanHistoryData = Data()
+    @AppStorage("favoriteColors") private var favoriteColors = ""
+    @AppStorage("sizeProfile") private var sizeProfile = ""
+    @AppStorage("shirtSize") private var shirtSize = ""
+    @AppStorage("pantsSize") private var pantsSize = ""
+    @AppStorage("waistSize") private var waistSize = ""
+    @AppStorage("inseamLength") private var inseamLength = ""
+    @AppStorage("neckSize") private var neckSize = ""
+    @AppStorage("sleeveLength") private var sleeveLength = ""
+    @AppStorage("shoeSize") private var shoeSize = ""
+    @AppStorage("fitPreference") private var fitPreference = ""
+    @AppStorage("preferredPantFit") private var preferredPantFit = PantFitPreference.unset.displayName
+    @AppStorage("stylePreferences") private var stylePreferences = ""
+    @AppStorage("occasions") private var occasions = ""
+    @AppStorage("plannedOccasion") private var plannedOccasion = ""
+    @AppStorage("dressCode") private var dressCode = ""
+    @AppStorage("occasionFormality") private var occasionFormality = ""
+    @ObservedObject private var weatherAuthority = WeatherKitAuthority.shared
+    @AppStorage("openAIModel") private var openAIModel = "gpt-4o-mini"
+    @AppStorage("shareAppContextWithChatGPT") private var shareAppContextWithChatGPT = true
+    @AppStorage(VoiceAssistantSettings.enabledKey) private var voiceAssistantEnabled = VoiceAssistantSettings.defaultEnabled
+    @AppStorage("profileName") private var profileName = ""
+    @AppStorage("shoppingBudget") private var budget = ""
+    @AppStorage("favoriteBrands") private var favoriteBrands = ""
+    @AppStorage("pastPurchases") private var pastPurchases = ""
+    @AppStorage("favoriteOutfits") private var favoriteOutfits = ""
+    @AppStorage("closetInventory") private var closetInventory = ""
+    @AppStorage("closetItemsData") private var closetItemsData = Data()
+    @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
+    @AppStorage("selectedThemeIntensity") private var selectedThemeIntensity = 0.42
+    @State private var selectedItem: PhotosPickerItem?
+    @State private var selectedImage: Image?
+    @State private var selectedUIImage: UIImage?
+    /// A single, bounded, orientation-normalized image reserved for local Vision work.
+    /// The on-screen preview and saved-image asset remain independently bounded.
+    @State private var visionAnalysisUIImage: UIImage?
+    /// Coordinates async PhotosPicker work so an older transfer can never
+    /// replace a newer gallery choice or become the image sent to Vision.
+    @State private var gallerySelectionCoordinator = ScanImageSelectionCoordinator()
+    @State private var previewImageSourceToken: UUID?
+    @State private var visionImageSourceToken: UUID?
+    @State private var displayedImageSourceToken: UUID?
+    @State private var isShowingCamera = false
+    @State private var isPreparingCamera = false
+    @State private var isAnalyzing = false
+    @State private var result: OutfitAnalysisResult?
+    @State private var preparedAnalysis: OutfitAnalysisResult?
+    @State private var scanMessage: ScanMessage?
+    @State private var activeScanSessionID: UUID?
+    @State private var activeScanFingerprint: String?
+    /// Ephemeral only: increments when the visible scan identity changes so a
+    /// delayed Ask-the-Stylist action cannot route an older scan.
+    @State private var scanContextGeneration: UInt64 = 0
+    @State private var activeScanImageDigest: String?
+    @State private var scanHistoryCache = ScanHistoryDecodeCache()
+    @State private var selectedScannerInsight = "Colors"
+    @State private var scannerExampleIndex = 0
+    @State private var selectedTryNextRecommendation: ClothingRecommendation?
+    @State private var selectedTryNextGroundedAction: GroundedRecommendationAction?
+    @State private var isShowingTryNextActions = false
+    @State private var isShowingFullAnalysis = false
+    @State private var openedSavedScan: RecentOutfitScore?
+    @State private var savedScanImageZoomScale: CGFloat = 1
+    @State private var isScoreAnalysisExpanded = false
+    @State private var animatedScore = 0
+    @State private var resultRevealStep = 0
+    @State private var selectedScanHistoryFilter: ScanHistoryFilter = .all
+    @State private var lastConsumedRecentScoresScrollRequestID = 0
+    @State private var pendingRescanTitle: String?
+    @State private var currentScanSource: ScanSource = .gallery
+    @State private var selectedScanIDs = Set<String>()
+    @State private var isEditingScanHistory = false
+    @State private var scanPendingDelete: RecentOutfitScore?
+    @State private var isShowingDeleteScanConfirmation = false
+    @State private var scanPendingRename: RecentOutfitScore?
+    @State private var renameText = ""
+    @State private var isShowingRenameScanSheet = false
+    @State private var isShowingRenameUnsavedConfirmation = false
+    @State private var isShowingDeleteAllConfirmation = false
+    @State private var isShowingScanAIAssist = false
+    @State private var outfitSharePreview: OutfitSharePreviewData?
+    /// The current-result share remains entirely in memory until the later
+    /// preview/send step.  Neither value identifies or mutates a Saved Scan.
+    @State private var transientStyleFriendsShare: StyleFriendsDMPreparedShare?
+    @State private var selectedStyleFriendsDestination: StyleFriendsDMDestination?
+    @State private var isShowingStyleFriendsDestinationPicker = false
+    @State private var transientStyleFriendsPreview: StyleFriendsDMTransientSharePreviewDraft?
+    @StateObject private var transientStyleFriendsDispatch = StyleFriendsDMTransientShareDispatchCoordinator(
+        service: StyleFriendsDMRuntimeBinding.current().service
+    )
+    @State private var compareSourceScan: RecentOutfitScore?
+    @State private var comparePresentation: CompareScanPresentation?
+    /// A Compare request must outlive the Compare sheet dismissal, but it must
+    /// not create another Stylist owner. The root-owned callback is invoked
+    /// only from the sheet's dismissal completion so SwiftUI never has to
+    /// present the root Stylist sheet on top of this sheet.
+    @State private var pendingCompareStylistRequest: CompareStylistRouteRequest?
+    @State private var isShowingComparisonHistory = false
+    @State private var scanAIInput = ""
+    @State private var scanAIChatMessages: [ScanAIChatMessage] = []
+    @State private var isScanAIThinking = false
+    @State private var selectedScanOccasion: Occasion = .general
+    @State private var dismissedFormalityMismatchSignatures = Set<String>()
+    @State private var completeLookAccessoryProducts: [AffiliateProduct] = []
+    @State private var productOpenAlert: ShoppingProductOpenAlert?
+    @StateObject private var voiceAssistant = VoiceStylistService()
+    
+    private var activeTheme: StyleMatchAppTheme {
+        StyleMatchAppTheme(rawValue: selectedAppTheme) ?? .system
+    }
+
+    private var weather: String { weatherAuthority.snapshot.map { "\($0.temperatureFahrenheit)°F" } ?? "" }
+    private var weatherCity: String { weatherAuthority.snapshot?.locationName ?? "" }
+    private var weatherCondition: String { weatherAuthority.snapshot?.condition ?? "" }
+    private var weatherSource: String { weatherAuthority.snapshot == nil ? "Unavailable" : "WeatherKit" }
+    private var weatherFeelsLike: String { weatherAuthority.snapshot.map { "\($0.feelsLikeFahrenheit)°F" } ?? "" }
+    private var weatherRainChance: String { weatherAuthority.snapshot?.rainChancePercent.map { "\($0)%" } ?? "" }
+    private var weatherHumidity: String { weatherAuthority.snapshot?.humidityPercent.map { "\($0)%" } ?? "" }
+    private var weatherWindSpeed: String { weatherAuthority.snapshot?.windMph.map { "\($0) mph" } ?? "" }
+    private var weatherUVIndex: String { weatherAuthority.snapshot?.uvIndex.map(String.init) ?? "" }
+    private var liveWeatherUpdatedAt: TimeInterval { weatherAuthority.snapshot?.observedAt.timeIntervalSince1970 ?? 0 }
+    private var globalWeatherAlert: GlobalWeatherAlert { GlobalWeatherAlert.make(snapshot: weatherAuthority.snapshot) }
+
+    private var activeScanPalette: (background: Color, panel: Color, border: Color, cream: Color, muted: Color) {
+        activeTheme.scanPalette(intensity: selectedThemeIntensity)
+    }
+
+    private var scanBackground: Color { activeScanPalette.background }
+    private var scanPanel: Color { activeScanPalette.panel }
+    private var scanPanelBorder: Color { activeScanPalette.border }
+    private var scanCream: Color { activeScanPalette.cream }
+    private var scanMuted: Color { activeScanPalette.muted }
+
+    private func makeAnalysisResult(
+        score: Int,
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        imageQuality: String,
+        colorPalette: [String]? = nil,
+        colorPaletteMaskingApplied: Bool? = nil,
+        colorPaletteMaskTier: String? = nil,
+        colorPaletteConfidence: GarmentPaletteConfidence? = nil,
+        colorPaletteDetectionConfidence: Int? = nil,
+        colorPaletteNotes: String? = nil,
+        scoreBreakdown: OutfitScoreBreakdown? = nil,
+        outfitClassification: OutfitClassificationResult = .uncertain()
+    ) -> OutfitAnalysisResult {
+        let paletteDetection = colorPalette == nil ? selectedUIImage?.garmentColorDetection() : nil
+        let resolvedColorPalette = colorPalette ?? paletteDetection?.garmentColors ?? ["Neutral"]
+        let noveltyStyle = noveltyClothingMatch(in: labels)
+        let culturalStyle = noveltyStyle == nil ? traditionalStyleMatch(in: labels, image: selectedUIImage) : nil
+        let purposeStyle = noveltyStyle == nil ? clothingPurposeClassification(
+            validation: validation,
+            labels: labels,
+            image: selectedUIImage,
+            primaryPalette: resolvedColorPalette
+        ) : nil
+        var detectedItems = detectedClothingItems(from: labels)
+        if let noveltyStyle {
+            detectedItems.insert(noveltyStyle.garment, at: 0)
+            detectedItems = detectedItems.removingDuplicates()
+        }
+        if let purposeStyle {
+            detectedItems.insert(purposeStyle.garment, at: 0)
+            detectedItems = detectedItems.removingDuplicates()
+        }
+        if let culturalStyle {
+            detectedItems.insert(culturalStyle.garment, at: 0)
+            detectedItems = detectedItems.removingDuplicates()
+        }
+        let environment = detectedEnvironment(from: labels)
+        let sceneName = validation.sceneName
+        let itemDescription = detectedItems.isEmpty ? sceneName : detectedItems.joined(separator: ", ")
+        let fitNote = fitRecommendationNote(for: detectedItems)
+        let weatherNote = weatherRecommendationNote(environment: environment)
+        let occasionNote = noveltyStyle?.occasionNote ?? purposeStyle?.occasionNote ?? occasionRecommendationNote(environment: environment, culturalStyle: culturalStyle)
+        let recommendations = dynamicRecommendations(
+            score: score,
+            detectedItems: detectedItems,
+            colorPalette: resolvedColorPalette,
+            environment: environment
+        )
+        let isUnrecognized = !validation.isAccepted && noveltyStyle == nil && purposeStyle == nil && culturalStyle == nil
+        let legacyOccasionFit = noveltyStyle?.occasionCategory ?? purposeStyle?.occasionCategory ?? culturalStyle?.occasionCategory ?? plannedOccasionSummary(environment: environment)
+        let occasionFit = isUnrecognized ? "Category Uncertain" : classificationOccasionSummary(outfitClassification, fallback: legacyOccasionFit)
+        let formality = isUnrecognized ? "Unrecognized" : (noveltyStyle?.dressCode ?? purposeStyle?.dressCode ?? culturalStyle?.dressCode ?? (environment == "Business" || environment == "Office" ? "Polished" : "Flexible"))
+        let legacySummary = noveltyStyle?.summary ?? purposeStyle?.summary ?? culturalStyle?.summary ?? "This outfit has a strong foundation. The colors feel intentional, the silhouette is balanced, and the fit advice uses your saved size profile for fashion guidance only."
+        let summary = isUnrecognized ? "KigoStylist could not identify enough reliable clothing detail in this scan. Please retake the photo with the full outfit visible." : classificationSummary(outfitClassification, fallback: legacySummary)
+        let itemConfidences = detectedItemConfidences(for: detectedItems, labels: labels, culturalStyle: culturalStyle)
+        let legacyStyleCategory = isUnrecognized ? "Unrecognized Item" : (noveltyStyle?.styleCategory ?? purposeStyle?.styleCategory ?? culturalStyle?.styleCategory ?? "Casual Wear")
+        // Clothing style and outfit type answer different questions. Keep the
+        // measured clothing-style label even when the separate classifier finds
+        // a work uniform, scrubs, or another specialized outfit type.
+        let resolvedStyleCategory = legacyStyleCategory
+        let calibratedScore = calibratedStyleScore(
+            score,
+            // Classification changes evaluation context, never the numeric score authority.
+            styleCategory: legacyStyleCategory,
+            evidence: [
+                detectedItems.joined(separator: " "),
+                occasionFit,
+                formality,
+                environment,
+                sceneName,
+                summary
+            ].joined(separator: " ")
+        )
+        let breakdown = scoreBreakdown ?? calculateStyleScore(
+            validation: validation,
+            labels: labels,
+            colorPalette: resolvedColorPalette,
+            detectedItems: detectedItems,
+            styleCategory: resolvedStyleCategory
+        ).breakdown
+
+        return OutfitAnalysisResult(
+            score: calibratedScore,
+            scoreBreakdown: breakdown,
+            colorMatch: "Strong",
+            occasionFit: occasionFit,
+            styleBalance: resolvedStyleCategory,
+            colorHarmony: "\(breakdown.colorHarmony)/25",
+            styleCoordination: "\(breakdown.patternBalance + breakdown.fitQuality + breakdown.accessoryUse)/55",
+            formality: formality,
+            seasonalMatch: weatherLocationText,
+            summary: summary,
+            outfitDescription: "Detected \(itemDescription.lowercased()) in a \(sceneName.lowercased()) scan.",
+            detectedClothingItems: detectedItems,
+            colorPalette: resolvedColorPalette,
+            colorPaletteMaskingApplied: colorPaletteMaskingApplied ?? paletteDetection?.maskingApplied ?? true,
+            colorPaletteMaskTier: colorPaletteMaskTier ?? paletteDetection?.maskTier,
+            colorPaletteConfidence: colorPaletteConfidence ?? paletteDetection?.confidenceLevel ?? .low,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence ?? paletteDetection?.confidence,
+            colorPaletteNotes: colorPaletteNotes ?? paletteDetection?.notes,
+            environment: environment,
+            imageQuality: imageQuality,
+            outfitClassification: outfitClassification,
+            skinToneStyleNote: nil,
+            detectedItemConfidences: itemConfidences,
+            suggestions: [
+                fitNote,
+                weatherNote,
+                occasionNote,
+                "Add one watch, belt, or simple jewelry piece so the outfit feels finished."
+            ],
+            recommendations: recommendations
+        )
+    }
+
+    private func classificationOccasionSummary(
+        _ classification: OutfitClassificationResult,
+        fallback: String
+    ) -> String {
+        guard !classification.isUncertain else { return fallback }
+        let occasion = classification.selectedOccasion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let context = occasion.flatMap { $0.isEmpty ? nil : $0 } ?? "the selected occasion"
+        switch classification.occasionCompatibility {
+        case .compatible:
+            return "\(classification.effectiveCategory.displayName) is compatible with \(context)."
+        case .possible:
+            return "\(classification.effectiveCategory.displayName) may fit \(context); confirm local dress-code expectations."
+        case .conflict:
+            return "\(classification.effectiveCategory.displayName) may not match \(context)."
+        case .uncertain:
+            return fallback
+        }
+    }
+
+    private func classificationSummary(
+        _ classification: OutfitClassificationResult,
+        fallback: String
+    ) -> String {
+        guard !classification.isUncertain else { return fallback }
+        let criteria = classification.scoringProfile.evaluationCriteria.joined(separator: ", ")
+        return "This appears to be \(classification.effectiveCategory.displayName.lowercased()). Evaluate it for \(criteria). The existing KigoStylist score is unchanged."
+    }
+
+    private func calibratedStyleScore(_ score: Int, styleCategory: String, evidence: String) -> Int {
+        let lower = "\(styleCategory) \(evidence)".lowercased()
+        var cap = 100
+
+        if lower.contains("children's sleepwear") || lower.contains("kids sleepwear") {
+            cap = min(cap, 70)
+        } else if lower.contains("sleepwear") || lower.contains("pajama") || lower.contains("robe") || lower.contains("slipper") {
+            cap = min(cap, 74)
+        } else if lower.contains("loungewear") || lower.contains("indoor wear") || lower.contains("house clothes") {
+            cap = min(cap, 78)
+        } else if lower.contains("unrecognized item") || lower.contains("category uncertain") || lower.contains("unrecognized") {
+            cap = min(cap, 45)
+        }
+
+        if isYouthGraphicCasualEvidence(lower) {
+            cap = min(cap, 80)
+        }
+
+        if isBusinessBlockedByCasualEvidence(lower) {
+            cap = min(cap, 84)
+        }
+
+        let target = plannedOccasionSummary(environment: detectedEnvironment(from: [])).lowercased()
+        if (target.contains("work") || target.contains("office")) && lower.contains("casual") && !lower.contains("business") {
+            cap = min(cap, 82)
+        }
+
+        return clampedScore(min(score, cap))
+    }
+
+    private func dynamicRecommendations(
+        score: Int,
+        detectedItems: [String],
+        colorPalette: [String],
+        environment: String
+    ) -> [ClothingRecommendation] {
+        var recommendations: [ClothingRecommendation] = []
+        let canonicalItems = detectedItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+        }
+        let canonicalColors = colorPalette.compactMap(CanonicalColorReference.init(paletteTerm:))
+
+        if !canonicalColors.isEmpty {
+            let palette = canonicalColors
+                .map(\.displayName)
+                .removingDuplicates()
+                .joined(separator: ", ")
+            recommendations.append(
+                ClothingRecommendation(
+                    category: "Coordination",
+                    title: "Coordinate the observed palette",
+                    reason: "The scan detected \(palette).",
+                    personalization: "Photo evidence only. Keep any added piece within this observed color family."
+                )
+            )
+        }
+
+        if let garment = canonicalItems.first {
+            recommendations.append(
+                ClothingRecommendation(
+                    category: "Evidence",
+                    title: "Review the visible \(garment.displayName)",
+                    reason: "KigoStylist detected this garment in the photo.",
+                    personalization: "Use a clearer full-outfit scan before relying on advice about garments or fit that are not visible."
+                )
+            )
+        }
+
+        if recommendations.isEmpty {
+            recommendations.append(
+                ClothingRecommendation(
+                    category: "Evidence",
+                    title: "Try a clearer full-outfit scan",
+                    reason: RecommendationGroundingResult.honestEmptyState,
+                    personalization: "No specific garment, fit, or color recommendation was generated."
+                )
+            )
+        }
+
+        return Array(recommendations.prefix(2))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        ScanRenderSection { AnyView(hero) }
+                        if let message = globalWeatherAlert.message {
+                            ScanRenderSection { AnyView(globalWeatherAlertCard(message, alert: globalWeatherAlert)) }
+                        }
+                        photoPicker
+
+                        if isAnalyzing {
+                            ScanRenderSection { AnyView(analyzingCard) }
+                        }
+
+                        if let scanMessage {
+                            ScanRenderSection { AnyView(messageCard(scanMessage)) }
+                        }
+
+                        if let result {
+                            if let openedSavedScan {
+                                ScanRenderSection { AnyView(savedScanImageCard(for: openedSavedScan)) }
+                            }
+                            ScanRenderSection { AnyView(quickResultCard(result)) }
+                                .id("loadedScanResult")
+                        }
+
+                        ScanRenderSection { AnyView(recentScoresCard(scrollProxy: proxy)) }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 34)
+                    .padding(.bottom, 24)
+                }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Color.clear.frame(height: 8)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: bottomNavigationClearance)
+                }
+                .scrollContentBackground(.hidden)
+                .background(scanBackground.ignoresSafeArea())
+                .onAppear {
+                    consumeRecentScoresScrollRequestIfNeeded(using: proxy)
+                }
+                .styleMatchOnChange(of: recentScoresScrollRequestID) { _ in
+                    consumeRecentScoresScrollRequestIfNeeded(using: proxy)
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .fullScreenCover(isPresented: $isShowingCamera) {
+            CameraCaptureView { image, source in
+                let scanImage = image.scanSizedImage()
+                let analysisImage = image.visionAnalysisImage()
+                let sourceToken = gallerySelectionCoordinator.beginSelection()
+                let rescanTitle = pendingRescanTitle
+                invalidateActiveScanSession()
+                isPreparingCamera = false
+                isAnalyzing = false
+                pendingRescanTitle = nil
+                selectedItem = nil
+                currentScanSource = source
+                openedSavedScan = nil
+                savedScanImageZoomScale = 1
+                selectedUIImage = scanImage
+                visionAnalysisUIImage = analysisImage
+                selectedImage = Image(uiImage: scanImage)
+                previewImageSourceToken = sourceToken
+                visionImageSourceToken = sourceToken
+                displayedImageSourceToken = sourceToken
+                result = nil
+                preparedAnalysis = nil
+                isShowingFullAnalysis = false
+                scanMessage = ScanMessage(
+                    title: rescanTitle == nil ? "Photo captured" : "Rescan photo captured",
+                    description: rescanTitle == nil ? "Review the photo or run a quick style score." : "Review the updated \(rescanTitle ?? "outfit") photo, then generate a fresh style score.",
+                    icon: "camera",
+                    isSuccess: true
+                )
+            }
+            .onDisappear {
+                isPreparingCamera = false
+            }
+        }
+        .styleMatchOnChange(of: selectedItem) { newItem in
+            let selectionToken = beginGallerySelection()
+            Task {
+                isShowingFullAnalysis = false
+                await loadImage(from: newItem, selectionToken: selectionToken)
+            }
+        }
+        .styleMatchOnChange(of: result?.score) { score in
+            guard let score else {
+                resetResultAnimation()
+                scanAIChatMessages.removeAll()
+                completeLookAccessoryProducts = []
+                return
+            }
+
+            scanAIChatMessages.removeAll()
+            startResultAnimation(to: score)
+            Task {
+                await refreshCompleteLookAccessories()
+            }
+        }
+        .styleMatchOnChange(of: activeScanFingerprint) { _ in
+            scanContextGeneration &+= 1
+        }
+        .onAppear {
+            onStylistScanHandoffChanged(currentStylistScanHandoff)
+            #if DEBUG
+            injectBuild18033PersistenceAcceptanceFixtureIfRequested()
+            #endif
+        }
+        .styleMatchOnChange(of: currentStylistScanHandoff) { handoff in
+            onStylistScanHandoffChanged(handoff)
+        }
+        .onDisappear {
+            voiceAssistant.stop()
+        }
+        .onReceive(Timer.publish(every: 2.8, on: .main, in: .common).autoconnect()) { _ in
+            guard selectedUIImage == nil, !scannerExamples.isEmpty else {
+                return
+            }
+
+            let update = {
+                scannerExampleIndex = (scannerExampleIndex + 1) % scannerExamples.count
+            }
+            if reduceMotion {
+                update()
+            } else {
+                withAnimation(.easeInOut(duration: 0.35), update)
+            }
+        }
+        .confirmationDialog(
+            selectedTryNextRecommendation?.title ?? "Try this next",
+            isPresented: $isShowingTryNextActions,
+            titleVisibility: .visible
+        ) {
+            if selectedTryNextGroundedAction == .shopSimilar {
+                Button("Shop similar") {
+                    handleTryNextAction(.shop)
+                }
+            }
+
+            if selectedTryNextGroundedAction == .seeExamples {
+                Button("See examples") {
+                    handleTryNextAction(.similar)
+                }
+            }
+
+            if selectedTryNextGroundedAction == nil {
+                Button("Shop similar") {
+                    handleTryNextAction(.shop)
+                }
+
+                Button("See examples") {
+                    handleTryNextAction(.similar)
+                }
+            }
+
+            Button("Already in Closet") {
+                handleTryNextAction(.closet)
+            }
+
+            Button("Ask AI Stylist") {
+                handleTryNextAction(.askAI)
+            }
+
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose what you want to do with this recommendation.")
+        }
+        .confirmationDialog(
+            "Delete this scan permanently?",
+            isPresented: $isShowingDeleteScanConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let scanPendingDelete {
+                    deleteSavedScan(scanPendingDelete)
+                }
+                scanPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                scanPendingDelete = nil
+            }
+        } message: {
+            Text("This removes the photo, score, analysis, outfit history, and cached data from this phone.")
+        }
+        .confirmationDialog(
+            "This action cannot be undone.",
+            isPresented: $isShowingDeleteAllConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(selectedScanIDs.isEmpty ? "Delete All Scan History" : "Delete Selected Scans", role: .destructive) {
+                if selectedScanIDs.isEmpty {
+                    deleteAllScanHistory()
+                } else {
+                    deleteSelectedScans()
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text(selectedScanIDs.isEmpty ? "Delete all saved scans from this phone?" : "Delete \(selectedScanIDs.count) selected scan\(selectedScanIDs.count == 1 ? "" : "s")?")
+        }
+        .alert(item: $productOpenAlert) { alert in
+            if alert.allowsRetry {
+                return Alert(
+                    title: Text("Unable to Open Product"),
+                    message: Text("We couldn’t open this product right now. Please try again."),
+                    primaryButton: .default(Text("Try Again")) {
+                        openCompleteLookProduct(alert.product)
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            return Alert(
+                title: Text("Unable to Open Product"),
+                message: Text("We couldn’t open this product right now. Please try again."),
+                dismissButton: .default(Text("OK"))
+            )
+        }
+        .sheet(isPresented: $isShowingRenameScanSheet, onDismiss: clearRenameDraftState) {
+            NavigationStack {
+                Form {
+                    Section("Rename Scan") {
+                        TextField("Scan name", text: Binding(
+                            get: { renameText },
+                            set: { renameText = StyleMatchInputBounds.scanTitle($0) }
+                        ))
+                            .submitLabel(.done)
+                            .onSubmit {
+                                if canSaveRenameTitle {
+                                    renamePendingScan()
+                                }
+                            }
+                    }
+
+                    Section {
+                        Button {
+                            renamePendingScan()
+                        } label: {
+                            Text("Save Name")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(!canSaveRenameTitle)
+                        .accessibilityLabel("Save Name")
+                    }
+                }
+                .navigationTitle("Rename")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Cancel") {
+                            requestCancelRename()
+                        }
+                        .accessibilityLabel("Cancel rename")
+                    }
+                }
+            }
+            .background(
+                RenameSheetDismissGuard(hasUnsavedChanges: hasUnsavedRenameChanges) {
+                    isShowingRenameUnsavedConfirmation = true
+                }
+            )
+            .confirmationDialog(
+                "Save rename changes?",
+                isPresented: $isShowingRenameUnsavedConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Save") {
+                    renamePendingScan()
+                }
+                .disabled(!canSaveRenameTitle)
+
+                Button("Discard Changes", role: .destructive) {
+                    cancelRenameScan()
+                }
+
+                Button("Continue Editing", role: .cancel) { }
+            } message: {
+                Text("Save the new scan name before closing, or discard your edits and keep the current title.")
+            }
+        }
+        .sheet(isPresented: $isShowingScanAIAssist) {
+            if let result {
+                scanAIAssistSheet(for: result)
+            }
+        }
+        .sheet(item: $outfitSharePreview) { preview in
+            OutfitSharePreviewScreen(data: preview, accentColor: AppTab.scan.palette.accent)
+        }
+        .sheet(isPresented: $isShowingStyleFriendsDestinationPicker) {
+            StyleFriendsDMDestinationPicker(
+                service: StyleFriendsDMRuntimeBinding.current().service
+            ) { destination in
+                // Selection only retains the authenticated destination next to
+                // the frozen current-result draft. Preview and dispatch are
+                // deliberately separated: this step presents review only.
+                guard let share = transientStyleFriendsShare else { return }
+                selectedStyleFriendsDestination = destination
+                transientStyleFriendsPreview = .init(destination: destination, share: share)
+            }
+        }
+        .sheet(item: $transientStyleFriendsPreview) { preview in
+            StyleFriendsDMTransientSharePreview(
+                draft: preview,
+                dispatch: transientStyleFriendsDispatch,
+                onConfirmedSend: {
+                    // Only canonical association clears the transient draft.
+                    transientStyleFriendsShare = nil
+                    selectedStyleFriendsDestination = nil
+                    transientStyleFriendsPreview = nil
+                },
+                onCancel: {
+                    // The current result is intentionally left untouched.
+                    selectedStyleFriendsDestination = nil
+                }
+            )
+        }
+        .sheet(item: $compareSourceScan) { source in
+            CompareScanSelectorView(source: source, scans: recentStoredScans) { selected in
+                presentComparison(source: source, selected: selected)
+            }
+        }
+        .sheet(item: $comparePresentation, onDismiss: resumePendingCompareStylistRoute) { presentation in
+            CompareScansView(
+                presentation: presentation,
+                onAskStylist: {
+                    scheduleCompareStylistRoute(
+                        CompareStylistRouteRequest(
+                            comparison: presentation.snapshot,
+                            occasion: presentation.newer.occasionText
+                        )
+                    )
+                },
+                onSave: { saveComparison(presentation) },
+                onCompareAnother: { compareSourceScan = presentation.newer },
+                onHistory: { isShowingComparisonHistory = true }
+            )
+        }
+        .sheet(isPresented: $isShowingComparisonHistory) {
+            ComparisonHistoryView(comparisons: ScanComparisonPersistenceAuthority().comparisons)
+        }
+    }
+
+    private func consumeRecentScoresScrollRequestIfNeeded(using proxy: ScrollViewProxy) {
+        guard recentScoresScrollRequestID > 0,
+              recentScoresScrollRequestID != lastConsumedRecentScoresScrollRequestID else {
+            return
+        }
+
+        // The request is intentionally in-memory and one-shot. It never selects,
+        // opens, or persists a specific saved scan.
+        lastConsumedRecentScoresScrollRequestID = recentScoresScrollRequestID
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo("recentOutfitScores", anchor: .top)
+            }
+        }
+    }
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Button {
+                    selectedTab = .home
+                } label: {
+                    Label("Back", systemImage: "chevron.left")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(scanCream)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 44)
+                        .background(scanPanel, in: Capsule())
+                        .overlay(Capsule().stroke(scanCream.opacity(0.28), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back to Home")
+
+                Spacer()
+
+                Button {
+                    if selectedUIImage == nil {
+                        startCameraCapture()
+                    } else if result == nil {
+                        analyze()
+                    } else {
+                        isShowingFullAnalysis = true
+                    }
+                } label: {
+                    Label(
+                        selectedUIImage == nil ? "Start Scan" : (result == nil ? "Score Photo" : "View Score"),
+                        systemImage: selectedUIImage == nil ? "camera.viewfinder" : (result == nil ? "sparkles" : "checkmark.circle.fill")
+                    )
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(scanCream)
+                    .padding(.horizontal, 12)
+                    .frame(minHeight: 38)
+                    .background(scanCream.opacity(0.10), in: Capsule())
+                    .overlay(Capsule().stroke(scanCream.opacity(0.22), lineWidth: 1))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnalyzing || isPreparingCamera)
+                .accessibilityHint(selectedUIImage == nil ? "Opens the camera." : (result == nil ? "Generates the Style Score for this photo." : "Opens the full analysis."))
+            }
+
+            Text("STYLE INTELLIGENCE SCAN")
+                .font(.caption2.weight(.black))
+                .tracking(1.5)
+                .foregroundStyle(scanCream)
+
+            Text("Understand the look before you wear it.")
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Color • Fit • Coordination • Occasion • Accessories")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(scanMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var photoPicker: ScanRenderSection {
+        ScanRenderSection { AnyView(photoPickerContent) }
+    }
+
+    private var photoPickerContent: some View {
+        return VStack(alignment: .leading, spacing: 14) {
+            scannerPanel
+
+            if let result {
+                ScanRenderSection { AnyView(compactScoreBadge(result)) }
+
+                if !isShowingFullAnalysis {
+                    ScanRenderSection { AnyView(completeTheLookCard(for: result, darkMode: true)) }
+                }
+
+                if isShowingFullAnalysis {
+                    ScanRenderSection { AnyView(resultCard(result)) }
+                }
+            }
+
+            if selectedUIImage != nil && result == nil {
+                Button {
+                    analyze()
+                } label: {
+                    Label("Generate Style Score", systemImage: "sparkles")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanCream)
+                        .frame(maxWidth: .infinity, minHeight: 54)
+                        .background(scanPanel)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18)
+                                .stroke(scanCream.opacity(0.45), lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnalyzing)
+            }
+
+            if selectedUIImage != nil {
+                HStack(spacing: 12) {
+                    if result != nil {
+                        Button {
+                            analyze(forceReanalyze: true)
+                        } label: {
+                            Label("Reanalyze", systemImage: "arrow.clockwise")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(scanMuted)
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                                .background(scanPanel.opacity(0.7))
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isAnalyzing)
+                    }
+
+                    Button(role: .destructive) {
+                        deleteCurrentPhoto()
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Color.red.opacity(0.95))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                            .background(scanPanel.opacity(0.7))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isAnalyzing)
+                }
+            }
+        }
+    }
+
+    private var scanSourceControl: ScanSourceControl {
+        ScanSourceControl(
+            selectedItem: $selectedItem,
+            background: scanBackground, cream: scanCream, border: scanPanelBorder,
+            isDisabled: isAnalyzing || isPreparingCamera,
+            onStartCamera: startCameraCapture
+        )
+    }
+
+    private var scanOccasionSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("What's this for?")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(scanMuted)
+                .padding(.horizontal, 18)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Occasion.allCases, id: \.self) { occasion in
+                        occasionChip(occasion, title: occasion.displayName)
+                    }
+                }
+                .padding(.horizontal, 18)
+            }
+        }
+    }
+
+    private func occasionChip(_ occasion: Occasion, title: String) -> some View {
+        let isSelected = selectedScanOccasion == occasion
+
+        return Button {
+            selectedScanOccasion = occasion
+        } label: {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.bold)
+                .lineLimit(1)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .foregroundStyle(isSelected ? scanBackground : scanCream)
+                .background(isSelected ? scanCream : scanBackground.opacity(0.32))
+                .overlay(
+                    Capsule()
+                        .stroke(scanCream.opacity(isSelected ? 0 : 0.28), lineWidth: 1)
+                )
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(isAnalyzing)
+        .accessibilityLabel("\(title) purpose")
+        .accessibilityHint("Uses \(title) as the selected occasion for this scan.")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var scannerPanel: AnyView {
+        AnyView(ScanRenderSection { scannerPanelContent })
+    }
+
+    private var scannerPanelContent: AnyView {
+        AnyView(
+            VStack(alignment: .leading, spacing: 18) {
+                Button {
+                    if selectedUIImage == nil {
+                        startCameraCapture()
+                    } else if result == nil {
+                        analyze()
+                    } else {
+                        isShowingFullAnalysis = true
+                    }
+                } label: {
+                    HStack(alignment: .top, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("PERSONAL STYLE SCAN")
+                                .font(.caption2.weight(.black))
+                                .tracking(1.2)
+                                .foregroundStyle(scanCream)
+                            Text(selectedUIImage == nil ? "Scan a look. Know what works." : "Your look is ready to score.")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(selectedUIImage == nil
+                                ? "Tap here or use Camera below. A full outfit photo gives the strongest Color, Fit, Coordination, Occasion and Accessories analysis."
+                                : (result == nil ? "Tap here to generate your Style Score, or review the photo and occasion first." : "Tap here to open the full Style Score analysis."))
+                                .font(.subheadline)
+                                .foregroundStyle(scanMuted)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .multilineTextAlignment(.leading)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Image(systemName: selectedUIImage == nil ? "viewfinder.circle.fill" : (result == nil ? "sparkles" : "checkmark.seal.fill"))
+                            .font(.system(size: 32, weight: .semibold))
+                            .foregroundStyle(scanCream)
+                            .frame(width: 54, height: 54)
+                            .background(scanCream.opacity(0.10), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isAnalyzing || isPreparingCamera)
+                .accessibilityLabel(selectedUIImage == nil ? "Personal Style Scan. Start scan." : (result == nil ? "Personal Style Scan. Generate Style Score." : "Personal Style Scan. View full analysis."))
+                .accessibilityHint(selectedUIImage == nil ? "Opens the camera." : (result == nil ? "Analyzes the selected photo." : "Opens the full analysis."))
+
+                if selectedUIImage == nil {
+                    premiumScanStartCard
+                } else {
+                    ScanRenderSection { scannerPhotoSection }
+                }
+
+                scanSourceControl
+                ScanRenderSection { AnyView(scanOccasionSelector) }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("WHAT STYLEMATCH SCORES")
+                        .font(.caption2.weight(.black))
+                        .tracking(1.1)
+                        .foregroundStyle(scanMuted)
+
+                    ScanRenderSection { scannerInsightTabsSection }
+                    ScanRenderSection { AnyView(scannerInsightCard) }
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity)
+            .background(
+                LinearGradient(
+                    colors: [StyleMatchPremiumPalette.ink, scanPanel],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(scanCream.opacity(0.22), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.18), radius: 18, y: 10)
+        )
+    }
+
+    private var premiumScanStartCard: ScanStartCard {
+        ScanStartCard(
+            cream: scanCream,
+            muted: scanMuted,
+            isDisabled: isAnalyzing || isPreparingCamera,
+            onStartCamera: startCameraCapture
+        )
+    }
+
+    private var scannerPhotoSection: AnyView {
+        if let selectedImage {
+            return AnyView(
+                ZStack(alignment: .topTrailing) {
+                    selectedImage
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: 250, alignment: .center)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+
+                    Button {
+                        deleteCurrentPhoto()
+                    } label: {
+                        Image(systemName: "trash.fill")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.red)
+                            .clipShape(Circle())
+                    }
+                    .accessibilityLabel("Delete selected photo")
+                    .accessibilityHint("Removes this photo from the current scan")
+                    .padding(10)
+                }
+                .padding(.horizontal, 16)
+            )
+        }
+
+        return AnyView(
+            Button {
+                startCameraCapture()
+            } label: {
+                scannerExampleCarousel
+            }
+            .buttonStyle(.plain)
+            .disabled(isAnalyzing || isPreparingCamera)
+        )
+    }
+
+    private var scannerHeaderSection: AnyView {
+        AnyView(
+            VStack(spacing: 12) {
+                Text("AI Outfit Scanner")
+                    .font(.title3)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text(selectedUIImage == nil ? "Analyze colors, fit, patterns, accessories and more." : "Review the photo, then generate a personalized style score.")
+                    .font(.subheadline)
+                    .foregroundStyle(scanMuted)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 22)
+            }
+        )
+    }
+
+    private var scannerInsightTabsSection: AnyView {
+        AnyView(
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(scannerInsightTabs, id: \.self) { tab in
+                        scannerTag(tab)
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 4)
+            }
+            .padding(.top, 8)
+        )
+    }
+
+    private var scannerExampleCarousel: some View {
+        let example = scannerExamples[scannerExampleIndex % scannerExamples.count]
+
+        return VStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(
+                        LinearGradient(
+                            colors: [example.tint.opacity(0.32), scanBackground.opacity(0.72)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 24)
+                            .stroke(scanCream.opacity(0.28), style: StrokeStyle(lineWidth: 2, dash: [8, 7]))
+                    )
+                    .frame(height: 112)
+
+                VStack(spacing: 9) {
+                    Image(systemName: example.icon)
+                        .font(.system(size: 42, weight: .bold))
+                        .foregroundStyle(scanCream)
+                        .frame(width: 76, height: 76)
+                        .background(example.tint.opacity(0.24))
+                        .clipShape(RoundedRectangle(cornerRadius: 24))
+
+                    VStack(spacing: 4) {
+                        Text("Scan tip: \(example.title)")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.white)
+
+                        Text(example.detail)
+                            .font(.caption)
+                            .foregroundStyle(scanMuted)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 18)
+            }
+            .id(example.id)
+            .transition(.opacity.combined(with: .scale(scale: 0.98)))
+
+            HStack(spacing: 7) {
+                ForEach(scannerExamples.indices, id: \.self) { index in
+                    Capsule()
+                        .fill(index == scannerExampleIndex ? scanCream : scanCream.opacity(0.28))
+                        .frame(width: index == scannerExampleIndex ? 28 : 8, height: 7)
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+    }
+
+    private var scannerExamples: [ScannerExample] {
+        [
+            ScannerExample(title: "Outfit on a person", detail: "Full-body or mirror photos work best.", icon: "person.fill", tint: .blue),
+            ScannerExample(title: "Clothes on a bed", detail: "Lay pieces flat with good lighting.", icon: "bed.double.fill", tint: .purple),
+            ScannerExample(title: "Clothes on a hanger", detail: "Hang shirts, jackets, or full looks.", icon: "tshirt.fill", tint: .green),
+            ScannerExample(title: "Clothes on a mannequin", detail: "Store displays and styled pieces work.", icon: "person.crop.rectangle", tint: .orange),
+            ScannerExample(title: "Clothes on a table", detail: "Show colors, materials, and pairings.", icon: "tablecells.fill", tint: .teal),
+            ScannerExample(title: "Clothes in a shopping bag", detail: "Check new pieces before you wear them.", icon: "bag.fill", tint: .pink)
+        ]
+    }
+
+    private var scannerInsightTabs: [String] {
+        [
+            "Colors",
+            "Patterns",
+            "Fit",
+            "Accessories",
+            "Occasion",
+            "Weather",
+            "Tips"
+        ]
+    }
+
+    private func scannerTag(_ text: String) -> some View {
+        let isSelected = selectedScannerInsight == text
+
+        return Button {
+            selectedScannerInsight = text
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: scannerTagIcon(for: text))
+                    .font(.caption2)
+
+                Text(text)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? scanBackground : scanCream)
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .background(isSelected ? scanCream : scanBackground.opacity(0.42))
+            .overlay(
+                Capsule()
+                    .stroke(scanCream.opacity(isSelected ? 0 : 0.35), lineWidth: 1)
+            )
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(text) scan check")
+        .accessibilityHint("Shows what KigoStylist checks for \(text.lowercased()).")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private func scannerTagIcon(for text: String) -> String {
+        switch text {
+        case "Colors":
+            return "circle.lefthalf.filled"
+        case "Patterns":
+            return "circle.grid.cross"
+        case "Fit":
+            return "ruler"
+        case "Accessories":
+            return "sparkles"
+        case "Occasion":
+            return "calendar"
+        case "Weather":
+            return "cloud.sun.fill"
+        case "Tips":
+            return "lightbulb.fill"
+        default:
+            return "circle.fill"
+        }
+    }
+
+    @ViewBuilder
+    private var scannerInsightCard: some View {
+        if selectedScannerInsight == "Weather" {
+            weatherCompatibilityInsightCard
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(selectedScannerInsight)
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+
+                Text(scannerInsightText)
+                    .font(.caption)
+                    .foregroundStyle(scanMuted)
+                    .lineSpacing(3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(scanBackground.opacity(0.52))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .padding(.horizontal, 22)
+        }
+    }
+
+    private var weatherCompatibilityInsightCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Weather Compatibility", systemImage: "cloud.sun.fill")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+
+                Spacer()
+
+                WeatherStylingButton {
+                    Label("Live", systemImage: "arrow.clockwise")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanCream)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(scanPanel.opacity(0.82))
+                        .clipShape(Capsule())
+                }
+            }
+
+            HStack(spacing: 10) {
+                weatherCompatibilityMetric(
+                    title: "Current Conditions",
+                    value: compactCurrentWeatherText
+                )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Compatibility")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanMuted)
+
+                    HStack(spacing: 2) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            Image(systemName: "star.fill")
+                                .font(.caption2)
+                                .foregroundStyle(scanCream)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(scanPanel.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Recommendation")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanMuted)
+
+                Text(compactWeatherRecommendation)
+                    .font(.caption)
+                    .foregroundStyle(.white)
+                    .lineSpacing(3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(scanBackground.opacity(0.52))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 22)
+        .modifier(WeatherAttributionIfAvailable(attribution: weatherAuthority.attribution, surface: .scanWeatherGuidance))
+    }
+
+    private func weatherCompatibilityMetric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption2)
+                .fontWeight(.bold)
+                .foregroundStyle(scanMuted)
+
+            Text(value)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.86)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(scanPanel.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var compactCurrentWeatherText: String {
+        "\(compactWeatherTemperature) • \(compactWeatherCondition)"
+    }
+
+    private var compactWeatherTemperature: String {
+        let combinedWeatherText = "\(weather) \(weatherCondition)"
+        let tokens = combinedWeatherText.split { character in
+            character == " " || character == "," || character == "•" || character == "\n"
+        }
+        return tokens.first { $0.contains("°") }.map(String.init) ?? "Weather unavailable"
+    }
+
+    private var compactWeatherCondition: String {
+        let condition = weatherCondition.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !condition.isEmpty {
+            return condition.replacingOccurrences(of: " weather", with: "", options: .caseInsensitive)
+        }
+
+        let savedWeather = weather.trimmingCharacters(in: .whitespacesAndNewlines)
+        if savedWeather.isEmpty { return "Weather unavailable" }
+
+        return savedWeather.replacingOccurrences(of: " weather", with: "", options: .caseInsensitive)
+    }
+
+    private var compactWeatherRecommendation: String {
+        let recommendation = weatherContextRecommendation(environment: result?.environment ?? "Unspecified")
+        return "\(recommendation.severity.rawValue): \(recommendation.recommendation) Why: \(recommendation.rationale)"
+    }
+
+    private var hasSavedSizeProfileForFitCopy: Bool {
+        guard FounderProfileDefaultsMigration.hasIntentionalProfileSave() else { return false }
+        return [
+            sizeProfile,
+            shirtSize,
+            pantsSize,
+            waistSize,
+            inseamLength,
+            shoeSize,
+            fitPreference,
+            preferredPantFit
+        ].contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private var savedSizeProfileSummaryForFitCopy: String {
+        let parts = [
+            ("shirt", shirtSize),
+            ("pants", pantsSize),
+            ("waist", waistSize),
+            ("inseam", inseamLength),
+            ("shoes", shoeSize),
+            ("preferred pant fit", PantFitPreference.fromProfileInput(preferredPantFit).displayName)
+        ].compactMap { label, value -> String? in
+            let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : "\(label) \(clean)"
+        }
+        if !parts.isEmpty { return parts.joined(separator: ", ") }
+        let cleanProfile = sizeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanProfile.isEmpty ? "your saved size profile" : cleanProfile
+    }
+
+    private var scannerInsightText: String {
+        switch selectedScannerInsight {
+        case "Colors":
+            if let result {
+                guard result.colorPaletteConfidence == .confident else {
+                    return "Colors were hard to read in this photo. Try brighter, neutral lighting and keep the outfit clear of the background."
+                }
+                let matchingIdeas = isHotWeatherContext ? "matching breathable fabrics and accessories" : "matching layers and accessories"
+                let source = result.colorPaletteMaskingApplied ? "Palette found" : "Palette found (full photo)"
+                return "\(source): \(result.colorPalette.joined(separator: ", ")). Use this to choose \(matchingIdeas)."
+            }
+            return "After a scan, this shows the outfit color palette and matching color ideas."
+        case "Patterns":
+            if let result {
+                let items = result.safeDetectedClothingItems
+                return items.isEmpty
+                    ? "The scan did not retain enough garment evidence for a pattern-specific suggestion."
+                    : "Photo evidence retained these detected items: \(items.joined(separator: ", ")). No pattern-specific recommendation is made without clearer evidence."
+            }
+            return "After a scan, this checks whether prints, solids, and statement pieces feel balanced."
+        case "Fit":
+            if let result {
+                return scanExplanationItem(id: "profile-fit", for: result)?.detail
+                    ?? "The photo does not provide enough evidence for exact fit guidance. Add saved sizes in Profile and use a clearer full-outfit scan."
+            }
+            return hasSavedSizeProfileForFitCopy
+                ? "After a scan, this uses your saved size profile to explain fit, tailoring, and size-up or size-down suggestions."
+                : "After a scan, this checks visible fit. Add your sizes in Profile for tailored size-up or size-down suggestions."
+        case "Accessories":
+            if let result {
+                let accessories = result.safeDetectedClothingItems.compactMap {
+                    CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+                }.filter {
+                    [.shoes, .hat, .bag, .belt, .watch, .scarf, .tie, .accessory].contains($0)
+                }
+                return accessories.isEmpty
+                    ? "No accessory-specific evidence was retained from this photo."
+                    : "Photo evidence detected: \(accessories.map(\.displayName).joined(separator: ", "))."
+            }
+            return "After a scan, accessory guidance appears only when the photo contains supporting evidence."
+        case "Occasion":
+            if let result {
+                return scanExplanationItem(id: "occasion-context", for: result)?.detail
+                    ?? scanExplanationItem(id: "occasion-unavailable", for: result)?.detail
+                    ?? "No occasion was selected. Occasion did not affect this score. Occasion suitability was not evaluated for this scan."
+            }
+            return "After a scan, this checks whether the outfit fits the moment: work, church, travel, date night, gym, wedding, or interview."
+        case "Weather":
+            if let result {
+                return scanExplanationItem(id: "weather-context", for: result)?.detail
+                    ?? scanExplanationItem(id: "weather-unavailable", for: result)?.detail
+                    ?? "Weather context is unavailable or not reliable enough for clothing-specific guidance."
+            }
+            return "After a scan, this compares the outfit with local weather and suggests practical shoes, accessories, breathable pieces, or warm layers only when needed."
+        case "Tips":
+            if let result {
+                if let item = scanExplanationItems(for: result).first(where: { $0.id != "occasion-unavailable" && $0.id != "weather-unavailable" }) {
+                    return "\(item.sourceLabel): \(item.title). \(item.detail)"
+                }
+                return RecommendationGroundingResult.honestEmptyState
+            }
+            return "After a scan, this gives the fastest next step to improve the outfit without judging the customer."
+        default:
+            return "Select a scan tool to see personalized outfit feedback."
+        }
+    }
+
+    private var analyzingCard: some View {
+        HStack(spacing: 12) {
+            ProgressView()
+                .tint(scanCream)
+            Text("Analyzing outfit...")
+                .fontWeight(.semibold)
+                .foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(scanPanel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func compactScoreBadge(_ result: OutfitAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Style score")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanMuted)
+
+                    Text("Better match ideas")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("\(displayedScore(for: result))")
+                        .font(.system(size: 58, weight: .bold, design: .rounded))
+                        .foregroundStyle(scanCream)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+
+                    Text("Overall Style Score")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanMuted)
+
+                    scoreStars(for: result.score, font: .caption)
+
+                    Text(scoreRatingTitle(for: result.score))
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(scanResultAccessibilitySummary(result))
+            }
+
+            Divider()
+                .overlay(StyleMatchPremiumPalette.champagne.opacity(0.24))
+
+            styleBreakdownBars(for: result)
+
+            premiumImprovementPreview(for: result)
+
+            detectedStyleContextCard(for: result, darkMode: true)
+
+            outfitClassificationControl(for: result, darkMode: true)
+
+            if let guidance = workUniformOccasionGuidance(for: result) {
+                workUniformOccasionGuidanceCard(guidance, darkMode: true)
+            }
+
+            if let mismatch = formalityMismatch(for: result) {
+                formalityMismatchBanner(mismatch, result: result, darkMode: true)
+            }
+
+            Divider()
+                .overlay(scanPanelBorder)
+
+            if result.score >= 95 {
+                highScoreCelebrationCard(result)
+            }
+
+            scanResultOccasionPicker(for: result)
+
+            Button {
+                outfitSharePreview = makeOutfitSharePreview(for: result)
+            } label: {
+                Label("Share Outfit", systemImage: "square.and.arrow.up")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .buttonStyle(.bordered)
+            .tint(scanCream)
+            .accessibilityLabel("Share Outfit")
+            .accessibilityHint("Opens a preview where you can choose what to share.")
+
+            if canShareCurrentResultToStyleFriends(result) {
+                Button {
+                    beginCurrentResultStyleFriendsShare(result)
+                } label: {
+                    Label("Share to Style Friends", systemImage: "person.2.fill")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.bordered)
+                .tint(scanCream)
+                .accessibilityLabel("Share to Style Friends")
+                .accessibilityHint("Choose an authorized Style Friends conversation. Nothing is sent or saved yet.")
+            }
+
+            if !result.chatGPTStylistSections.isEmpty {
+                chatGPTStylistSectionsCard(result.chatGPTStylistSections, darkMode: true)
+            }
+
+            if voiceAssistantEnabled {
+                voiceAssistantButton(for: result, darkMode: true)
+            }
+
+            Button {
+                openScanAIAssist(for: result)
+            } label: {
+                Label("Quick Scan Help", systemImage: "questionmark.bubble")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+            }
+            .buttonStyle(.bordered)
+            .tint(scanCream)
+            .accessibilityLabel("Quick Scan Help")
+            .accessibilityHint("Opens quick help for this scan result.")
+            .accessibilityIdentifier("scan-quick-help-action")
+
+            if FeatureFlags.conversationalStylist,
+               result.scoreBreakdown != nil {
+                Button {
+                    guard let handoff = currentStylistScanHandoff?.issuingRouteToken() else { return }
+                    onOpenStylistScanConversation(handoff)
+                } label: {
+                    Label("Ask the Stylist About This Score", systemImage: "sparkles")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppTab.ai.palette.accent)
+                .foregroundStyle(.white)
+                .accessibilityLabel("Ask the Stylist About This Score")
+                .accessibilityHint("Opens your Stylist conversation with details from this score.")
+                .accessibilityIdentifier("scan-typed-stylist-action")
+            }
+
+            collapsibleAIAnalysis(for: result)
+        }
+        .padding()
+        .background(scanPanel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func scanResultOccasionPicker(for result: OutfitAnalysisResult) -> some View {
+        let current = currentScanOccasionForContext ?? matchingOutfitMemory(for: result)?.occasion
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Occasion", systemImage: "calendar")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanMuted)
+
+                Spacer()
+
+                Text(current?.displayName ?? "Not tagged")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(scanMuted)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    Button {
+                        updateOccasion(nil, for: result)
+                    } label: {
+                        Text("Skip")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.vertical, 7)
+                            .padding(.horizontal, 10)
+                            .foregroundStyle(current == nil ? scanBackground : scanMuted)
+                            .background(current == nil ? scanCream : scanBackground.opacity(0.32))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    ForEach(Occasion.allCases.filter(\.isSpecified), id: \.self) { occasion in
+                        Button {
+                            updateOccasion(occasion, for: result)
+                        } label: {
+                            Text(occasion.displayName)
+                                .font(.caption2)
+                                .fontWeight(.bold)
+                                .lineLimit(1)
+                                .padding(.vertical, 7)
+                                .padding(.horizontal, 10)
+                                .foregroundStyle(current == occasion ? scanBackground : scanCream)
+                                .background(current == occasion ? scanCream : scanBackground.opacity(0.32))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(scanCream.opacity(current == occasion ? 0 : 0.24), lineWidth: 1)
+                                )
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(scanBackground.opacity(0.36))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func makeOutfitSharePreview(for result: OutfitAnalysisResult) -> OutfitSharePreviewData {
+        let savedScan = activeScanFingerprint.flatMap { fingerprint in
+            recentStoredScans.first(where: { $0.id == fingerprint })
+        }
+
+        if selectedUIImage == nil, let savedScan {
+            return makeOutfitSharePreview(for: savedScan)
+        }
+
+        return makeOutfitSharePreview(
+            analysis: result,
+            photo: selectedUIImage,
+            scanDate: savedScan?.firstScannedAt ?? Date()
+        )
+    }
+
+    private func canShareCurrentResultToStyleFriends(_ result: OutfitAnalysisResult) -> Bool {
+        guard selectedUIImage != nil,
+              (0...100).contains(result.score),
+              !result.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              result.summary.count <= 280,
+              OutfitCategory(rawValue: result.outfitClassification.effectiveCategory.rawValue) != nil else {
+            return false
+        }
+        return true
+    }
+
+    private func beginCurrentResultStyleFriendsShare(_ result: OutfitAnalysisResult) {
+        guard canShareCurrentResultToStyleFriends(result),
+              let imagePreview = selectedUIImage?.jpegData(compressionQuality: 0.88) else {
+            return
+        }
+        let input = StyleFriendsDMTransientShareAuthority.Input(
+            title: "Current KigoStylist Scan",
+            occasion: nil,
+            score: result.score,
+            summary: result.summary,
+            imagePreview: imagePreview,
+            classification: result.outfitClassification.effectiveCategory.rawValue
+        )
+        guard let share = StyleFriendsDMTransientShareAuthority.preparedShare(from: input) else {
+            return
+        }
+        transientStyleFriendsShare = share
+        selectedStyleFriendsDestination = nil
+        isShowingStyleFriendsDestinationPicker = true
+    }
+
+    private func makeOutfitSharePreview(for savedScan: RecentOutfitScore) -> OutfitSharePreviewData {
+        makeOutfitSharePreview(
+            analysis: savedScan.analysis,
+            photo: savedScan.thumbnailImage,
+            scanDate: savedScan.firstScannedAt
+        )
+    }
+
+    private func makeOutfitSharePreview(
+        analysis: OutfitAnalysisResult,
+        photo: UIImage?,
+        scanDate: Date
+    ) -> OutfitSharePreviewData {
+        let categoryScores: [OutfitShareCategoryScore]
+
+        if let breakdown = analysis.scoreBreakdown {
+            categoryScores = [
+                OutfitShareCategoryScore(title: "Color Harmony", value: "\(breakdown.colorHarmony)/25"),
+                OutfitShareCategoryScore(title: "Pattern Balance", value: "\(breakdown.patternBalance)/20"),
+                OutfitShareCategoryScore(title: "Fit Quality", value: "\(breakdown.fitQuality)/25"),
+                OutfitShareCategoryScore(title: "Accessory Use", value: "\(breakdown.accessoryUse)/10"),
+                OutfitShareCategoryScore(
+                    title: "Score Calculation",
+                    value: "\(scoreRawTotal(for: breakdown))/80 -> \(analysis.score)/100"
+                )
+            ]
+        } else {
+            categoryScores = [
+                OutfitShareCategoryScore(title: "Color Harmony", value: analysis.colorHarmony),
+                OutfitShareCategoryScore(title: "Style Coordination", value: analysis.styleCoordination),
+                OutfitShareCategoryScore(title: "Formality", value: analysis.formality)
+            ]
+        }
+
+        let availableCategoryScores = categoryScores.filter { category in
+            !category.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        return OutfitSharePreviewData(
+            photo: photo?.shareCardPreparedImage(),
+            overallScore: analysis.score,
+            scoreTitle: scoreRatingTitle(for: analysis.score),
+            categoryScores: availableCategoryScores,
+            outfitDescription: analysis.outfitDescription,
+            suggestions: OutfitShareInsightBuilder.insights(from: analysis),
+            scanDate: scanDate
+        )
+    }
+
+    private func updateOccasion(_ occasion: Occasion?, for result: OutfitAnalysisResult) {
+        let store = OutfitMemoryStore()
+        let memory = ensureOutfitMemory(for: result, store: store)
+        store.updateOccasion(for: memory.id, occasion: occasion)
+        selectedScanOccasion = occasion ?? .general
+        scanMessage = ScanMessage(
+            title: occasion == nil ? "Occasion cleared" : "Occasion saved",
+            description: occasion.map { "This scan is now tagged for \($0.displayName)." } ?? "This scan no longer has an occasion tag.",
+            icon: "calendar",
+            isSuccess: true
+        )
+    }
+
+    private func voiceAssistantButton(for result: OutfitAnalysisResult, darkMode: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if voiceAssistant.isSpeaking {
+                    voiceAssistant.stop()
+                } else {
+                    voiceAssistant.speak(VoiceScriptBuilder.scanResult(from: result))
+                }
+            } label: {
+                Label(
+                    voiceAssistant.isSpeaking ? "Stop Voice Summary" : "Listen to Score Summary",
+                    systemImage: voiceAssistant.isSpeaking ? "speaker.slash.fill" : "speaker.wave.2.fill"
+                )
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity, minHeight: 42)
+            }
+            .buttonStyle(.bordered)
+            .tint(darkMode ? scanCream : AppTab.scan.palette.accent)
+            .accessibilityHint("Reads a short personal stylist summary of this scan result aloud.")
+
+            if let playbackError = voiceAssistant.playbackErrorMessage {
+                Label(playbackError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(darkMode ? scanCream : .orange)
+                    .accessibilityLabel("Voice playback error. \(playbackError)")
+            }
+        }
+    }
+
+    private func scanResultAccessibilitySummary(_ result: OutfitAnalysisResult) -> String {
+        var categories: [String] = []
+        if let breakdown = result.scoreBreakdown {
+            categories = [
+                "Color \(breakdown.colorHarmony) out of 25",
+                "Fit \(breakdown.fitQuality) out of 25",
+                "Coordination \(breakdown.patternBalance) out of 20",
+                "Accessories \(breakdown.accessoryUse) out of 10",
+                "Occasion context \(result.occasionFit)"
+            ]
+        }
+        let grounded = groundedRecommendationResult(for: result)
+        let recommendations = grounded.accepted.map {
+            let presentation = GroundedRecommendationPresenter.presentation(for: $0)
+            return "\(presentation.sourceLabel): \(presentation.title). \(presentation.detail)"
+        }
+        return StyleMatchAccessibilityText.scanResultSummary(
+            score: result.score,
+            rating: scoreRatingTitle(for: result.score),
+            categoryScores: categories,
+            detectedItems: Array(result.safeDetectedClothingItems.prefix(6)),
+            recommendations: recommendations.isEmpty
+                ? [grounded.emptyStateMessage ?? RecommendationGroundingResult.honestEmptyState]
+                : recommendations
+        )
+    }
+
+    private func speakIfEnabled(_ script: VoiceScript) {
+        guard voiceAssistantEnabled else { return }
+        voiceAssistant.speak(script)
+    }
+
+    private func collapsibleAIAnalysis(for result: OutfitAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    isScoreAnalysisExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    Text(isScoreAnalysisExpanded ? "Hide Analysis" : "View Analysis")
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+
+                    Spacer()
+
+                    Image(systemName: isScoreAnalysisExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                }
+                .foregroundStyle(scanCream)
+                .padding(12)
+                .background(scanBackground.opacity(0.52))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(.plain)
+
+            if isScoreAnalysisExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(analysisCategoryItems(for: result)) { item in
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: item.icon)
+                                .font(.caption)
+                                .foregroundStyle(scanCream)
+                                .frame(width: 22)
+                                .padding(.top, 2)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title)
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(.white)
+
+                                Text(item.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(scanMuted)
+                                    .lineLimit(3)
+                            }
+                        }
+                    }
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            isShowingFullAnalysis = true
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("View Full Analysis")
+                            Image(systemName: "arrow.right")
+                        }
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanCream)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
+                }
+                .padding(12)
+                .background(scanBackground.opacity(0.38))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .opacity(resultRevealStep >= 3 ? 1 : 0)
+        .offset(y: resultRevealStep >= 3 ? 0 : 8)
+    }
+
+    private func premiumImprovementPreview(for analysis: OutfitAnalysisResult) -> some View {
+        let suggestions = analysis.suggestions
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Make this look stronger", systemImage: "wand.and.stars")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(StyleMatchPremiumPalette.champagneSoft)
+                Spacer()
+                Text("Rescan to verify")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(scanMuted)
+            }
+
+            if suggestions.isEmpty {
+                Text("No evidence-backed improvement is available from this photo. Try another angle or ask the Stylist about the result.")
+                    .font(.caption)
+                    .foregroundStyle(scanMuted)
+            } else {
+                ForEach(Array(suggestions.prefix(3).enumerated()), id: \.offset) { index, suggestion in
+                    HStack(alignment: .top, spacing: 9) {
+                        Text("\(index + 1)")
+                            .font(.caption2.weight(.black))
+                            .foregroundStyle(StyleMatchPremiumPalette.ink)
+                            .frame(width: 22, height: 22)
+                            .background(StyleMatchPremiumPalette.champagneSoft, in: Circle())
+                        Text(suggestion)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.88))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            Text("KigoStylist never guesses a future score. Make a change and rescan for a new authoritative score.")
+                .font(.caption2)
+                .foregroundStyle(scanMuted)
+        }
+        .padding(12)
+        .background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(StyleMatchPremiumPalette.border, lineWidth: 1))
+    }
+
+    private func styleBreakdownBars(for result: OutfitAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Style Breakdown")
+                        .font(.headline)
+                    Text("The five signals behind this look")
+                        .font(.caption2)
+                        .foregroundStyle(scanMuted)
+                }
+                Spacer()
+                Image(systemName: "chart.bar.xaxis")
+                    .foregroundStyle(StyleMatchPremiumPalette.champagne)
+                    .accessibilityHidden(true)
+            }
+
+            if let breakdown = result.scoreBreakdown {
+                scorePointRow(title: "Color", points: breakdown.colorHarmony, maximum: 25)
+                scorePointRow(title: "Fit", points: breakdown.fitQuality, maximum: 25)
+                scorePointRow(title: "Coordination", points: breakdown.patternBalance, maximum: 20)
+                scorePointRow(title: "Accessories", points: breakdown.accessoryUse, maximum: 10)
+                occasionContextRow(result.occasionFit)
+
+                Divider()
+                    .overlay(StyleMatchPremiumPalette.border)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Scoring total")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text("\(scoreRawTotal(for: breakdown))/80 → \(normalizedScore(for: breakdown))/100")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(StyleMatchPremiumPalette.champagneSoft)
+                }
+
+                if result.score != normalizedScore(for: breakdown) {
+                    Text("Final evidence-gated score: \(result.score)/100")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                }
+
+                Label("Occasion is shown as context and does not change the numeric score.", systemImage: "info.circle")
+                    .font(.caption2)
+                    .foregroundStyle(scanMuted)
+            } else {
+                Text("Detailed category points are unavailable for this saved result.")
+                    .font(.caption)
+                    .foregroundStyle(scanMuted)
+            }
+        }
+        .padding(14)
+        .background(StyleMatchPremiumPalette.panelRaised.opacity(0.78))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(StyleMatchPremiumPalette.champagne.opacity(0.20), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func occasionContextRow(_ occasionFit: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Occasion")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text("Context")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(StyleMatchPremiumPalette.champagneSoft)
+            }
+            Text(occasionFit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Not enough occasion context yet." : occasionFit)
+                .font(.caption2)
+                .foregroundStyle(scanMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Occasion context. \(occasionFit)")
+    }
+
+    private func scorePointRow(title: String, points: Int, maximum: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                Text("\(points)/\(maximum)")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(AppTab.scan.palette.accent)
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.10))
+
+                    Capsule()
+                        .fill(AppTab.scan.palette.accent)
+                        .frame(width: proxy.size.width * CGFloat(points) / CGFloat(maximum))
+                }
+            }
+            .frame(height: 7)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(points) out of \(maximum)")
+    }
+
+    private func scoreRawTotal(for breakdown: OutfitScoreBreakdown) -> Int {
+        StyleScoreCalibration.rawTotal(
+            colorHarmony: breakdown.colorHarmony,
+            patternBalance: breakdown.patternBalance,
+            fitQuality: breakdown.fitQuality,
+            accessoryUse: breakdown.accessoryUse
+        )
+    }
+
+    private func normalizedScore(for breakdown: OutfitScoreBreakdown) -> Int {
+        StyleScoreCalibration.normalizedScore(rawTotal: scoreRawTotal(for: breakdown))
+    }
+
+    private func clampedScore(_ score: Int) -> Int {
+        min(max(score, 1), 100)
+    }
+
+    private func detectedStyleContextCard(for result: OutfitAnalysisResult, darkMode: Bool) -> some View {
+        let rankings = styleRankings(for: result)
+        let primary = rankings.first ?? StyleClassificationRanking(
+            name: detectedStyleTitle(for: result),
+            rankingScore: 0,
+            reason: "Detected from visible outfit evidence.",
+            provenance: .unknownProvenance
+        )
+        let background = darkMode ? scanBackground.opacity(0.52) : AppTab.scan.palette.accent.opacity(0.10)
+        let border = darkMode ? scanPanelBorder : AppTab.scan.palette.accent.opacity(0.20)
+        let titleColor = darkMode ? scanMuted : Color.secondary
+        let valueColor = darkMode ? Color.white : Color.primary
+        let accent = darkMode ? scanCream : AppTab.scan.palette.accent
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Detected Style")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(titleColor)
+
+                    Text(primary.name)
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(valueColor)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+                }
+
+                Spacer()
+
+                if let confidence = primary.customerVisibleConfidence {
+                    VStack(alignment: .trailing, spacing: 5) {
+                        Text("Style match")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundStyle(titleColor)
+
+                        Text("\(confidence)%")
+                            .font(.subheadline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(accent)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                    }
+                } else {
+                    Text("No measured style-match confidence is available for this scan.")
+                        .font(.caption2)
+                        .foregroundStyle(titleColor)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+
+            if rankings.count > 1 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Top style matches")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(titleColor)
+
+                    ForEach(rankings.prefix(3)) { ranking in
+                        HStack(spacing: 8) {
+                            Text(ranking.name)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(valueColor)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.78)
+
+                            Spacer()
+
+                            if let confidence = ranking.customerVisibleConfidence {
+                                Text("\(confidence)%")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(accent)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(12)
+        .background(background)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func detectedStyleTitle(for result: OutfitAnalysisResult) -> String {
+        if let topStyle = styleRankings(for: result).first {
+            return topStyle.name
+        }
+
+        if !result.outfitClassification.isUncertain {
+            return result.outfitClassification.effectiveCategory.displayName
+        }
+
+        let combined = (
+            result.styleBalance + " " +
+            result.occasionFit + " " +
+            result.formality + " " +
+            result.detectedClothingItems.joined(separator: " ") + " " +
+            result.environment + " " +
+            result.outfitDescription + " " +
+            result.summary
+        ).lowercased()
+
+        if isUnrecognizedStyleEvidence(combined) {
+            return "Unrecognized Item"
+        }
+
+        if let sleepwearCategory = sleepwearOrLoungewearCategory(from: combined) {
+            return sleepwearCategory
+        }
+
+        if hasTraditionalStyleEvidence(combined) {
+            return result.styleBalance.localizedCaseInsensitiveContains("traditional") ? result.styleBalance : "Traditional Wear"
+        }
+
+        if combined.contains("hoodie") || combined.contains("sneaker") || combined.contains("street") || combined.contains("oversized") {
+            return "Streetwear"
+        }
+
+        if hasBusinessStyleEvidence(combined) && !isBusinessBlockedByCasualEvidence(combined) {
+            return "Business Casual"
+        }
+
+        if combined.contains("wedding") || combined.contains("formal") || combined.contains("ceremony") {
+            return "Formal"
+        }
+
+        if combined.contains("church") || combined.contains("dinner") || combined.contains("event") {
+            return "Smart Casual"
+        }
+
+        return "Casual"
+    }
+
+    private func outfitClassificationControl(
+        for analysis: OutfitAnalysisResult,
+        darkMode: Bool
+    ) -> some View {
+        let classification = analysis.outfitClassification
+        let textColor = darkMode ? Color.white : Color.primary
+        let muted = darkMode ? scanMuted : Color.secondary
+        let background = darkMode ? scanBackground.opacity(0.52) : AppTab.scan.palette.accent.opacity(0.08)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Outfit type")
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(muted)
+                    Text(classification.effectiveCategory.displayName)
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(textColor)
+                }
+
+                Spacer()
+
+                Menu("Change") {
+                    ForEach(OutfitCategory.allCases.filter { $0 != .otherUncertain }) { category in
+                        Button(category.displayName) {
+                            updateOutfitClassification(category, for: analysis)
+                        }
+                    }
+                    Divider()
+                    Button("Other / Uncertain") {
+                        updateOutfitClassification(.otherUncertain, for: analysis)
+                    }
+                }
+                .font(.caption.weight(.bold))
+            }
+
+            if classification.requiresConfirmation {
+                Text("This appears to be \(classification.primaryCategory.displayName.lowercased()). Is that correct?")
+                    .font(.subheadline)
+                    .foregroundStyle(textColor)
+
+                HStack(spacing: 10) {
+                    Button("Yes") {
+                        updateOutfitClassification(classification.primaryCategory, for: analysis)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("Not this") {
+                        updateOutfitClassification(.otherUncertain, for: analysis)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else if classification.isUncertain {
+                Text("Outfit type is uncertain. Choose a category only if you recognize it.")
+                    .font(.caption)
+                    .foregroundStyle(muted)
+                if !classification.secondaryCategories.isEmpty {
+                    Text("Likely options: \(classification.secondaryCategories.map(\.displayName).joined(separator: ", ")).")
+                        .font(.caption2)
+                        .foregroundStyle(muted)
+                }
+            } else if classification.userConfirmedCategory != nil {
+                Text("Confirmed by you for this scan.")
+                    .font(.caption)
+                    .foregroundStyle(muted)
+            }
+
+            if selectedScanOccasion == .general,
+               classification.supportsWorkOccasionWithoutConfirmation {
+                Text("Suggested occasion: Work")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(muted)
+                    .accessibilityLabel("Suggested occasion: Work")
+            }
+
+            if !classification.scoringProfile.evaluationCriteria.isEmpty {
+                Text("Evaluation: \(classification.scoringProfile.evaluationCriteria.joined(separator: ", ")).")
+                    .font(.caption2)
+                    .foregroundStyle(muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(background)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func updateOutfitClassification(
+        _ category: OutfitCategory,
+        for analysis: OutfitAnalysisResult
+    ) {
+        let classification = analysis.outfitClassification.confirming(category)
+        let updated = analysis.replacingOutfitClassification(classification)
+        result = updated
+        preparedAnalysis = updated
+
+        if let fingerprint = activeScanFingerprint {
+            var history = loadScanHistory()
+            if let stored = history[fingerprint] {
+                history[fingerprint] = StoredOutfitScan(
+                    score: stored.score,
+                    analysis: updated,
+                    firstScannedAt: stored.firstScannedAt,
+                    scanCount: stored.scanCount,
+                    thumbnailData: stored.thumbnailData,
+                    customTitle: stored.customTitle,
+                    occasion: canonicalOccasionForPersistence(
+                        selectedOccasion: selectedScanOccasion,
+                        classification: updated.outfitClassification
+                    ),
+                    imageDigest: stored.imageDigest,
+                    savedImageAsset: stored.savedImageAsset,
+                    deterministicInputs: stored.deterministicInputs
+                )
+                saveScanHistory(history)
+            }
+        }
+
+        dismissedFormalityMismatchSignatures.removeAll()
+        publishCurrentStylistScanHandoff(source: "outfit_category_confirmation")
+    }
+
+    private func formalityMismatch(for result: OutfitAnalysisResult) -> FormalityMismatch? {
+        if !result.outfitClassification.isUncertain,
+           result.outfitClassification.occasionCompatibility == .compatible {
+            return nil
+        }
+        guard let mismatch = FormalityMismatchEvaluator.evaluate(
+            detectedStyle: detectedStyleTitle(for: result),
+            occasion: selectedScanOccasion.canonical,
+            outfitClassification: result.outfitClassification
+        ) else {
+            return nil
+        }
+
+        return dismissedFormalityMismatchSignatures.contains(formalityMismatchSignature(for: result, mismatch: mismatch)) ? nil : mismatch
+    }
+
+    private func formalityMismatchSignature(for result: OutfitAnalysisResult, mismatch: FormalityMismatch) -> String {
+        [
+            String(result.score),
+            detectedStyleTitle(for: result),
+            mismatch.occasion.rawValue,
+            mismatch.detectedFormality.rawValue
+        ].joined(separator: "|")
+    }
+
+    private func canonicalOccasionForPersistence(
+        selectedOccasion: Occasion,
+        classification: OutfitClassificationResult
+    ) -> Occasion? {
+        ScanOccasionAuthority.resolve(
+            explicitOccasion: selectedOccasion.canonical,
+            userConfirmedCategory: classification.userConfirmedCategory,
+            classifierOccasion: Occasion(label: classification.selectedOccasion),
+            classifierConfidence: classification.confidenceLevel
+        )
+    }
+
+    private func workUniformOccasionGuidance(for result: OutfitAnalysisResult) -> String? {
+        FormalityMismatchEvaluator.compatibleWorkUniformGuidance(
+            detectedStyle: detectedStyleTitle(for: result),
+            occasion: canonicalOccasionForPersistence(
+                selectedOccasion: selectedScanOccasion,
+                classification: result.outfitClassification
+            ),
+            outfitClassification: result.outfitClassification
+        )
+    }
+
+    private func workUniformOccasionGuidanceCard(_ guidance: String, darkMode: Bool) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.seal.fill")
+                .foregroundStyle(.green)
+                .font(.headline)
+            Text(guidance)
+                .font(.subheadline)
+                .foregroundStyle(darkMode ? .white : .primary)
+        }
+        .padding(12)
+        .background(darkMode ? Color.green.opacity(0.14) : Color.green.opacity(0.10))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func formalityMismatchBanner(_ mismatch: FormalityMismatch, result: OutfitAnalysisResult, darkMode: Bool) -> some View {
+        let background = darkMode ? Color.orange.opacity(0.14) : Color.orange.opacity(0.10)
+        let border = Color.orange.opacity(darkMode ? 0.42 : 0.32)
+
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.headline)
+
+            Text(mismatch.message)
+                .font(.subheadline)
+                .foregroundStyle(darkMode ? scanCream : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            Button {
+                dismissedFormalityMismatchSignatures.insert(formalityMismatchSignature(for: result, mismatch: mismatch))
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(darkMode ? scanMuted : .secondary)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss occasion warning")
+        }
+        .padding(12)
+        .background(background)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func detectedStyleMeasuredConfidence(for result: OutfitAnalysisResult) -> Int? {
+        styleRankings(for: result).first?.customerVisibleConfidence
+    }
+
+    private func styleRankings(for result: OutfitAnalysisResult) -> [StyleClassificationRanking] {
+        let evidence = styleEvidenceText(for: result)
+        let traditionalName = result.styleBalance.localizedCaseInsensitiveContains("traditional")
+            ? result.styleBalance
+            : nil
+        return StyleClassificationAuthority.rankedStyles(
+            for: evidence,
+            baseScore: result.score,
+            preferredTraditionalName: traditionalName
+        )
+    }
+
+    private func styleEvidenceText(for result: OutfitAnalysisResult) -> String {
+        (
+            result.styleBalance + " " +
+            result.occasionFit + " " +
+            result.formality + " " +
+            result.detectedClothingItems.joined(separator: " ") + " " +
+            result.environment + " " +
+            result.imageQuality + " " +
+            result.outfitDescription + " " +
+            result.summary
+        ).lowercased()
+    }
+
+    private func isUnrecognizedStyleEvidence(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.contains("unrecognized item")
+            || lower.contains("category uncertain")
+            || lower.contains("unrecognized")
+            || lower.contains("could not identify enough reliable clothing detail")
+    }
+
+    private func hasTraditionalStyleEvidence(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if isYouthGraphicCasualEvidence(lower) || isRuggedCasualEvidence(lower) || sleepwearOrLoungewearCategory(from: lower) != nil {
+            return false
+        }
+
+        let explicitGarments = [
+            "agbada", "senator wear", "isiagu", "buba", "iro", "ankara", "aso oke", "aso-oke",
+            "dashiki", "kaftan", "caftan", "kente", "kanzu", "gomesi", "shuka", "habesha",
+            "boubou", "djellaba", "gele", "duku", "kimono", "yukata", "hanfu", "qipao",
+            "cheongsam", "hanbok", "saree", "sari", "salwar", "sherwani", "kurta", "lehenga",
+            "ao dai", "chut thai", "batik", "thobe", "kandura", "dishdasha", "bisht", "abaya",
+            "jalabiya", "keffiyeh", "shemagh", "kilt", "lederhosen", "dirndl", "vyshyvanka",
+            "flamenco", "charro", "huipil", "pollera", "poncho", "lavalava", "lava-lava",
+            "pareo", "korowai", "taovala"
+        ]
+        let explicitCount = explicitGarments.filter { lower.contains($0) }.count
+        guard explicitCount > 0 else { return false }
+
+        let supportCount = traditionalSupportFeatureCount(in: lower)
+        return explicitCount >= 1 && supportCount >= 2
+    }
+
+    private func isRuggedCasualEvidence(_ text: String) -> Bool {
+        let hasDenim = ["jean", "jeans", "denim"].contains { text.contains($0) }
+        let hasCasualTop = ["hoodie", "hooded", "flannel", "plaid", "shacket", "overshirt", "casual jacket", "workwear"].contains { text.contains($0) }
+        let hasRuggedShoe = ["boot", "boots", "hiking", "work boot", "casual shoe"].contains { text.contains($0) }
+        return (hasDenim && hasCasualTop) || (hasDenim && hasRuggedShoe) || (hasCasualTop && hasRuggedShoe)
+    }
+
+    private func isYouthGraphicCasualEvidence(_ text: String) -> Bool {
+        let childSignal = ["child", "kid", "boy", "girl", "youth", "children"].contains { text.contains($0) }
+        let graphicSignal = ["graphic", "cartoon", "character", "printed", "print", "truck", "anime", "marvel", "disney", "pokemon"].contains { text.contains($0) }
+        let relaxedBottomSignal = ["patterned pant", "patterned pants", "sweatpant", "sweatpants", "jogger", "joggers", "pajama pant"].contains { text.contains($0) }
+        let homeSignal = ["home", "bedroom", "closet", "barefoot", "bare feet", "no shoes", "indoor"].contains { text.contains($0) }
+        let casualTopSignal = ["t-shirt", "tee", "long sleeve", "sweatshirt", "hoodie", "graphic shirt", "polo"].contains { text.contains($0) }
+
+        return (childSignal && (graphicSignal || relaxedBottomSignal || homeSignal || casualTopSignal))
+            || (graphicSignal && (relaxedBottomSignal || homeSignal || casualTopSignal))
+            || (homeSignal && relaxedBottomSignal)
+    }
+
+    private func businessStyleSignalCount(in text: String) -> Int {
+        let businessTerms = [
+            "button-down", "button down", "oxford", "dress shirt", "collared shirt", "polo",
+            "chino", "chinos", "dress pant", "dress pants", "trouser", "trousers",
+            "blazer", "cardigan", "clean sweater", "loafer", "loafers", "dress shoe",
+            "dress shoes"
+        ]
+        return businessTerms.reduce(0) { count, term in
+            text.contains(term) ? count + 1 : count
+        }
+    }
+
+    private func hasBusinessStyleEvidence(_ text: String) -> Bool {
+        businessStyleSignalCount(in: text) >= 2
+    }
+
+    private func businessCasualConfidenceCap(for text: String) -> Int {
+        let lower = text.lowercased()
+        let hasHoodOrFlannel = ["hoodie", "hooded", "flannel", "plaid", "shacket"].contains { lower.contains($0) }
+        let hasJeans = ["jean", "jeans", "denim"].contains { lower.contains($0) }
+        let hasGraphicYouthOrHome = isYouthGraphicCasualEvidence(lower)
+
+        if hasGraphicYouthOrHome {
+            return 15
+        }
+        if hasHoodOrFlannel && hasJeans {
+            return 15
+        }
+        if hasHoodOrFlannel || hasJeans {
+            return min(40, businessStyleSignalCount(in: lower) >= 2 ? 40 : 25)
+        }
+        return businessStyleSignalCount(in: lower) >= 2 ? 96 : 70
+    }
+
+    private func isBusinessBlockedByCasualEvidence(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        if sleepwearOrLoungewearCategory(from: lower) != nil { return true }
+        if isYouthGraphicCasualEvidence(lower) { return true }
+        if isRuggedCasualEvidence(lower) { return true }
+        let hasCasualBlocker = ["hoodie", "hooded", "flannel", "shacket", "graphic", "cartoon", "character", "barefoot", "slipper"].contains { lower.contains($0) }
+        return hasCasualBlocker && businessStyleSignalCount(in: lower) < 2
+    }
+
+    private func sleepwearOrLoungewearCategory(from text: String) -> String? {
+        let sleepTerms = ["children's sleepwear", "kids sleepwear", "pajama", "pyjama", "sleepwear", "nightgown", "robe", "bathrobe", "fleece robe", "plush robe", "slipper", "house shoe", "sleep sock"]
+        if sleepTerms.contains(where: { text.contains($0) }) {
+            if ["child", "kid", "girl", "boy", "children"].contains(where: { text.contains($0) }) {
+                return "Children's Sleepwear"
+            }
+            return "Sleepwear"
+        }
+
+        let loungeTerms = ["loungewear", "lounge set", "house clothes", "homewear", "indoor outfit", "fuzzy slipper", "plush robe", "blanket hoodie"]
+        if loungeTerms.contains(where: { text.contains($0) }) {
+            return "Loungewear"
+        }
+
+        if let contextualCategory = contextualSleepwearSetCategory(from: text) {
+            return contextualCategory
+        }
+
+        return nil
+    }
+
+    private func contextualSleepwearSetCategory(from text: String) -> String? {
+        let homeOrYouthSignals = [
+            "bedroom", "bed", "blanket", "pillow", "home", "house", "indoor",
+            "child", "kid", "girl", "boy", "children", "youth", "toy"
+        ].filter { text.contains($0) }.count
+        let matchingSetSignals = [
+            "matching set", "coordinated set", "two-piece", "two piece",
+            "matching top and bottom", "top and bottom", "matching outfit",
+            "shirt and pants set", "pants set"
+        ].filter { text.contains($0) }.count
+        let comfortPatternSignals = [
+            "stripe", "striped", "red and white", "pink and white", "pink red",
+            "pastel", "soft", "loose", "barefoot"
+        ].filter { text.contains($0) }.count
+
+        guard homeOrYouthSignals > 0, matchingSetSignals > 0, comfortPatternSignals > 0 else {
+            return nil
+        }
+
+        if ["child", "kid", "girl", "boy", "children", "youth", "toy"].contains(where: { text.contains($0) }) {
+            return "Children's Sleepwear"
+        }
+
+        return "Sleepwear"
+    }
+
+    private func chatGPTStylistSectionsCard(_ sections: [ChatGPTStylistSection], darkMode: Bool) -> some View {
+        let background = darkMode ? scanBackground.opacity(0.44) : AppTab.ai.palette.accent.opacity(0.08)
+        let border = darkMode ? scanPanelBorder : AppTab.ai.palette.accent.opacity(0.20)
+        let titleColor = darkMode ? Color.white : Color.primary
+        let bodyColor = darkMode ? scanMuted : Color.secondary
+        let accent = darkMode ? scanCream : AppTab.ai.palette.accent
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Label(sections.contains(where: { $0.title == "Personal Stylist Intelligence" }) ? "Personal Stylist Intelligence" : "Stylist Analysis", systemImage: "sparkles")
+                .font(.subheadline)
+                .fontWeight(.bold)
+                .foregroundStyle(accent)
+
+            ForEach(sections.prefix(7)) { section in
+                VStack(alignment: .leading, spacing: 4) {
+                    if section.title != "Personal Stylist Intelligence" {
+                        Text(section.title)
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(titleColor)
+                    }
+
+                    Text(section.body)
+                        .font(.caption)
+                        .foregroundStyle(bodyColor)
+                        .lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(12)
+        .background(background)
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func scanAIAssistSheet(for analysis: OutfitAnalysisResult) -> some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            scanAIContextHeader(analysis)
+
+                            ForEach(Array(scanAIChatMessages.enumerated()), id: \.element.id) { index, message in
+                                if shouldShowScanAITimestamp(at: index) {
+                                    Text(scanAITimestampText(for: message.createdAt))
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 4)
+                                }
+
+                                scanAIChatBubble(message, analysis: analysis)
+                                    .id(message.id)
+                            }
+
+                            if isScanAIThinking {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("ChatGPT is reading this scan...")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 4)
+                                .id("scan-ai-thinking")
+                            }
+                        }
+                        .padding()
+                    }
+                    .styleMatchOnChange(of: scanAIChatMessages.count) { _ in
+                        guard let id = scanAIChatMessages.last?.id else { return }
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            proxy.scrollTo(id, anchor: .bottom)
+                        }
+                    }
+                }
+
+                Divider()
+
+                VStack(spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(scanAIAssistPrompts, id: \.self) { prompt in
+                                Button(prompt) {
+                                    sendScanAIMessage(prompt, analysis: analysis)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(isScanAIThinking)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+
+                    HStack(spacing: 10) {
+                        TextField("Ask about this outfit...", text: $scanAIInput, axis: .vertical)
+                            .lineLimit(1...4)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Ask AI about this scan")
+                            .accessibilityHint("Enter a question about the completed outfit scan")
+
+                        Button {
+                            sendScanAIMessage(scanAIInput, analysis: analysis)
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 34))
+                                .frame(width: 44, height: 44)
+                        }
+                        .disabled(isScanAIThinking || scanAIInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityLabel("Send scan AI message")
+                        .accessibilityHint("Sends your question about this outfit")
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 12)
+                .background(.ultraThinMaterial)
+            }
+            .background(scanBackground.ignoresSafeArea())
+            .navigationTitle("AI Assist")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Clear") {
+                        scanAIChatMessages.removeAll()
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        isShowingScanAIAssist = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func scanAIContextHeader(_ analysis: OutfitAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("KigoStylist AI Assist", systemImage: "sparkles")
+                .font(.title3)
+                .fontWeight(.bold)
+
+            Text("ChatGPT can read this scan result, explain the score, and answer follow-up questions. KigoStylist still owns the score.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(analysis.score)")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                    Text(scoreRatingTitle(for: analysis.score))
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(detectedStyleTitle(for: analysis))
+                        .font(.headline)
+                    Text(analysis.safeDetectedClothingItems.prefix(4).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding()
+        .appCard(.scan, radius: 16)
+    }
+
+    private func scanAIChatBubble(_ message: ScanAIChatMessage, analysis: OutfitAnalysisResult) -> some View {
+        HStack {
+            if message.role == .customer {
+                Spacer(minLength: 42)
+            }
+
+            VStack(alignment: message.role == .customer ? .trailing : .leading, spacing: 6) {
+                Text(message.text)
+                    .font(.subheadline)
+                    .foregroundStyle(message.role == .customer ? scanBackground : .primary)
+                    .lineSpacing(2)
+                    .accessibilityLabel(
+                        StyleMatchAccessibilityText.chatMessageLabel(
+                            role: message.role == .customer ? "You" : "Scan AI",
+                            content: message.text
+                        )
+                    )
+
+                HStack(spacing: 8) {
+                    if message.isEdited {
+                        Text("Edited")
+                            .font(.caption2)
+                            .foregroundStyle(message.role == .customer ? scanBackground.opacity(0.72) : .secondary)
+                    }
+
+                    if let failedPrompt = message.failedPrompt, !failedPrompt.isEmpty {
+                        Button("Retry") {
+                            retryFailedScanAIMessage(message, analysis: analysis)
+                        }
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .disabled(isScanAIThinking)
+                    }
+                }
+            }
+            .padding(12)
+            .background(message.role == .customer ? scanCream : Color(.secondarySystemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
+
+
+            if message.role == .assistant {
+                Spacer(minLength: 42)
+            }
+        }
+    }
+
+    private var scanAIAssistPrompts: [String] {
+        [
+            "Why did I get this score?",
+            "How can I improve it?",
+            "What is the weakest part?",
+            "Would white shoes help?",
+            "Is this business casual?",
+            "Explain color harmony.",
+            "Design a custom garment."
+        ]
+    }
+
+    private func openScanAIAssist(for analysis: OutfitAnalysisResult) {
+        guard !isShowingScanAIAssist else { return }
+
+        if scanAIChatMessages.isEmpty {
+            scanAIChatMessages.append(
+                ScanAIChatMessage(
+                    role: .assistant,
+                    text: "I can see this KigoStylist scan: \(analysis.score)/100, \(scoreRatingTitle(for: analysis.score)). Ask why you got this score, what to improve, or what shoes/accessories would work."
+                )
+            )
+        }
+        isShowingScanAIAssist = true
+    }
+
+    private func sendScanAIMessage(_ rawText: String, analysis: OutfitAnalysisResult) {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard !isScanAIThinking else { return }
+
+        scanAIInput = ""
+        scanAIChatMessages.append(ScanAIChatMessage(role: .customer, text: text))
+        isScanAIThinking = true
+        let conversation = activeScanAIConversationHistory()
+
+        Task {
+            await requestScanAIReply(for: text, analysis: analysis, conversation: conversation, retryAttempt: 0)
+        }
+    }
+
+    private func requestScanAIReply(
+        for text: String,
+        analysis: OutfitAnalysisResult,
+        conversation: [AIChatMessage],
+        retryAttempt: Int
+    ) async {
+        do {
+            let reply = try await aiReplyForScanMessage(text, analysis: analysis, conversation: conversation)
+            await MainActor.run {
+                scanAIChatMessages.append(ScanAIChatMessage(role: .assistant, text: reply))
+                isScanAIThinking = false
+            }
+        } catch {
+            logScanAIChatFailure(error, prompt: text, retryAttempt: retryAttempt)
+
+            if retryAttempt == 0 {
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                await requestScanAIReply(for: text, analysis: analysis, conversation: conversation, retryAttempt: 1)
+                return
+            }
+
+            await MainActor.run {
+                let reason = scanAIFailureReason(error)
+                let localAdvice = localScanAIReply(for: text, analysis: analysis)
+                let fallback = ScanAIFallbackPresentation.completed(localAdvice: localAdvice)
+                    ?? ScanAIFallbackPresentation.noAnswer(prompt: text)
+                scanAIChatMessages.append(
+                    ScanAIChatMessage(
+                        role: .assistant,
+                        text: fallback.message,
+                        failedPrompt: fallback.retryPrompt,
+                        failureReason: fallback.retryPrompt == nil ? nil : reason
+                    )
+                )
+                isScanAIThinking = false
+            }
+        }
+    }
+
+    private func aiReplyForScanMessage(_ message: String, analysis: OutfitAnalysisResult, conversation: [AIChatMessage]) async throws -> String {
+        if isDesignIdeaRequest(message) {
+            return try await generateDesignIdea(for: analysis, userRequest: message)
+        }
+
+        return try await askChatGPTAboutCurrentScan(message: message, analysis: analysis, conversation: conversation)
+    }
+
+    private func activeScanAIConversationHistory() -> [AIChatMessage] {
+        scanAIChatMessages
+            .filter { $0.failedPrompt == nil }
+            .suffix(24)
+            .map { item in
+                AIChatMessage(
+                    role: item.role == .customer ? .customer : .assistant,
+                    text: item.text,
+                    createdAt: item.createdAt,
+                    edited: item.isEdited,
+                    editedAt: item.editedAt
+                )
+            }
+    }
+
+    private func retryFailedScanAIMessage(_ message: ScanAIChatMessage, analysis: OutfitAnalysisResult) {
+        guard let prompt = message.failedPrompt, !isScanAIThinking else { return }
+        scanAIChatMessages.removeAll { $0.id == message.id }
+        isScanAIThinking = true
+        let conversation = activeScanAIConversationHistory()
+
+        Task {
+            await requestScanAIReply(for: prompt, analysis: analysis, conversation: conversation, retryAttempt: 0)
+        }
+    }
+
+    private func shouldShowScanAITimestamp(at index: Int) -> Bool {
+        guard scanAIChatMessages.indices.contains(index) else { return false }
+        guard index > 0 else { return true }
+        let previous = scanAIChatMessages[index - 1].createdAt
+        return scanAIChatMessages[index].createdAt.timeIntervalSince(previous) > 10 * 60
+    }
+
+    private func scanAITimestampText(for date: Date) -> String {
+        let formatter = DateFormatter()
+        if Calendar.current.isDateInToday(date) {
+            formatter.dateFormat = "h:mm a"
+        } else {
+            formatter.dateFormat = "MMM d, h:mm a"
+        }
+        return formatter.string(from: date)
+    }
+
+    private func logScanAIChatFailure(_ error: Error, prompt: String, retryAttempt: Int) {
+        _ = error
+        _ = prompt
+        _ = retryAttempt
+    }
+
+    private func scanAIFailureReason(_ error: Error) -> String {
+        if let diagnostic = error as? StylistChatDiagnosticError {
+            return scanAIChatFailureReason(diagnostic.category)
+        }
+
+        if let chatError = error as? StylistChatError {
+            return scanAIChatFailureReason(chatError)
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "timeout"
+            case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .secureConnectionFailed:
+                return "network"
+            case .cancelled:
+                return "cancelled"
+            default:
+                return "url_error_\(urlError.code.rawValue)"
+            }
+        }
+
+        if let stylistError = error as? OpenAIStylistError {
+            switch stylistError {
+            case .missingAPIKey:
+                return "missing_api_key"
+            case .invalidResponse:
+                return "invalid_response"
+            case .emptyOutput:
+                return "empty_output"
+            case .api(let message):
+                let lower = message.lowercased()
+                if lower.contains("unsupported parameter") || lower.contains("max_tokens") || lower.contains("max_completion_tokens") {
+                    return "api_parameter"
+                }
+                if lower.contains("model") && (lower.contains("not supported") || lower.contains("does not exist") || lower.contains("not found")) {
+                    return "api_model"
+                }
+                if lower.contains("rate") || lower.contains("429") {
+                    return "rate_limit"
+                }
+                if lower.contains("sign in") || lower.contains("401") {
+                    return "api_auth"
+                }
+                if lower.contains("quota") || lower.contains("billing") || lower.contains("payment") || lower.contains("insufficient") {
+                    return "api_billing"
+                }
+                return "api_error"
+            }
+        }
+
+        if error is DecodingError {
+            return "parse_error"
+        }
+
+        return "unknown"
+    }
+
+    private func scanAIChatFailureReason(_ error: StylistChatError) -> String {
+        switch error {
+        case .missingConfiguration:
+            return "missing_configuration"
+        case .unauthorized:
+            return "api_auth"
+        case .payloadTooLarge:
+            return "payload_too_large"
+        case .rateLimited:
+            return "rate_limit"
+        case .providerError:
+            return "provider_error"
+        case .invalidRequest:
+            return "invalid_request"
+        case .network:
+            return "network"
+        case .aiTransmissionConsentRequired:
+            return "ai_transmission_consent_required"
+        }
+    }
+
+    private func localScanAIReply(for message: String, analysis: OutfitAnalysisResult) -> String {
+        let lower = message.lowercased()
+
+        if lower.contains("why") || lower.contains("score") {
+            return localScoreExplanation(for: analysis)
+        }
+
+        if lower.contains("improve") || lower.contains("better") || lower.contains("fix") {
+            return localImprovementAdvice(for: analysis)
+        }
+
+        if lower.contains("shoe") || lower.contains("accessor") || lower.contains("belt") || lower.contains("watch") {
+            return localAccessoryAdvice(for: analysis)
+        }
+
+        return "\(localScoreExplanation(for: analysis))\n\n\(localImprovementAdvice(for: analysis))"
+    }
+
+    private func localScoreExplanation(for analysis: OutfitAnalysisResult) -> String {
+        let breakdown = styleScoreBreakdown(from: analysis)
+        let colorSentence: String
+        if analysis.colorPaletteConfidence == .confident, !analysis.colorPalette.isEmpty {
+            colorSentence = "The palette found was \(analysis.colorPalette.joined(separator: ", ")), which keeps the outfit coordinated."
+        } else {
+            colorSentence = "Colors were hard to read in this photo, so the explanation does not make a specific color claim."
+        }
+
+        return """
+        KigoStylist gave this outfit \(analysis.score)/100, which is \(scoreRatingTitle(for: analysis.score)). The raw scoring total is \(scoreRawTotal(for: breakdown))/80: color harmony \(breakdown.colorHarmony)/25, pattern balance \(breakdown.patternBalance)/20, fit \(breakdown.fitQuality)/25, and accessories \(breakdown.accessoryUse)/10. \(colorSentence) Occasion is informational and excluded from scoring.
+        """
+    }
+
+    private func localImprovementAdvice(for analysis: OutfitAnalysisResult) -> String {
+        let firstSuggestion = analysis.suggestions.first ?? "Add one polished finishing piece and make sure the fit is clean on body."
+        let secondSuggestion = analysis.suggestions.dropFirst().first ?? "Keep the colors coordinated, but use shoes or a light layer to make the outfit feel more intentional."
+
+        return """
+        To improve it, start with this: \(firstSuggestion) Also consider: \(secondSuggestion)
+        """
+    }
+
+    private func localAccessoryAdvice(for analysis: OutfitAnalysisResult) -> String {
+        let style = detectedStyleTitle(for: analysis).lowercased()
+        let colors = analysis.colorPaletteConfidence == .confident
+            ? Set(analysis.colorPalette.map { $0.lowercased() })
+            : Set<String>()
+        let shoeColor = colors.contains("black") || colors.contains("charcoal") ? "black or charcoal" : "clean white, black, or neutral"
+
+        return """
+        For this \(style) outfit, use \(shoeColor) sneakers or casual loafers depending on how polished you want it to feel. A simple black belt, silver watch, or low-profile bracelet would lift the accessory score without changing the outfit's casual direction.
+        """
+    }
+
+    private func scanAIFailureMessage(for reason: String) -> String {
+        switch reason {
+        case "missing_api_key":
+            return "AI Assist needs ChatGPT activated first. Open AI settings, save your OpenAI key, then try again."
+        case "api_auth":
+            return "AI Assist could not sign in with the saved ChatGPT key. Recheck the key in AI settings and try again."
+        case "api_model":
+            return "AI Assist reached ChatGPT, but this model is not available for the saved account. Switch the ChatGPT model in AI settings or update the app build."
+        case "api_parameter":
+            return "AI Assist reached ChatGPT, but this installed build is using an outdated request setting. Install the latest KigoStylist build and try again."
+        case "rate_limit":
+            return "AI Assist reached ChatGPT, but the account is rate-limited right now. Try again shortly."
+        case "api_billing":
+            return "AI Assist reached ChatGPT, but the saved account is blocked by billing or quota. Check the OpenAI account and try again."
+        case "cancelled":
+            return "AI Assist stopped before ChatGPT finished responding. Try again and keep the app open."
+        case "timeout", "network":
+            return "AI Assist could not reach ChatGPT from this network. Check the connection and try again."
+        default:
+            return "AI Assist could not connect to ChatGPT right now. Try again, or recheck ChatGPT setup in AI settings."
+        }
+    }
+
+    private func isDesignIdeaRequest(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("design")
+            || lowered.contains("custom garment")
+            || lowered.contains("custom attire")
+            || lowered.contains("tailor")
+            || lowered.contains("manufacturer")
+            || lowered.contains("manufacture")
+            || lowered.contains("produce")
+            || lowered.contains("make me")
+    }
+
+    private func askChatGPTAboutCurrentScan(
+        message: String,
+        analysis: OutfitAnalysisResult,
+        conversation: [AIChatMessage]
+    ) async throws -> String {
+        let screenContext = currentScreenContext
+        let authoritativeScan = authoritativeStylistScanContext(
+            for: analysis,
+            screenContext: screenContext
+        )
+        let scoreResult = lockedStyleScoreResult(from: analysis)
+        let detectedAttributes = lockedDetectedAttributes(from: analysis)
+        let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
+        let classificationFacts: [String]
+        if let classification = authoritativeScan?.outfitClassification {
+            classificationFacts = [
+                "outfit category: \(classification.effectiveCategory.displayName)",
+                "classification confidence: \(classification.confidenceLevel.rawValue) (\(Int((classification.confidence * 100).rounded()))%)",
+                "selected occasion: \(classification.selectedOccasion ?? authoritativeScan?.selectedOccasion ?? "not selected")",
+                "occasion compatibility: \(classification.occasionCompatibility.rawValue)",
+                "evaluation profile: \(classification.scoringProfile.displayName)",
+                "evaluation criteria: \(classification.scoringProfile.evaluationCriteria.joined(separator: ", "))"
+            ]
+        } else {
+            classificationFacts = []
+        }
+        let prompt = PersonalizationContextBuilder.buildScanFollowUpPrompt(
+            question: message,
+            score: scoreResult.total,
+            tier: scoreResult.tier,
+            breakdown: [
+                "accessories": scoreResult.breakdown.accessoryUse,
+                "color": scoreResult.breakdown.colorHarmony,
+                "fit": scoreResult.breakdown.fitQuality,
+                "occasion": scoreResult.breakdown.occasionMatch,
+                "pattern": scoreResult.breakdown.patternBalance
+            ],
+            garments: analysis.safeDetectedClothingItems,
+            colors: detectedAttributes.colors,
+            patterns: detectedAttributes.patterns,
+            fitAssessment: detectedAttributes.fitAssessment,
+            evidenceFacts: [
+                "authoritative scan ID: \(authoritativeScan?.scanID ?? "unavailable")",
+                "color harmony: \(analysis.colorHarmony)",
+                "coordination: \(analysis.styleCoordination)",
+                "formality: \(analysis.formality)",
+                "seasonal evidence: \(analysis.seasonalMatch)",
+                "occasion evidence: \(analysis.occasionFit)"
+            ] + classificationFacts + analysis.suggestions.prefix(3).map { "improvement evidence: \($0)" },
+            weatherFacts: phrasingContext.weatherFacts,
+            historyFacts: phrasingContext.historyFacts,
+            guardrails: [
+                "Keep objective score evidence distinct from personalized advice.",
+                "Keep the response under four sentences, warm and specific.",
+                "Occasion is not a score input. When no occasion is selected, say: 'No occasion was selected. Occasion did not affect this score.' Never describe occasion as a deduction.",
+                "For a flat-lay photo, say: 'Fit was not evaluated from this flat-lay photo.' Never call fit poor, weak, or in need of tailoring.",
+                "A solid or no-pattern outfit can receive full pattern credit; do not criticize it merely for being solid. When no accessories are detected, explain: 'No accessories were detected. Under the current beta scoring model, this lowers the accessory component. Accessories remain an optional styling choice and their absence does not mean the outfit is unsuitable.' Do not recommend buying accessories merely to recover points.",
+                StylistMessageComposer.aiPhrasingInstruction
+            ]
+        )
+        guard !prompt.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              StylistChatMessageLimit.isWithinLimit(prompt.message) else {
+            throw StylistChatError.payloadTooLarge
+        }
+        let profile = StyleMatchStylistProfile(
+            name: profileName,
+            favoriteColors: favoriteColors,
+            favoriteBrands: favoriteBrands,
+            preferredFit: fitPreference,
+            budget: budget,
+            sizeProfile: sizeProfile,
+            stylePreferences: stylePreferences,
+            occasions: "",
+            weather: "",
+            weatherPreferences: "",
+            dressCode: "",
+            shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands); past purchases \(pastPurchases).",
+            pastOutfitRatings: "",
+            frequentlyWornOutfits: favoriteOutfits,
+            pastPurchases: pastPurchases,
+            favoriteOutfits: favoriteOutfits,
+            closetInventory: closetInventory,
+            appContextSharingEnabled: true,
+            appContext: """
+            Current screen: Scan result AI Assist.
+            """
+        )
+
+        let client = OpenAIStylistClient(model: openAIModel)
+        let routeContext = legacyScanStylistRouteContext(for: analysis)
+        return try await client.askStylist(
+            profile: profile,
+            messages: conversation,
+            question: prompt.message,
+            routeContext: routeContext,
+            debugRequestLabel: "scan_follow_up"
+        )
+    }
+
+    private func legacyScanStylistRouteContext(for analysis: OutfitAnalysisResult) -> ChatContext {
+        let screenContext = currentScreenContext
+        let preferred = authoritativeStylistScanContext(
+            for: analysis,
+            screenContext: screenContext
+        )
+        let authoritativeScan = CurrentScanContextProvider.resolve(
+            preferred: preferred,
+            screenContext: screenContext
+        )
+        return PersonalizationContextBuilder.scanStylistContext(
+            for: analysis,
+            screenContext: screenContext,
+            authoritativeScan: authoritativeScan
+        )
+    }
+
+    private func generateDesignIdea(for analysis: OutfitAnalysisResult, userRequest: String) async throws -> String {
+        let detectedAttributes = lockedDetectedAttributes(from: analysis)
+        let userPrefs = DesignIdeaUserPreferences(
+            favoriteColors: favoriteColors,
+            favoriteBrands: favoriteBrands,
+            preferredFit: fitPreference,
+            budget: budget,
+            sizeProfile: sizeProfile,
+            stylePreferences: stylePreferences,
+            occasions: activeScanOccasionText(environment: analysis.environment),
+            closetInventory: closetInventory,
+            userRequest: userRequest
+        )
+
+        let profile = StyleMatchStylistProfile(
+            name: profileName,
+            favoriteColors: favoriteColors,
+            favoriteBrands: favoriteBrands,
+            preferredFit: fitPreference,
+            budget: budget,
+            sizeProfile: sizeProfile,
+            stylePreferences: stylePreferences,
+            occasions: activeScanOccasionText(environment: analysis.environment),
+            weather: weatherLocationText,
+            weatherPreferences: weatherLocationText,
+            dressCode: activeScanOccasionText(environment: analysis.environment),
+            shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands); past purchases \(pastPurchases).",
+            pastOutfitRatings: "Current scan \(analysis.score)/100. KigoStylist controls the score.",
+            frequentlyWornOutfits: favoriteOutfits,
+            pastPurchases: pastPurchases,
+            favoriteOutfits: favoriteOutfits,
+            closetInventory: closetInventory,
+            appContextSharingEnabled: true,
+            appContext: "Custom garment design idea request from scan AI Assist. Occasion context: \(activeScanOccasionText(environment: analysis.environment)). This feature suggests attire concepts only and must not change the outfit score."
+        )
+
+        let client = OpenAIStylistClient(model: openAIModel)
+        let response = try await client.askStylist(
+            profile: profile,
+            messages: [],
+            question: buildDesignIdeaPrompt(detectedAttributes: detectedAttributes, userPrefs: userPrefs)
+        )
+
+        if let designIdea = parseDesignIdea(from: response) {
+            return formatDesignIdea(designIdea)
+        }
+
+        return designIdeaFallback(for: analysis, userRequest: userRequest)
+    }
+
+    private func buildDesignIdeaPrompt(detectedAttributes: DetectedStyleAttributes, userPrefs: DesignIdeaUserPreferences) -> String {
+        let stylistProfile = ProfileStore().currentProfile
+        let outfitMemories = OutfitMemoryStore().memories
+        let personalStylistMemorySection = PersonalizationContextBuilder.promptSection(
+            title: "PERSONAL STYLIST MEMORY (read-only design personalization context; do not create or change scan scores)",
+            profile: stylistProfile,
+            recentMemories: outfitMemories,
+            currentOccasion: currentScanOccasionForContext
+        )
+
+        return """
+        You are a fashion designer assistant helping a user design a custom garment to be produced, tailored, printed, or manufactured.
+
+        Based on this user's detected style profile and preferences, suggest a custom attire design concept.
+        Use the personal stylist context to respect stated color, fit, brand, budget, and size preferences.
+        Avoid repeating patterns, fits, colors, or garment ideas from recently disliked outfit memories when the context provides them.
+        Reference the user's budget range when suggesting fabrics, construction details, or alternatives.
+        If the personal stylist context has no outfit memories yet, use profile-only preferences and do not pretend memory exists.
+        Use the occasion in USER PREFERENCES as a filter and hint. For a wedding or formal event, suggest elevated fabrics, layers, and finishing details; for casual or travel, suggest comfortable and practical pieces. Combine occasion with PERSONAL STYLIST MEMORY rather than replacing it.
+
+        DETECTED STYLE PROFILE:
+        \(jsonString(detectedAttributes))
+
+        USER PREFERENCES:
+        \(jsonString(userPrefs))
+
+        \(personalStylistMemorySection)
+
+        Return ONLY valid JSON:
+        {
+          "design_concept": "string - overall concept description",
+          "garment_type": "string (e.g. shirt, jacket, dress)",
+          "suggested_colors": ["color1", "color2"],
+          "suggested_fabric": "string",
+          "suggested_pattern": "string or 'solid'",
+          "fit_style": "string (e.g. slim, relaxed, tailored)",
+          "design_notes": "string - specific details for a tailor/manufacturer to follow",
+          "estimated_price_range": "string"
+        }
+        """
+    }
+
+    private func parseDesignIdea(from response: String) -> CustomGarmentDesignIdea? {
+        let cleaned = response
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let jsonText: String
+        if let start = cleaned.firstIndex(of: "{"),
+           let end = cleaned.lastIndex(of: "}"),
+           start <= end {
+            jsonText = String(cleaned[start...end])
+        } else {
+            jsonText = cleaned
+        }
+
+        guard let data = jsonText.data(using: .utf8) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(CustomGarmentDesignIdea.self, from: data)
+    }
+
+    private func formatDesignIdea(_ idea: CustomGarmentDesignIdea) -> String {
+        let colors = safeDesignColors(idea.suggestedColors)
+
+        return """
+        Custom design concept: \(idea.designConcept)
+
+        Garment: \(idea.garmentType)
+        Colors: \(colors)
+        Fabric: \(idea.suggestedFabric)
+        Pattern: \(idea.suggestedPattern)
+        Fit: \(idea.fitStyle)
+        Estimated price: \(idea.estimatedPriceRange)
+
+        Tailor/manufacturer notes: \(idea.designNotes)
+        """
+    }
+
+    private func safeDesignColors(_ suggestedColors: [String]) -> String {
+        let dislikedColors = Set(
+            ProfileStore().currentProfile.dislikedColors
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+
+        let filtered = suggestedColors.filter { color in
+            let normalized = color.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return !normalized.isEmpty && !dislikedColors.contains(normalized)
+        }
+
+        return filtered.isEmpty ? "profile-safe preferred colors" : filtered.joined(separator: ", ")
+    }
+
+    private func designIdeaFallback(for analysis: OutfitAnalysisResult, userRequest: String) -> String {
+        let colors = analysis.colorPaletteConfidence == .confident
+            ? analysis.colorPalette.prefix(3).joined(separator: ", ")
+            : ""
+        let style = detectedStyleTitle(for: analysis)
+        let request = userRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return """
+        Custom design concept: \(request.isEmpty ? "Personalized StyleMatch Pro garment" : request)
+
+        Garment: \(analysis.safeDetectedClothingItems.first ?? "versatile wardrobe piece")
+        Colors: \(colors.isEmpty ? "neutral" : colors)
+        Fabric: comfortable seasonal fabric
+        Pattern: \(inferredPatternFacts(for: analysis).first ?? "solid")
+        Preferred pant fit: \(PantFitPreference.fromProfileInput(preferredPantFit).displayName)
+        Estimated price: \(budget)
+
+        Tailor/manufacturer notes: Keep the design aligned with \(style), the saved KigoStylist score of \(analysis.score)/100, and the user's saved size profile. This fallback was generated because the AI design JSON could not be parsed safely.
+        """
+    }
+
+    private func displayedScore(for result: OutfitAnalysisResult) -> Int {
+        min(animatedScore, result.score)
+    }
+
+    private func resetResultAnimation() {
+        animatedScore = 0
+        resultRevealStep = 0
+        isScoreAnalysisExpanded = false
+    }
+
+    private func startResultAnimation(to finalScore: Int) {
+        resetResultAnimation()
+
+        let keyframes = [
+            0,
+            max(12, Int(Double(finalScore) * 0.16)),
+            Int(Double(finalScore) * 0.42),
+            Int(Double(finalScore) * 0.80),
+            finalScore
+        ]
+
+        for (index, score) in keyframes.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.16) {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    animatedScore = min(score, finalScore)
+                    resultRevealStep = max(resultRevealStep, index + 1)
+                }
+                if index == keyframes.count - 1 {
+                    if finalScore >= 95 {
+                        StyleMatchPremiumFeedback.success()
+                    } else {
+                        StyleMatchPremiumFeedback.selection()
+                    }
+                }
+            }
+        }
+
+        for step in 6...8 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.12) {
+                withAnimation(.easeOut(duration: 0.24)) {
+                    resultRevealStep = max(resultRevealStep, step)
+                }
+            }
+        }
+    }
+
+    private func highScoreCelebrationCard(_ result: OutfitAnalysisResult) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.title2)
+                .foregroundStyle(scanBackground)
+                .frame(width: 46, height: 46)
+                .background(scanCream)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Excellent Outfit!")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.white)
+
+                Text("95+ Style Score")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+            }
+
+            Spacer()
+
+            Button {
+                saveHighScoreFavorite(result)
+            } label: {
+                Text(isHighScoreFavoriteSaved(result) ? "Saved" : "Save to Favorites")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanBackground)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(scanCream)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(isHighScoreFavoriteSaved(result))
+        }
+        .padding(12)
+        .background(scanCream.opacity(0.12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(scanCream.opacity(0.38), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func highScoreFavoriteTitle(for result: OutfitAnalysisResult) -> String {
+        let palette = (result.colorPaletteConfidence == .confident ? result.colorPalette : [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && !["Neutral", "Dark", "Light"].contains($0) }
+
+        let item = result.detectedClothingItems
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+
+        return [palette, item, "95+ Style Score Outfit"]
+            .compactMap { $0 }
+            .joined(separator: " ")
+    }
+
+    private func isHighScoreFavoriteSaved(_ result: OutfitAnalysisResult) -> Bool {
+        favoriteOutfits
+            .lowercased()
+            .contains(highScoreFavoriteTitle(for: result).lowercased())
+    }
+
+    private func saveHighScoreFavorite(_ result: OutfitAnalysisResult) {
+        let favoriteTitle = highScoreFavoriteTitle(for: result)
+        guard !isHighScoreFavoriteSaved(result) else {
+            return
+        }
+
+        let trimmedFavorites = favoriteOutfits.trimmingCharacters(in: .whitespacesAndNewlines)
+        favoriteOutfits = trimmedFavorites.isEmpty ? favoriteTitle : "\(trimmedFavorites), \(favoriteTitle)"
+        scanMessage = ScanMessage(
+            title: "Saved to Favorites",
+            description: "\(favoriteTitle) was added to your favorite outfits so your AI Stylist can remember it.",
+            icon: "heart.fill",
+            isSuccess: true
+        )
+    }
+
+    private func scoreExplanationBullets(for result: OutfitAnalysisResult) -> [String] {
+        var explanations: [String] = []
+
+        if result.colorPaletteConfidence == .confident {
+            let colors = result.colorPalette
+                .compactMap(CanonicalColorReference.init(paletteTerm:))
+                .map(\.displayName)
+                .prefix(3)
+            if !colors.isEmpty {
+                explanations.append("Photo evidence detected this palette: \(colors.joined(separator: ", ")).")
+            }
+        }
+
+        let garments = result.safeDetectedClothingItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+        }.map(\.displayName)
+        if !garments.isEmpty {
+            explanations.append("Photo evidence detected: \(garments.joined(separator: ", ")).")
+        }
+
+        let limited = Array(explanations.prefix(2))
+        return limited.isEmpty
+            ? [RecommendationGroundingResult.honestEmptyState]
+            : limited
+    }
+
+    private func scoreExplanationIcon(for explanation: String) -> String {
+        let lowered = explanation.lowercased()
+
+        if lowered.contains("color") || lowered.contains("palette") {
+            return "🎨"
+        }
+
+        if lowered.contains("proportion") {
+            return "👕"
+        }
+
+        if lowered.contains("shoe") {
+            return "👟"
+        }
+
+        if lowered.contains("shirt") || lowered.contains("fit") || lowered.contains("oversized") {
+            return "📏"
+        }
+
+        if lowered.contains("accessory") {
+            return "⌚"
+        }
+
+        return "✨"
+    }
+
+    private func analysisCategoryItems(for result: OutfitAnalysisResult) -> [AnalysisCategoryItem] {
+        let paletteText = result.colorPaletteConfidence == .confident
+            ? result.colorPalette.prefix(3).joined(separator: ", ")
+            : ""
+        let explanationItems = scanExplanationItems(for: result)
+        let fitDetail = explanationItems.first(where: { $0.id == "profile-fit" })?.detail
+            ?? "The photo does not provide enough evidence for exact fit guidance."
+        let observedAccessories = result.safeDetectedClothingItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+        }.filter {
+            [.shoes, .hat, .bag, .belt, .watch, .scarf, .tie, .accessory].contains($0)
+        }
+        let accessoryDetail = observedAccessories.isEmpty
+            ? "No accessory-specific evidence was retained from this photo."
+            : "Photo evidence detected: \(observedAccessories.map(\.displayName).joined(separator: ", "))."
+        let improvementDetail = explanationItems.first(where: {
+            $0.id != "occasion-unavailable" && $0.id != "weather-unavailable"
+        }).map {
+            "\($0.sourceLabel): \($0.title). \($0.detail)"
+        } ?? RecommendationGroundingResult.honestEmptyState
+
+        return [
+            AnalysisCategoryItem(
+                title: "Colors",
+                icon: "paintpalette.fill",
+                detail: result.colorPaletteConfidence == .confident
+                    ? "Palette detected: \(paletteText.isEmpty ? "balanced neutral tones" : paletteText). \(scoreExplanationBullets(for: result).first ?? "The colors work together cleanly.")"
+                    : "Colors were hard to read in this photo. Retake it in brighter, neutral lighting for color-specific advice."
+            ),
+            AnalysisCategoryItem(
+                title: "Patterns",
+                icon: "circle.grid.cross.fill",
+                detail: "No pattern-specific suggestion is made without retained visual evidence."
+            ),
+            AnalysisCategoryItem(
+                title: "Fit",
+                icon: "ruler.fill",
+                detail: fitDetail
+            ),
+            AnalysisCategoryItem(
+                title: "Accessories",
+                icon: "sparkles",
+                detail: accessoryDetail
+            ),
+            AnalysisCategoryItem(
+                title: "Occasion",
+                icon: "calendar",
+                detail: explanationItems.first(where: { $0.id == "occasion-context" })?.detail
+                    ?? explanationItems.first(where: { $0.id == "occasion-unavailable" })?.detail
+                    ?? "No occasion was selected. Occasion did not affect this score. Occasion suitability was not evaluated for this scan."
+            ),
+            AnalysisCategoryItem(
+                title: "Weather",
+                icon: "cloud.sun.fill",
+                detail: explanationItems.first(where: { $0.id == "weather-context" })?.detail
+                    ?? explanationItems.first(where: { $0.id == "weather-unavailable" })?.detail
+                    ?? "Weather context is unavailable or not reliable enough for clothing-specific guidance."
+            ),
+            AnalysisCategoryItem(
+                title: "Improvement Tips",
+                icon: "lightbulb.fill",
+                detail: improvementDetail
+            )
+        ]
+    }
+
+    private func messageCard(_ message: ScanMessage) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: message.icon)
+                .font(.title3)
+                .foregroundStyle(message.isSuccess ? .green : .orange)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(message.title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(message.description)
+                    .foregroundStyle(scanMuted)
+                    .lineSpacing(4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(scanPanel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func resultCard(_ result: OutfitAnalysisResult) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(displayedScore(for: result))")
+                        .font(.system(size: 88, weight: .bold, design: .rounded))
+                        .foregroundStyle(AppTab.scan.palette.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+
+                    Text("Overall Style Score")
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+
+                    scoreStars(for: result.score, font: .title3)
+
+                    Text(scoreRatingTitle(for: result.score))
+                        .font(.title3)
+                        .fontWeight(.bold)
+                }
+
+                Spacer()
+            }
+            .padding(.bottom, 2)
+
+            detectedStyleContextCard(for: result, darkMode: false)
+            outfitClassificationControl(for: result, darkMode: false)
+
+            if let guidance = workUniformOccasionGuidance(for: result) {
+                workUniformOccasionGuidanceCard(guidance, darkMode: false)
+            }
+
+            completeTheLookCard(for: result, darkMode: false)
+
+            if let mismatch = formalityMismatch(for: result) {
+                formalityMismatchBanner(mismatch, result: result, darkMode: false)
+            }
+
+            Text(result.summary)
+                .foregroundStyle(.primary)
+                .lineSpacing(4)
+
+            if !result.chatGPTStylistSections.isEmpty {
+                chatGPTStylistSectionsCard(result.chatGPTStylistSections, darkMode: false)
+            }
+
+            styleBreakdownBars(for: result)
+
+            Divider()
+
+            metricRow(title: "Color Match", value: result.colorMatch, icon: "paintpalette")
+            metricRow(title: "Occasion Fit", value: result.occasionFit, icon: "calendar")
+            metricRow(title: "Style Balance", value: result.styleBalance, icon: "scale.3d")
+            metricRow(title: "Color Harmony", value: result.colorHarmony, icon: "circle.hexagongrid")
+            metricRow(title: "Style Coordination", value: result.styleCoordination, icon: "slider.horizontal.3")
+            metricRow(title: "Formality", value: result.formality, icon: "briefcase")
+            metricRow(title: "Seasonal Match", value: result.seasonalMatch, icon: "cloud.sun")
+            metricRow(title: "Environment", value: result.environment, icon: "mappin.and.ellipse")
+            metricRow(title: "Image Quality", value: result.imageQuality, icon: "camera.metering.center.weighted")
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Detected Details")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text(result.outfitDescription)
+                    .foregroundStyle(.secondary)
+
+                if !result.safeDetectedClothingItems.isEmpty {
+                    Text("Items: \(result.safeDetectedClothingItems.joined(separator: ", "))")
+                        .foregroundStyle(.secondary)
+                }
+
+                detectedItemsConfidenceCard(for: result)
+
+                Text(result.colorPaletteConfidence == .confident
+                    ? "Palette: \(result.colorPalette.joined(separator: ", "))"
+                    : "Palette: Colors were hard to read in this photo")
+                    .foregroundStyle(.secondary)
+
+            }
+
+            groundedAnalysisGuidance(for: result)
+        }
+        .padding()
+        .appCard(.scan, radius: 18)
+    }
+
+    private func groundedAnalysisGuidance(for result: OutfitAnalysisResult) -> some View {
+        let grounded = groundedRecommendationResult(for: result)
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Grounded guidance")
+                .font(.headline)
+
+            ForEach(grounded.accepted) { recommendation in
+                let presentation = GroundedRecommendationPresenter.presentation(for: recommendation)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(presentation.title)
+                        .fontWeight(.semibold)
+                    Text(presentation.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text(presentation.sourceLabel)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
+                .appCard(.scan, radius: 14)
+            }
+
+            if let emptyState = grounded.emptyStateMessage {
+                Label(emptyState, systemImage: "camera.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func detectedItemsConfidenceCard(for result: OutfitAnalysisResult) -> some View {
+        let rows = confidenceRows(for: result)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Detected Items")
+                .font(.subheadline)
+                .fontWeight(.bold)
+
+            ForEach(rows) { row in
+                HStack(spacing: 10) {
+                    Image(systemName: detectedItemIcon(for: row.item))
+                        .font(.caption)
+                        .foregroundStyle(AppTab.scan.palette.accent)
+                        .frame(width: 22)
+
+                    Text(row.item)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.10))
+
+                            Capsule()
+                                .fill(AppTab.scan.palette.accent)
+                                .frame(width: proxy.size.width * CGFloat(row.confidence) / 100)
+                        }
+                    }
+                    .frame(height: 6)
+
+                    Text("\(row.confidence)%")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 38, alignment: .trailing)
+                }
+            }
+        }
+        .padding(12)
+        .background(AppTab.scan.palette.accent.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(AppTab.scan.palette.accent.opacity(0.18), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func confidenceRows(for result: OutfitAnalysisResult) -> [DetectedItemConfidence] {
+        if !result.detectedItemConfidences.isEmpty {
+            let sanitized = result.detectedItemConfidences.prefix(6).compactMap { confidence -> DetectedItemConfidence? in
+                guard let item = GarmentLabelMapper.humanReadableTerm(for: confidence.item) else {
+                    return nil
+                }
+                return DetectedItemConfidence(item: item, confidence: confidence.confidence)
+            }
+            if !sanitized.isEmpty {
+                return sanitized
+            }
+        }
+
+        return result.safeDetectedClothingItems
+            .prefix(6)
+            .enumerated()
+            .map { index, item in
+                DetectedItemConfidence(item: item, confidence: max(82, 99 - index * 3))
+            }
+    }
+
+    private func detectedItemIcon(for item: String) -> String {
+        let lowered = item.lowercased()
+
+        if lowered.contains("shoe") || lowered.contains("sneaker") || lowered.contains("loafer") {
+            return "shoeprints.fill"
+        }
+
+        if lowered.contains("pant") || lowered.contains("jean") || lowered.contains("trouser") || lowered.contains("chino") {
+            return "figure.stand"
+        }
+
+        if lowered.contains("watch") {
+            return "applewatch"
+        }
+
+        if lowered.contains("bag") {
+            return "bag.fill"
+        }
+
+        if lowered.contains("hat") || lowered.contains("cap") {
+            return "graduationcap.fill"
+        }
+
+        if lowered.contains("shirt") || lowered.contains("top") || lowered.contains("jacket") || lowered.contains("dress") || lowered.contains("clothing") {
+            return "tshirt.fill"
+        }
+
+        return "sparkles"
+    }
+
+    private func completeTheLookCard(for result: OutfitAnalysisResult, darkMode: Bool) -> some View {
+        Group {
+            if ScanCompleteLookAccessoryRecommender.shouldRecommendAccessories(for: result),
+               !completeLookAccessoryProducts.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "sparkles")
+                            .font(.headline)
+                            .foregroundStyle(darkMode ? scanBackground : .white)
+                            .frame(width: 34, height: 34)
+                            .background(scanCream)
+                            .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Complete the Look")
+                                .font(.headline)
+                                .fontWeight(.bold)
+                                .foregroundStyle(darkMode ? .white : .primary)
+                            Text("Accessory ideas that match this scan's palette.")
+                                .font(.caption)
+                                .foregroundStyle(darkMode ? scanMuted : .secondary)
+                        }
+
+                        Spacer()
+                    }
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(completeLookAccessoryProducts) { product in
+                                Button {
+                                    openCompleteLookProduct(product)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ShoppingProductImage(product: product)
+                                            .frame(width: 132, height: 104)
+                                            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                                        Text(product.name)
+                                            .font(.caption)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(darkMode ? .white : .primary)
+                                            .lineLimit(2)
+
+                                        HStack(spacing: 5) {
+                                            Text(product.brand ?? product.retailer.name)
+                                                .font(.caption2)
+                                                .foregroundStyle(darkMode ? scanMuted : .secondary)
+                                                .lineLimit(1)
+                                            Spacer(minLength: 4)
+                                            if let price = product.price {
+                                                Text(scanCurrency(price))
+                                                    .font(.caption2)
+                                                    .fontWeight(.bold)
+                                                    .foregroundStyle(scanCream)
+                                            }
+                                        }
+                                    }
+                                    .frame(width: 148, alignment: .leading)
+                                    .padding(8)
+                                    .background(darkMode ? scanBackground.opacity(0.46) : Color(.secondarySystemBackground))
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("View \(product.name)")
+                            }
+                        }
+                    }
+                }
+                .padding()
+                .background(darkMode ? scanBackground.opacity(0.44) : AppTab.scan.palette.accent.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(darkMode ? scanPanelBorder : AppTab.scan.palette.accent.opacity(0.18), lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+        }
+    }
+
+    @MainActor
+    private func refreshCompleteLookAccessories() async {
+        guard let result else {
+            completeLookAccessoryProducts = []
+            return
+        }
+
+        guard ScanCompleteLookAccessoryRecommender.shouldRecommendAccessories(for: result) else {
+            completeLookAccessoryProducts = []
+            return
+        }
+
+        do {
+            let catalog = try await SharedProductCatalogLoader.shared.products()
+            completeLookAccessoryProducts = ScanCompleteLookAccessoryRecommender.recommendations(
+                for: result,
+                catalog: catalog,
+                limit: 2
+            )
+        } catch {
+            completeLookAccessoryProducts = []
+        }
+    }
+
+    private func openCompleteLookProduct(_ product: AffiliateProduct) {
+        Task {
+            let result = await ShoppingProductOpener.live().open(product)
+            if let failure = result.failure {
+                productOpenAlert = ShoppingProductOpenAlert(product: product, failure: failure)
+            }
+        }
+    }
+
+    private func scanCurrency(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: value as NSDecimalNumber) ?? "$\(value)"
+    }
+
+    private func quickResultCard(_ result: OutfitAnalysisResult) -> some View {
+        let groundedResult = groundedRecommendationResult(for: result)
+        let presented = groundedResult.accepted.map {
+            GroundedRecommendationPresenter.presentation(for: $0)
+        }
+
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("Try this next")
+                .font(.headline)
+                .foregroundStyle(.white)
+
+            ForEach(Array(zip(groundedResult.accepted, presented).enumerated()), id: \.element.0.id) { index, pair in
+                groundedRecommendationRow(pair.0, presentation: pair.1)
+                    .opacity(resultRevealStep >= 6 + index ? 1 : 0)
+                    .offset(y: resultRevealStep >= 6 + index ? 0 : 10)
+            }
+
+            if let emptyState = groundedResult.emptyStateMessage {
+                Label(emptyState, systemImage: "camera.viewfinder")
+                    .font(.subheadline)
+                    .foregroundStyle(scanMuted)
+                    .opacity(resultRevealStep >= 6 ? 1 : 0)
+                    .offset(y: resultRevealStep >= 6 ? 0 : 8)
+            }
+        }
+        .padding()
+        .background(scanPanel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private func savedScanImageCard(for scan: RecentOutfitScore) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let image = scan.savedImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 320)
+                    .scaleEffect(savedScanImageZoomScale)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .gesture(
+                        MagnificationGesture()
+                            .onChanged { savedScanImageZoomScale = min(max($0, 1), 3) }
+                            .onEnded { _ in
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    savedScanImageZoomScale = 1
+                                }
+                            }
+                    )
+                    .accessibilityLabel("Original saved scan photo")
+                    .accessibilityHint("Pinch to zoom the saved scan photo")
+            } else if let thumbnail = scan.thumbnailImage {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .accessibilityLabel("Saved scan preview")
+                Text("Saved preview")
+                    .font(.headline)
+                Text("The original full-resolution photo was not retained for this earlier scan.")
+                    .font(.subheadline)
+                    .foregroundStyle(scanMuted)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: "photo.slash")
+                        .font(.title2)
+                        .foregroundStyle(scanMuted)
+                    Text("Image unavailable")
+                        .font(.headline)
+                    Text("This scan’s analysis is still available, but no saved image could be restored.")
+                        .font(.subheadline)
+                        .foregroundStyle(scanMuted)
+                }
+                .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
+            }
+
+            Text(scan.firstScannedAt, format: .dateTime.month().day().year().hour().minute())
+                .font(.footnote)
+                .foregroundStyle(scanMuted)
+        }
+        .padding()
+        .background(scanPanel)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func scanExplanationItems(for result: OutfitAnalysisResult) -> [ScanExplanationItem] {
+        let selectedOccasion = result.outfitClassification.selectedOccasion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let weather = weatherContextRecommendation(environment: result.environment)
+        let hasReliableWeather = weatherConfidenceScore() >= 90
+            && weather.canGiveSpecificWeatherClothingAdvice
+
+        return ScanExplanationPresenter.items(
+            for: ScanExplanationContext(
+                recommendations: groundedRecommendationResult(for: result).accepted,
+                selectedOccasion: selectedOccasion?.isEmpty == false ? selectedOccasion : nil,
+                hasReliableWeather: hasReliableWeather,
+                weatherDetail: hasReliableWeather ? weather.recommendation : nil,
+                detectedStyle: detectedStyleTitle(for: result),
+                hasMeasuredStyleConfidence: detectedStyleMeasuredConfidence(for: result) != nil,
+                isStyleUncertain: result.outfitClassification.isUncertain
+            )
+        )
+    }
+
+    private func scanExplanationItem(
+        id: String,
+        for result: OutfitAnalysisResult
+    ) -> ScanExplanationItem? {
+        scanExplanationItems(for: result).first { $0.id == id }
+    }
+
+    private func groundedRecommendationResult(for result: OutfitAnalysisResult) -> RecommendationGroundingResult {
+        let observedGarments = Set(
+            result.safeDetectedClothingItems.compactMap {
+                CanonicalGarmentReference(sanitizedGarmentTerm: $0)
+            }
+        )
+        let observedColors: Set<CanonicalColorReference> = result.colorPaletteConfidence == .confident
+            ? Set(result.colorPalette.compactMap(CanonicalColorReference.init(paletteTerm:)))
+            : []
+        let selectedOccasion = result.outfitClassification.selectedOccasion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedOccasion = selectedOccasion?.isEmpty == false ? selectedOccasion : nil
+        let hasReliableWeather = weatherConfidenceScore() >= 90
+            && weatherContextRecommendation(environment: result.environment).canGiveSpecificWeatherClothingAdvice
+        let fitObservability: FitObservability = result.imageQuality.localizedCaseInsensitiveContains("clear")
+            ? .limited
+            : .unavailable
+
+        let facts = RecommendationGroundingFacts(
+            observedGarments: observedGarments,
+            observedColors: observedColors,
+            fitObservability: fitObservability,
+            hasSelectedOccasion: resolvedOccasion != nil,
+            hasWeatherEvidence: hasReliableWeather,
+            hasSavedProfile: hasSavedSizeProfileForFitCopy
+        )
+        var candidates: [GroundedRecommendation] = []
+
+        if !observedColors.isEmpty {
+            let references = observedColors
+                .sorted { $0.rawValue < $1.rawValue }
+                .map { RecommendationReference.color($0, role: .observed) }
+            candidates.append(
+                GroundedRecommendation(
+                    id: "palette-coordination",
+                    category: .coordination,
+                    sources: [.photo],
+                    producer: .deterministicClientRule,
+                    references: Set(references),
+                    content: .coordinateObservedPalette,
+                    action: .none
+                )
+            )
+        }
+
+        if hasSavedSizeProfileForFitCopy {
+            let garment = observedGarments.sorted { $0.rawValue < $1.rawValue }.first
+            let references = garment.map {
+                [RecommendationReference.garment($0, role: .observed)]
+            } ?? []
+            candidates.append(
+                GroundedRecommendation(
+                    id: "profile-fit",
+                    category: .fit,
+                    sources: [.savedProfile],
+                    producer: .deterministicClientRule,
+                    references: Set(references),
+                    fitObservability: fitObservability,
+                    content: .profileFitGuidance,
+                    action: .none
+                )
+            )
+        }
+
+        if resolvedOccasion != nil {
+            candidates.append(
+                GroundedRecommendation(
+                    id: "occasion-alignment",
+                    category: .occasion,
+                    sources: [.selectedOccasion],
+                    producer: .deterministicClientRule,
+                    references: [],
+                    content: .occasionAlignment,
+                    action: .none
+                )
+            )
+        }
+
+        if hasReliableWeather {
+            candidates.append(
+                GroundedRecommendation(
+                    id: "weather-breathability",
+                    category: .weather,
+                    sources: [.weather],
+                    producer: .deterministicClientRule,
+                    references: [],
+                    content: .weatherBreathability,
+                    action: .none
+                )
+            )
+        }
+
+        if candidates.isEmpty {
+            candidates.append(
+                GroundedRecommendation(
+                    id: "clearer-scan",
+                    category: .evidence,
+                    sources: [.photo],
+                    producer: .validatedFallback,
+                    references: [],
+                    content: .clearerFullOutfitScan,
+                    action: .none
+                )
+            )
+        }
+
+        return RecommendationGroundingValidator.validate(candidates, facts: facts)
+    }
+
+    private func groundedRecommendationRow(
+        _ recommendation: GroundedRecommendation,
+        presentation: GroundedRecommendationPresentation
+    ) -> some View {
+        let content = HStack(alignment: .center, spacing: 12) {
+            Image(systemName: recommendationIcon(for: recommendation.category.rawValue))
+                .font(.headline)
+                .foregroundStyle(scanCream)
+                .frame(width: 38, height: 38)
+                .background(scanCream.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(presentation.title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .lineLimit(3)
+
+                Text(presentation.detail)
+                    .font(.caption)
+                    .foregroundStyle(scanMuted)
+                    .lineLimit(3)
+
+                Text(presentation.sourceLabel)
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+
+                if let actionLabel = presentation.actionLabel {
+                    Text(actionLabel)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanCream)
+                }
+            }
+
+            Spacer()
+
+            if presentation.actionLabel != nil {
+                Image(systemName: "chevron.right.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(scanCream.opacity(0.9))
+            }
+        }
+        .padding(10)
+        .background(scanBackground.opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+
+        return Group {
+            if presentation.actionLabel != nil {
+                Button {
+                    selectedTryNextRecommendation = ClothingRecommendation(
+                        category: recommendation.category.rawValue,
+                        title: presentation.title,
+                        reason: presentation.detail,
+                        personalization: presentation.sourceLabel
+                    )
+                    selectedTryNextGroundedAction = recommendation.action
+                    isShowingTryNextActions = true
+                } label: {
+                    content
+                }
+                .buttonStyle(.plain)
+            } else {
+                content
+            }
+        }
+    }
+
+    private func handleTryNextAction(_ action: TryNextAction) {
+        guard let recommendation = selectedTryNextRecommendation else {
+            return
+        }
+
+        let title: String
+        let description: String
+        let icon: String
+
+        switch action {
+        case .shop:
+            title = "Shopping idea ready"
+            description = "Look for \(recommendation.title.lowercased()) in Smart Shopping. KigoStylist will use your budget, closet, and favorite brands."
+            icon = "bag"
+        case .similar:
+            title = "Similar items suggested"
+            description = "Use this as a guide: \(recommendation.reason)"
+            icon = "rectangle.grid.2x2"
+        case .closet:
+            title = "Closet match noted"
+            description = "KigoStylist will treat \(recommendation.title.lowercased()) as something you may already own when giving outfit ideas."
+            icon = "tshirt"
+        case .askAI:
+            title = "Ask AI Stylist"
+            description = "Ask your AI Stylist how to use \(recommendation.title.lowercased()) with your saved sizes, budget, and closet."
+            icon = "sparkles"
+        }
+
+        scanMessage = ScanMessage(
+            title: title,
+            description: description,
+            icon: icon,
+            isSuccess: true
+        )
+    }
+
+    private func recentScoresCard(scrollProxy: ScrollViewProxy) -> some View {
+        let scans = recentStoredScans
+        let filteredScans = scans.filter { scan in
+            selectedScanHistoryFilter.includes(scan, favoriteOutfits: favoriteOutfits)
+        }
+
+        return VStack(alignment: .leading, spacing: 14) {
+            styleProgressOverTimeCard(scans, scrollProxy: scrollProxy)
+
+            if !scans.isEmpty {
+                scanDiscoveryRails(scans, scrollProxy: scrollProxy)
+            }
+
+            HStack {
+                Label("Recent outfit scores", systemImage: "clock")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .accessibilityAddTraits(.isHeader)
+
+                Spacer()
+
+                if !scans.isEmpty {
+                    Button(isEditingScanHistory ? "Done" : "Edit") {
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            isEditingScanHistory.toggle()
+                            if !isEditingScanHistory {
+                                selectedScanIDs.removeAll()
+                            }
+                        }
+                    }
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+                }
+
+                Text("\(scans.count) saved")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(scanMuted)
+            }
+            .id("recentOutfitScores")
+
+            scanHistoryFilterBar
+
+            if isEditingScanHistory && !scans.isEmpty {
+                HStack(spacing: 10) {
+                    Text("\(selectedScanIDs.count) selected")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(scanMuted)
+
+                    Spacer()
+
+                    Button("Select All") {
+                        selectedScanIDs = Set(filteredScans.map(\.id))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(scanCream)
+
+                    Button("Delete Selected", role: .destructive) {
+                        isShowingDeleteAllConfirmation = true
+                    }
+                    .font(.caption)
+                    .disabled(selectedScanIDs.isEmpty)
+
+                    Button("Delete All", role: .destructive) {
+                        selectedScanIDs.removeAll()
+                        isShowingDeleteAllConfirmation = true
+                    }
+                    .font(.caption)
+                }
+                .padding(10)
+                .background(scanPanel)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+
+            if scans.isEmpty {
+                Text("Your recent scans will appear here after you analyze photos.")
+                    .font(.subheadline)
+                    .foregroundStyle(scanMuted)
+            } else if filteredScans.isEmpty {
+                Text("No \(selectedScanHistoryFilter.title.lowercased()) scans yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(scanMuted)
+            } else {
+                LazyVStack(spacing: 14) {
+                    ForEach(filteredScans) { scan in
+                        recentScoreRow(scan, scrollProxy: scrollProxy)
+                            .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity.combined(with: .move(edge: .trailing))))
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color.clear)
+    }
+
+    @ViewBuilder
+    private func scanDiscoveryRails(_ scans: [RecentOutfitScore], scrollProxy: ScrollViewProxy) -> some View {
+        scanDiscoveryRail(
+            title: "Continue Styling",
+            subtitle: "Recent scans",
+            scans: Array(scans.prefix(6)),
+            scrollProxy: scrollProxy
+        )
+
+        let favorites = scans.filter { $0.isFavorite(in: favoriteOutfits) }
+        if !favorites.isEmpty {
+            scanDiscoveryRail(
+                title: "Favorites",
+                subtitle: "Saved looks",
+                scans: Array(favorites.prefix(6)),
+                scrollProxy: scrollProxy
+            )
+        }
+    }
+
+    private func scanDiscoveryRail(
+        title: String,
+        subtitle: String,
+        scans: [RecentOutfitScore],
+        scrollProxy: ScrollViewProxy
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(scanMuted)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(scans) { scan in
+                        Button {
+                            openSavedScan(scan, scrollProxy: scrollProxy)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 7) {
+                                recentScanThumbnail(scan, width: 132, height: 100)
+
+                                Text(scan.title)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.white)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+
+                                Text("\(scan.score)/100 · \(scan.scoreRatingTitle)")
+                                    .font(.caption2)
+                                    .foregroundStyle(scanCream)
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 132, alignment: .leading)
+                            .padding(10)
+                            .background(scanPanel)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open \(scan.title), \(scan.score) out of 100, \(scan.scoreRatingTitle)")
+                        .accessibilityHint("Opens this saved scan.")
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func styleProgressOverTimeCard(_ scans: [RecentOutfitScore], scrollProxy: ScrollViewProxy) -> some View {
+        let summary = scanProgressSummary(from: scans)
+        return VStack(alignment: .leading, spacing: 14) {
+            Label("Style Progress", systemImage: "chart.line.uptrend.xyaxis")
+                .font(.headline)
+                .foregroundStyle(.white)
+                .accessibilityAddTraits(.isHeader)
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                progressOverTimeMetric(
+                    title: "Average Score",
+                    value: summary.averageScoreText,
+                    icon: "sum",
+                    accessibilityLabel: "Average score, \(summary.averageScoreText)",
+                    accessibilityHint: "Opens your recent outfit scores."
+                ) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        scrollProxy.scrollTo("recentOutfitScores", anchor: .top)
+                    }
+                }
+                progressOverTimeMetric(
+                    title: "Highest Score",
+                    value: summary.highestScoreText,
+                    icon: "star.fill",
+                    accessibilityLabel: "Highest score, \(summary.highestScoreText)",
+                    accessibilityHint: "Opens your highest-scoring saved scan."
+                ) {
+                    if let highest = scans.max(by: { $0.score < $1.score }) {
+                        openSavedScan(highest, scrollProxy: scrollProxy)
+                    }
+                }
+                progressOverTimeMetric(
+                    title: "Saved Scans",
+                    value: summary.savedScanCountText,
+                    icon: "camera.fill",
+                    accessibilityLabel: "Open scan history, \(summary.savedScanCountText) saved scans",
+                    accessibilityHint: "Opens your recent outfit scores."
+                ) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        scrollProxy.scrollTo("recentOutfitScores", anchor: .top)
+                    }
+                }
+                progressOverTimeMetric(
+                    title: "Closet Items",
+                    value: scanClosetItemCountText,
+                    icon: "tshirt.fill",
+                    accessibilityLabel: "Open Virtual Closet, \(scanClosetItemCountText) items",
+                    accessibilityHint: "Opens your saved closet items."
+                ) {
+                    selectedTab = .closet
+                }
+            }
+        }
+        .padding()
+        .background(scanPanel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private func progressOverTimeMetric(
+        title: String,
+        value: String,
+        icon: String,
+        accessibilityLabel: String? = nil,
+        accessibilityHint: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        let content = VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: icon)
+                .font(.headline)
+                .foregroundStyle(scanCream)
+                .accessibilityHidden(true)
+
+            Text(title)
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(scanMuted)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+
+            Text(value)
+                .font(.title2)
+                .fontWeight(.bold)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
+        .padding(12)
+        .background(scanBackground.opacity(0.48))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(Rectangle())
+
+        if let action {
+            Button(action: action) {
+                content
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel ?? "\(title), \(value)")
+            .accessibilityHint(accessibilityHint ?? "")
+            .accessibilityAddTraits(.isButton)
+        } else {
+            content
+        }
+    }
+
+    private func scanProgressSummary(from scans: [RecentOutfitScore]) -> ScanProgressSummary {
+        ScanProgressSummary(scores: scans.map(\.score))
+    }
+
+    private var scanClosetItemCountText: String {
+        guard !closetItemsData.isEmpty,
+              let items = try? JSONDecoder().decode([ClosetItem].self, from: closetItemsData),
+              !items.isEmpty else {
+            return "0"
+        }
+
+        return "\(items.count)"
+    }
+
+    private var currentScreenContext: StylistScreenContext {
+        let scans = recentStoredScans
+        let progressSummary = scanProgressSummary(from: scans)
+        let state = StylistActiveScanStateResolver.resolve(
+            hasResult: result != nil,
+            hasSelectedImage: selectedUIImage != nil,
+            activeScanID: activeScanFingerprint,
+            savedScanIDs: Set(loadScanHistory().keys)
+        )
+        let generation = scanContextGeneration
+        let surface = activeScanFingerprint.flatMap { scanID -> StylistScreenSurfaceDescriptor? in
+            switch state {
+            case .none:
+                return nil
+            case .saved:
+                return StylistScreenSurfaceAdapters.savedScan(scanID: scanID, generation: generation)
+            case .live:
+                return StylistScreenSurfaceAdapters.liveScan(scanID: scanID, generation: generation)
+            }
+        }
+        return StylistScreenContext(
+            currentTab: .scan,
+            activeScanState: state,
+            activeScanID: state == .none ? nil : activeScanFingerprint,
+            selectedOccasion: selectedScanOccasion.rawValue,
+            selectedAnalysisSection: selectedScannerInsight.lowercased(),
+            visibleOverallScore: state == .none ? nil : result?.score,
+            entryPoint: result == nil ? .scanTab : .scanResult,
+            visibleAggregates: progressSummary.visibleAggregates,
+            closetState: StylistClosetState.fromSerializedClosetData(closetItemsData),
+            surface: surface
+        )
+    }
+
+    private var currentStylistScanHandoff: StylistScanHandoff? {
+        let screenContext = currentScreenContext
+        guard screenContext.activeScanState != .none, let result else { return nil }
+        let authoritativeScan = authoritativeStylistScanContext(
+            for: result,
+            screenContext: screenContext
+        )
+        return StylistScanHandoff(
+            context: PersonalizationContextBuilder.scanStylistContext(
+                for: result,
+                screenContext: screenContext,
+                authoritativeScan: authoritativeScan
+            ),
+            screenContext: screenContext
+        )
+    }
+
+    private func authoritativeStylistScanContext(
+        for analysis: OutfitAnalysisResult,
+        screenContext: StylistScreenContext
+    ) -> StylistAuthoritativeScanContext? {
+        guard let scanID = screenContext.activeScanID else { return nil }
+        let stored = loadScanHistory()[scanID]
+        let source: StylistScanContextSource = screenContext.activeScanState == .saved
+            ? .savedSelection
+            : .liveCompleted
+        guard source != .savedSelection || stored != nil else {
+            // A historical scan must retain its persisted timestamp and facts.
+            // If its exact record disappeared, it has no Stylist authority.
+            return nil
+        }
+        let mismatch = FormalityMismatchEvaluator.evaluate(
+            detectedStyle: detectedStyleTitle(for: analysis),
+            occasion: selectedScanOccasion.canonical,
+            outfitClassification: analysis.outfitClassification
+        )
+        return CurrentScanContextProvider.make(
+            scanID: scanID,
+            completedAt: stored?.firstScannedAt ?? Date(),
+            analysis: analysis,
+            detectedStyle: detectedStyleTitle(for: analysis),
+            styleConfidence: detectedStyleMeasuredConfidence(for: analysis),
+            selectedOccasion: selectedScanOccasion.canonical?.displayName,
+            occasionAssessment: mismatch?.message ?? analysis.occasionFit,
+            weatherContext: compactWeatherRecommendation,
+            imageReference: (selectedUIImage != nil || stored?.thumbnailData != nil) ? .onDeviceOnly : nil,
+            groundedRecommendations: groundedRecommendationResult(for: analysis).accepted,
+            source: source,
+            palette: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+            topStyleMatches: styleRankings(for: analysis).prefix(3).map(\.name),
+            evidenceLimitations: analysis.outfitClassification.isUncertain
+                ? ["Outfit type is uncertain; do not treat it as confirmed."]
+                : [],
+            // This lane persists weather only when a future source can mark it
+            // reliable; generic or stale weather is deliberately omitted.
+            reliableWeatherSummary: nil,
+            outfitType: analysis.outfitClassification.effectiveCategory.displayName
+        )
+    }
+
+    private var scanHistoryFilterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(ScanHistoryFilter.allCases) { filter in
+                    Button {
+                        selectedScanHistoryFilter = filter
+                    } label: {
+                        Text(filter.title)
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(selectedScanHistoryFilter == filter ? scanBackground : scanCream)
+                            .lineLimit(1)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(selectedScanHistoryFilter == filter ? scanCream : scanPanel)
+                            .overlay(
+                                Capsule()
+                                    .stroke(scanCream.opacity(0.34), lineWidth: 1)
+                            )
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(filter.title) scans")
+                    .accessibilityAddTraits(selectedScanHistoryFilter == filter ? .isSelected : [])
+                }
+            }
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func recentScoreRow(_ scan: RecentOutfitScore, scrollProxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                if isEditingScanHistory {
+                    toggleScanSelection(scan)
+                } else {
+                    openSavedScan(scan, scrollProxy: scrollProxy)
+                }
+            } label: {
+                HStack(alignment: .top, spacing: 12) {
+                    if isEditingScanHistory {
+                        Image(systemName: selectedScanIDs.contains(scan.id) ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(selectedScanIDs.contains(scan.id) ? scanCream : scanMuted)
+                            .padding(.top, 16)
+                    }
+
+                    recentScanThumbnail(scan)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(scan.title)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+
+                        Text(scan.dateText)
+                            .font(.caption)
+                            .foregroundStyle(scanMuted)
+
+                        if let contextText = scan.compactHistoryContextText {
+                            Text(contextText)
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(scanCream.opacity(0.9))
+                                .lineLimit(1)
+                        }
+
+                        if let occasionText = scan.occasionText {
+                            Label(occasionText, systemImage: "calendar")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(scanMuted)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 3) {
+                        Text("\(scan.score)")
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundStyle(scanCream)
+
+                        Text(scan.scoreRatingTitle)
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .foregroundStyle(scanMuted)
+                            .lineLimit(1)
+
+                        scoreStars(for: scan.score, font: .caption2)
+                    }
+
+                    Image(systemName: "chevron.right.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(scanCream.opacity(0.9))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(scan.title), \(scan.score) out of 100, \(scan.scoreRatingTitle)")
+            .accessibilityHint(isEditingScanHistory ? "Selects this saved scan." : "Opens this saved scan.")
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.35)
+                    .onEnded { _ in
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            isEditingScanHistory = true
+                            selectedScanIDs.insert(scan.id)
+                        }
+                    }
+            )
+
+            Divider()
+                .overlay(scanPanelBorder)
+
+            if !isEditingScanHistory {
+                HStack(spacing: 10) {
+                    savedScanOccasionRow(scan)
+                        .frame(maxWidth: .infinity)
+                    scanHistoryOverflowMenu(scan, scrollProxy: scrollProxy)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(scanPanel)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .contextMenu {
+            Button("Open") { openSavedScan(scan, scrollProxy: scrollProxy) }
+            Button("Compare") { compareSavedScan(scan) }
+            Button("Rescan") { rescanSavedScan(scan) }
+            Button(scan.isFavorite(in: favoriteOutfits) ? "Remove Favorite" : "Favorite") { toggleFavoriteScan(scan) }
+            Button("Rename") { beginRename(scan) }
+            Button("Move to Closet") { moveScanToCloset(scan) }
+            Button("Duplicate") { duplicateSavedScan(scan) }
+            Button("Export") { beginSharingSavedScan(scan) }
+            Button("Delete", role: .destructive) { confirmDelete(scan) }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                confirmDelete(scan)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+
+            Button {
+                toggleFavoriteScan(scan)
+            } label: {
+                Label("Favorite", systemImage: "heart.fill")
+            }
+            .tint(.pink)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                beginSharingSavedScan(scan)
+            } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            .tint(.blue)
+
+            Button {
+                beginRename(scan)
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            .tint(.orange)
+        }
+    }
+
+    private func scanHistoryOverflowMenu(
+        _ scan: RecentOutfitScore,
+        scrollProxy: ScrollViewProxy
+    ) -> some View {
+        Menu {
+            Button {
+                openSavedScan(scan, scrollProxy: scrollProxy)
+            } label: {
+                Label("Open", systemImage: "folder")
+            }
+
+            Button {
+                compareSavedScan(scan)
+            } label: {
+                Label("Compare", systemImage: "arrow.left.arrow.right")
+            }
+
+            Button {
+                rescanSavedScan(scan)
+            } label: {
+                Label("Rescan", systemImage: "camera.viewfinder")
+            }
+
+            Button {
+                beginSharingSavedScan(scan)
+            } label: {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+
+            Button {
+                toggleFavoriteScan(scan)
+            } label: {
+                Label(
+                    scan.isFavorite(in: favoriteOutfits) ? "Remove Favorite" : "Favorite",
+                    systemImage: scan.isFavorite(in: favoriteOutfits) ? "heart.slash" : "heart"
+                )
+            }
+
+            Button {
+                beginRename(scan)
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+
+            Menu("More") {
+                Button("Move to Closet") {
+                    moveScanToCloset(scan)
+                }
+                Button("Duplicate") {
+                    duplicateSavedScan(scan)
+                }
+            }
+
+            Button(role: .destructive) {
+                confirmDelete(scan)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.title3)
+                .foregroundStyle(scanCream)
+                .frame(width: 44, height: 44)
+                .background(scanBackground.opacity(0.38))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .accessibilityLabel("More actions for \(scan.title)")
+        .accessibilityHint("Includes open, compare, rescan, share, favorite, rename, and delete.")
+    }
+
+    private func savedScanOccasionRow(_ scan: RecentOutfitScore) -> some View {
+        Menu {
+            Button("Clear occasion") {
+                updateSavedScanOccasion(nil, for: scan)
+            }
+
+            ForEach(Occasion.allCases.filter(\.isSpecified), id: \.self) { occasion in
+                Button(occasion.displayName) {
+                    updateSavedScanOccasion(occasion, for: scan)
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Label("Occasion", systemImage: "calendar")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanCream)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Spacer()
+
+                Text(scan.occasionText ?? "Add tag")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(scan.occasionText == nil ? scanMuted : scanCream.opacity(0.9))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .foregroundStyle(scanMuted)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(scanBackground.opacity(0.38))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityHint("Adds or changes the occasion tag for this saved scan.")
+    }
+
+    private func scanHistoryActionButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundStyle(scanCream)
+                .lineLimit(1)
+                .minimumScaleFactor(0.74)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(scanBackground.opacity(0.48))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+    }
+
+    private func scoreRatingTitle(for score: Int) -> String {
+        switch score {
+        case 92...100:
+            return "Excellent Match"
+        case 86...91:
+            return "Strong Match"
+        case 78...85:
+            return "Good Match"
+        case 65...77:
+            return "Style Tune-Up"
+        default:
+            return "Needs Styling"
+        }
+    }
+
+    private func scoreStarCount(for score: Int) -> Int {
+        switch score {
+        case 92...100:
+            return 5
+        case 86...91:
+            return 4
+        case 78...85:
+            return 3
+        case 65...77:
+            return 2
+        default:
+            return 1
+        }
+    }
+
+    private func scoreStars(for score: Int, font: Font) -> some View {
+        let filledStars = scoreStarCount(for: score)
+
+        return HStack(spacing: 1) {
+            ForEach(1...5, id: \.self) { index in
+                Image(systemName: index <= filledStars ? "star.fill" : "star")
+            }
+        }
+        .font(font)
+        .foregroundStyle(scanCream)
+        .accessibilityLabel("\(filledStars) out of 5 stars")
+    }
+
+    @ViewBuilder
+    private func recentScanThumbnail(
+        _ scan: RecentOutfitScore,
+        width: CGFloat = 58,
+        height: CGFloat = 58
+    ) -> some View {
+        ZStack {
+            if let image = scan.thumbnailImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                LinearGradient(
+                    colors: [scanCream.opacity(0.28), scanPanelBorder.opacity(0.6)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                Image(systemName: "camera.fill")
+                    .font(.title3)
+                    .foregroundStyle(scanCream)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(scanPanelBorder, lineWidth: 1)
+        )
+        .accessibilityHidden(true)
+    }
+
+    private func openSavedScan(_ scan: RecentOutfitScore, scrollProxy: ScrollViewProxy) {
+        guard let scan = savedScan(for: scan.id) else {
+            scanMessage = ScanMessage(
+                title: "Saved scan unavailable",
+                description: "This saved scan could not be opened. Your other saved scans were not changed.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+
+        invalidateActiveScanSession()
+        _ = gallerySelectionCoordinator.beginSelection()
+        selectedItem = nil
+        selectedImage = nil
+        selectedUIImage = scan.savedImage
+        visionAnalysisUIImage = nil
+        previewImageSourceToken = nil
+        visionImageSourceToken = nil
+        displayedImageSourceToken = nil
+        savedScanImageZoomScale = 1
+        isAnalyzing = false
+        isPreparingCamera = false
+        result = scan.analysis
+        selectedScanOccasion = scan.occasion?.canonical ?? .general
+        openedSavedScan = scan
+        preparedAnalysis = scan.analysis
+        activeScanFingerprint = scan.id
+        activeScanImageDigest = scan.imageDigest
+        isShowingFullAnalysis = false
+        scanMessage = ScanMessage(
+            title: "Saved score opened",
+            description: "This previous outfit score is now open above.",
+            icon: "clock",
+            isSuccess: true
+        )
+
+        // Publish from the authoritative user action instead of waiting for a
+        // computed SwiftUI onChange edge. This guarantees that selecting AI
+        // immediately after Open carries this exact saved scan with it.
+        publishCurrentStylistScanHandoff(source: "saved_scan_open")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                scrollProxy.scrollTo("loadedScanResult", anchor: .top)
+            }
+        }
+    }
+
+    private func publishCurrentStylistScanHandoff(source: String) {
+        let handoff = currentStylistScanHandoff
+        _ = source
+        onStylistScanHandoffChanged(handoff)
+    }
+
+    private func updateSavedScanOccasion(_ occasion: Occasion?, for scan: RecentOutfitScore) {
+        var history = loadScanHistory()
+        guard var stored = history[scan.id] else {
+            updateOccasion(occasion, for: scan.analysis)
+            return
+        }
+
+        stored.occasion = occasion?.canonical
+        history[scan.id] = stored
+        saveScanHistory(history)
+        updateOccasion(occasion, for: scan.analysis)
+    }
+
+    private func compareSavedScan(_ scan: RecentOutfitScore) {
+        compareSourceScan = scan
+    }
+
+    private func presentComparison(source: RecentOutfitScore, selected: RecentOutfitScore) {
+        let history = loadScanHistory()
+        guard let sourceStored = history[source.id], let selectedStored = history[selected.id], let snapshot = ScanComparisonBuilder.make(idA: source.id, scanA: sourceStored, idB: selected.id, scanB: selectedStored) else { return }
+        let older = snapshot.olderID == source.id ? source : selected
+        let newer = snapshot.newerID == source.id ? source : selected
+        comparePresentation = CompareScanPresentation(snapshot: snapshot, older: older, newer: newer)
+    }
+
+    private func scheduleCompareStylistRoute(_ request: CompareStylistRouteRequest) {
+        // The visible button can receive only one route while its sheet is
+        // closing. This is presentation coordination, not conversation state.
+        guard pendingCompareStylistRequest == nil else { return }
+        pendingCompareStylistRequest = request
+        comparePresentation = nil
+    }
+
+    private func resumePendingCompareStylistRoute() {
+        guard let request = pendingCompareStylistRequest else { return }
+        pendingCompareStylistRequest = nil
+        // Defer one run-loop turn after SwiftUI has completed the Compare
+        // dismissal; the callback then uses the existing root Stylist route.
+        DispatchQueue.main.async {
+            onOpenStylistComparison(request)
+        }
+    }
+
+    private func saveComparison(_ presentation: CompareScanPresentation) {
+        let history = loadScanHistory()
+        let snapshot = presentation.snapshot
+        let summary = (snapshot.improvementSummary + snapshot.workOnSummary).joined(separator: " ").prefix(320)
+        let record = StoredScanComparison(
+            id: UUID(),
+            schema: StoredScanComparison.schemaVersion,
+            olderScanID: snapshot.olderID,
+            newerScanID: snapshot.newerID,
+            createdAt: Date(),
+            olderScore: snapshot.olderScore,
+            newerScore: snapshot.newerScore,
+            compatibility: snapshot.compatibility,
+            categoryDeltas: snapshot.categoryDeltas,
+            summary: String(summary)
+        )
+        try? ScanComparisonPersistenceAuthority().save(record, existingScanIDs: Set(history.keys))
+    }
+
+    private func matchingOutfitMemory(for analysis: OutfitAnalysisResult) -> OutfitMemory? {
+        let signature = outfitMemorySignature(for: analysis)
+        return OutfitMemoryStore().memories.first { memory in
+            outfitMemorySignature(for: memory) == signature
+        }
+    }
+
+    @discardableResult
+    private func ensureOutfitMemory(
+        for analysis: OutfitAnalysisResult,
+        store: OutfitMemoryStore = OutfitMemoryStore(),
+        outfitFingerprint: String? = nil,
+        imageDigest: String? = nil
+    ) -> OutfitMemory {
+        let signature = outfitMemorySignature(for: analysis)
+        let scanID = UUID().uuidString
+        let garmentRecords = ItemFingerprintMatcher.records(from: analysis, scanID: scanID)
+        if let existing = store.memories.first(where: {
+            outfitMemorySignature(for: $0) == signature
+                && (outfitFingerprint == nil || $0.outfitFingerprint == outfitFingerprint)
+                && (imageDigest == nil || $0.imageDigest == imageDigest)
+        }) {
+            return store.mergeGarmentRecords(garmentRecords, into: existing.id) ?? existing
+        }
+
+        let profile = ProfileStore().currentProfile
+        let memory = OutfitMemory(
+            id: UUID(),
+            userId: profile.userId,
+            scanDate: Date(),
+            detectedGarments: analysis.safeDetectedClothingItems,
+            colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+            detectedStyle: detectedStyleTitle(for: analysis),
+            styleScore: analysis.score,
+            occasion: selectedScanOccasion.canonical,
+            wasWorn: nil,
+            wasLiked: nil,
+            feedbackTimestamp: nil,
+            dislikeReason: nil,
+            wouldWearAgain: nil,
+            receivedCompliments: nil,
+            isFavorite: false,
+            timesWorn: 0,
+            garmentRecords: garmentRecords,
+            outfitFingerprint: outfitFingerprint,
+            imageDigest: imageDigest
+        )
+        store.addOrMergeScan(memory)
+        ProfileStore().updateProfile(from: memory)
+        return memory
+    }
+
+    private func outfitMemorySignature(for analysis: OutfitAnalysisResult) -> String {
+        outfitMemorySignature(
+            score: analysis.score,
+            style: detectedStyleTitle(for: analysis),
+            garments: analysis.safeDetectedClothingItems,
+            colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : []
+        )
+    }
+
+    private func outfitMemorySignature(for memory: OutfitMemory) -> String {
+        outfitMemorySignature(
+            score: memory.styleScore,
+            style: memory.detectedStyle,
+            garments: memory.detectedGarments,
+            colors: memory.colors
+        )
+    }
+
+    private func outfitMemorySignature(score: Int, style: String, garments: [String], colors: [String]) -> String {
+        let garmentKey = garments
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .sorted()
+            .joined(separator: "|")
+        let colorKey = colors
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .sorted()
+            .joined(separator: "|")
+        return "\(score)|\(style.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())|\(garmentKey)|\(colorKey)"
+    }
+
+    private func rescanSavedScan(_ scan: RecentOutfitScore) {
+        pendingRescanTitle = scan.title
+        startCameraCapture()
+    }
+
+    private func toggleScanSelection(_ scan: RecentOutfitScore) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+            if selectedScanIDs.contains(scan.id) {
+                selectedScanIDs.remove(scan.id)
+            } else {
+                selectedScanIDs.insert(scan.id)
+            }
+        }
+    }
+
+    private func confirmDelete(_ scan: RecentOutfitScore) {
+        scanPendingDelete = scan
+        isShowingDeleteScanConfirmation = true
+    }
+
+    private func deleteSavedScan(_ scan: RecentOutfitScore) {
+        var history = loadScanHistory()
+        let removedAssetID = history.removeValue(forKey: scan.id)?.savedImageAssetID
+        guard saveScanHistory(history) else {
+            return
+        }
+        SavedScanImageAssetStore().removeIfUnreferenced(
+            assetID: removedAssetID,
+            referencedAssetIDs: Set(history.values.compactMap(\.savedImageAssetID))
+        )
+        selectedScanIDs.remove(scan.id)
+
+        if result?.score == scan.score && result?.outfitDescription == scan.analysis.outfitDescription {
+            invalidateActiveScanSession()
+            result = nil
+            preparedAnalysis = nil
+        }
+
+        scanMessage = ScanMessage(
+            title: "Scan deleted",
+            description: "\(scan.title) was removed from scan history, including its photo thumbnail, score, analysis, and cached data.",
+            icon: "trash",
+            isSuccess: true
+        )
+    }
+
+    private func deleteSelectedScans() {
+        var history = loadScanHistory()
+        let deletedActiveScan = activeScanFingerprint.map(selectedScanIDs.contains) ?? false
+        selectedScanIDs.forEach { history.removeValue(forKey: $0) }
+        let removedAssetIDs = selectedScanIDs.compactMap { loadScanHistory()[$0]?.savedImageAssetID }
+        guard saveScanHistory(history) else { return }
+        let remainingAssetIDs = Set(history.values.compactMap(\.savedImageAssetID))
+        removedAssetIDs.forEach {
+            SavedScanImageAssetStore().removeIfUnreferenced(assetID: $0, referencedAssetIDs: remainingAssetIDs)
+        }
+        let deletedCount = selectedScanIDs.count
+        selectedScanIDs.removeAll()
+        isEditingScanHistory = false
+        if deletedActiveScan {
+            invalidateActiveScanSession()
+            result = nil
+            preparedAnalysis = nil
+        }
+        scanMessage = ScanMessage(
+            title: "Selected scans deleted",
+            description: "\(deletedCount) scan\(deletedCount == 1 ? "" : "s") were removed permanently from this phone.",
+            icon: "trash",
+            isSuccess: true
+        )
+    }
+
+    private func deleteAllScanHistory() {
+        let assetIDs = Set(loadScanHistory().values.compactMap(\.savedImageAssetID))
+        invalidateActiveScanSession()
+        outfitScanHistoryData = Data()
+        assetIDs.forEach {
+            SavedScanImageAssetStore().removeIfUnreferenced(assetID: $0, referencedAssetIDs: [])
+        }
+        selectedScanIDs.removeAll()
+        isEditingScanHistory = false
+        result = nil
+        preparedAnalysis = nil
+        scanMessage = ScanMessage(
+            title: "Scan history cleared",
+            description: "All saved scan photos, scores, analysis, outfit history, and cached data were removed from this phone.",
+            icon: "trash",
+            isSuccess: true
+        )
+    }
+
+    private func beginRename(_ scan: RecentOutfitScore) {
+        scanPendingRename = scan
+        renameText = scan.title
+        isShowingRenameScanSheet = true
+    }
+
+    private var canSaveRenameTitle: Bool {
+        !StyleMatchInputBounds.scanTitle(renameText).isEmpty
+    }
+
+    private var hasUnsavedRenameChanges: Bool {
+        guard let scanPendingRename else { return false }
+        let originalTitle = scanPendingRename.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draftTitle = StyleMatchInputBounds.scanTitle(renameText)
+        return draftTitle != originalTitle
+    }
+
+    private func requestCancelRename() {
+        if hasUnsavedRenameChanges {
+            isShowingRenameUnsavedConfirmation = true
+        } else {
+            cancelRenameScan()
+        }
+    }
+
+    private func cancelRenameScan() {
+        clearRenameDraftState()
+        isShowingRenameScanSheet = false
+    }
+
+    private func clearRenameDraftState() {
+        scanPendingRename = nil
+        renameText = ""
+        isShowingRenameUnsavedConfirmation = false
+    }
+
+    private func renamePendingScan() {
+        guard canSaveRenameTitle else { return }
+        guard let scanPendingRename else { return }
+        let trimmedTitle = StyleMatchInputBounds.scanTitle(renameText)
+        var history = loadScanHistory()
+        guard var stored = history[scanPendingRename.id] else {
+            scanMessage = ScanMessage(
+                title: "Rename not saved",
+                description: "KigoStylist could not find that saved scan. Please reopen scan history and try again.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+        stored.customTitle = trimmedTitle
+        history[scanPendingRename.id] = stored
+        guard saveScanHistory(history) else {
+            scanMessage = ScanMessage(
+                title: "Rename not saved",
+                description: "KigoStylist could not save the new scan name. Please try again.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+        guard let verifiedHistory = try? JSONDecoder().decode([String: StoredOutfitScan].self, from: outfitScanHistoryData),
+              verifiedHistory[scanPendingRename.id]?.customTitle?.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedTitle else {
+            scanMessage = ScanMessage(
+                title: "Rename not saved",
+                description: "KigoStylist could not verify the new scan name. Please try again.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+        scanMessage = ScanMessage(
+            title: "Scan renamed",
+            description: "Saved scan is now named \(trimmedTitle).",
+            icon: "pencil",
+            isSuccess: true
+        )
+        cancelRenameScan()
+    }
+
+    private func toggleFavoriteScan(_ scan: RecentOutfitScore) {
+        let title = scan.title
+        var favorites = favoriteOutfits
+            .components(separatedBy: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        if scan.isFavorite(in: favoriteOutfits) {
+            favorites.removeAll { $0.localizedCaseInsensitiveCompare(title) == .orderedSame }
+            scanMessage = ScanMessage(title: "Favorite removed", description: "\(title) was removed from favorite outfits.", icon: "heart", isSuccess: true)
+        } else {
+            favorites.append(title)
+            scanMessage = ScanMessage(title: "Saved to favorites", description: "\(title) was added to favorite outfits.", icon: "heart.fill", isSuccess: true)
+        }
+
+        favoriteOutfits = favorites.removingDuplicates().joined(separator: ", ")
+    }
+
+    private func duplicateSavedScan(_ scan: RecentOutfitScore) {
+        var history = loadScanHistory()
+        guard var stored = history[scan.id] else { return }
+        let duplicateID = "\(scan.id)-copy-\(UUID().uuidString.prefix(8))"
+        guard SavedScanHistoryCapacity.canInsert(
+            recordID: duplicateID,
+            existingRecordIDs: Set(history.keys)
+        ) else {
+            scanMessage = ScanMessage(
+                title: "Saved scan limit reached",
+                description: "You can keep up to 500 saved scans. Delete an older scan before saving another.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+        stored.customTitle = "\(scan.title) Copy"
+        stored.scanCount = max(1, stored.scanCount)
+        history[duplicateID] = stored
+        guard saveScanHistory(history) else { return }
+        scanMessage = ScanMessage(title: "Scan duplicated", description: "\(scan.title) was duplicated in scan history.", icon: "doc.on.doc", isSuccess: true)
+    }
+
+    private func moveScanToCloset(_ scan: RecentOutfitScore) {
+        let existing = closetInventory.trimmingCharacters(in: .whitespacesAndNewlines)
+        closetInventory = existing.isEmpty ? scan.title : "\(existing), \(scan.title)"
+        scanMessage = ScanMessage(title: "Moved to closet", description: "\(scan.title) was added to your closet notes for future outfit recommendations.", icon: "tshirt", isSuccess: true)
+    }
+
+    private func beginSharingSavedScan(_ scan: RecentOutfitScore) {
+        outfitSharePreview = makeOutfitSharePreview(for: scan)
+    }
+
+    private func recommendationIcon(for category: String) -> String {
+        switch category.lowercased() {
+        case "shoes":
+            return "shoeprints.fill"
+        case "shirts":
+            return "tshirt"
+        case "pants":
+            return "figure.walk"
+        case "jackets":
+            return "person.crop.square"
+        case "watches":
+            return "applewatch"
+        case "handbags":
+            return "bag"
+        default:
+            return "sparkles"
+        }
+    }
+
+    private var shirtPersonalization: String {
+        var parts = ["Saved shirt size: \(shirtSize)"]
+        if FitPreference.fromProfileInput(fitPreference).isSet {
+            parts.append("preferred overall fit \(fitPreference)")
+        }
+        if let neck = cleanOptionalSize(neckSize) {
+            parts.append("neck \(neck)")
+        }
+        if let sleeve = cleanOptionalSize(sleeveLength) {
+            parts.append("sleeve \(sleeve)")
+        }
+        return parts.joined(separator: "; ") + "."
+    }
+
+    private var pantsPersonalization: String {
+        "Saved pants size: \(pantsSize); waist \(waistSize); inseam \(inseamLength); preferred pant fit: \(PantFitPreference.fromProfileInput(preferredPantFit).displayName.lowercased())."
+    }
+
+    private var weatherLocationText: String {
+        let city = weatherCity.trimmingCharacters(in: .whitespacesAndNewlines)
+        let condition = weatherCondition.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedWeather = weather.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = savedWeather.isEmpty ? condition : "\(condition), \(savedWeather)"
+        return city.isEmpty ? base : "\(base) in \(city)"
+    }
+
+    private var currentWeatherTemperature: Int? {
+        let source = "\(weather) \(weatherCondition) \(weatherFeelsLike)"
+        guard let match = source.range(of: #"[-+]?\d{2,3}"#, options: .regularExpression) else {
+            return nil
+        }
+        return Int(source[match])
+    }
+
+    private var currentFeelsLikeTemperature: Int? {
+        let source = weatherFeelsLike.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let match = source.range(of: #"[-+]?\d{2,3}"#, options: .regularExpression) else {
+            return nil
+        }
+        return Int(source[match])
+    }
+
+    private var isHotWeatherContext: Bool {
+        let snapshot = weatherContextSnapshot(environment: result?.environment ?? "Unspecified")
+        if snapshot.severity.isWarmOrHot {
+            return true
+        }
+
+        let context = "\(weather) \(weatherCondition) \(weatherLocationText) \(weatherFeelsLike)".lowercased()
+        return context.contains("hot")
+            || context.contains("humid")
+            || context.contains("heat")
+            || context.contains("swelter")
+    }
+
+    private var isColdWeatherContext: Bool {
+        let snapshot = weatherContextSnapshot(environment: result?.environment ?? "Unspecified")
+        if snapshot.severity.isColdOrFreezing {
+            return true
+        }
+
+        let context = "\(weather) \(weatherCondition) \(weatherLocationText) \(weatherFeelsLike)".lowercased()
+        return context.contains("cold")
+            || context.contains("snow")
+            || context.contains("chilly")
+            || context.contains("freezing")
+    }
+
+    private var currentSeasonText: String {
+        let month = Calendar.current.component(.month, from: Date())
+        switch month {
+        case 12, 1, 2: return "Winter"
+        case 3, 4, 5: return "Spring"
+        case 6, 7, 8: return "Summer"
+        default: return "Fall"
+        }
+    }
+
+    private var currentTimeOfDayText: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12: return "Morning"
+        case 12..<17: return "Afternoon"
+        case 17..<21: return "Evening"
+        default: return "Night"
+        }
+    }
+
+    private func weatherContextSnapshot(environment: String) -> WeatherContextSnapshot {
+        let occasion = activeScanOccasionText(environment: environment)
+        let activity = WeatherContextEngine.inferActivity(occasion: occasion, environment: environment)
+        let location = weatherCity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? weatherLocationText : weatherCity
+        return WeatherContextSnapshot(
+            airTemperature: currentWeatherTemperature,
+            feelsLikeTemperature: currentFeelsLikeTemperature,
+            humidityPercent: firstInteger(in: weatherHumidity),
+            rainChancePercent: firstInteger(in: weatherRainChance),
+            windMph: firstInteger(in: weatherWindSpeed),
+            uvIndex: firstInteger(in: weatherUVIndex),
+            condition: weatherCondition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? weather : weatherCondition,
+            locationText: location,
+            activity: activity,
+            region: WeatherContextEngine.inferRegion(locationText: location),
+            season: currentSeasonText,
+            timeOfDay: currentTimeOfDayText,
+            confidence: weatherConfidenceScore()
+        )
+    }
+
+    private func weatherContextRecommendation(environment: String) -> WeatherContextRecommendation {
+        WeatherContextEngine.recommendation(for: weatherContextSnapshot(environment: environment))
+    }
+
+    private func weatherConfidenceScore() -> Int {
+        var confidence = currentWeatherTemperature == nil && currentFeelsLikeTemperature == nil ? 70 : 95
+        let source = weatherSource.lowercased()
+        if source.contains("live") || source.contains("weatherkit") {
+            confidence = max(confidence, 95)
+        } else if source.contains("saved") {
+            confidence = min(confidence, 88)
+        }
+
+        if liveWeatherUpdatedAt > 0 {
+            let age = Date().timeIntervalSince1970 - liveWeatherUpdatedAt
+            if age > 4 * 60 * 60 {
+                confidence -= 10
+            }
+        }
+
+        return min(100, max(0, confidence))
+    }
+
+    private func firstInteger(in text: String) -> Int? {
+        guard let match = text.range(of: #"[-+]?\d{1,3}"#, options: .regularExpression) else {
+            return nil
+        }
+        return Int(text[match])
+    }
+
+    private func fitRecommendationNote(for detectedItems: [String]) -> String {
+        let observedItems = detectedItems.compactMap {
+            CanonicalGarmentReference(sanitizedGarmentTerm: $0)?.displayName
+        }
+        let items = observedItems.isEmpty ? "the visible outfit" : observedItems.joined(separator: ", ")
+        if hasSavedSizeProfileForFitCopy {
+            return "Based on your saved size profile: compare \(items) with your usual fit preferences. This scan does not verify exact measurements or unseen fit details."
+        }
+        return "Fit guidance is limited: no saved size profile is available, and this scan does not verify exact measurements or unseen fit details."
+    }
+
+    private func weatherRecommendationNote(environment: String) -> String {
+        let recommendation = weatherContextRecommendation(environment: environment)
+        return "Weather check: \(weatherLocationText). Severity: \(recommendation.severity.rawValue). \(recommendation.recommendation) Why: \(recommendation.rationale)"
+    }
+
+    private func occasionRecommendationNote(environment: String, culturalStyle: TraditionalStyleMatch? = nil) -> String {
+        if let culturalStyle {
+            return "Occasion check: Style category is \(culturalStyle.styleCategory), occasion is \(culturalStyle.occasionCategory), and dress code is \(culturalStyle.dressCode). Evaluate color harmony, fabric presentation, fit, layering, and respectful accessories rather than Western casual/formal rules."
+        }
+
+        let occasionText = plannedOccasionSummary(environment: environment)
+        let lowered = occasionText.lowercased()
+
+        if lowered.contains("work") || lowered.contains("office") || environment == "Office" || environment == "Business" {
+            if isHotWeatherContext {
+                return "Occasion check: for \(occasionText), keep it polished in the heat with clean shoes, a sharper lightweight shirt, a belt, or a watch instead of adding a jacket."
+            }
+            return "Occasion check: for \(occasionText), keep the outfit polished with clean shoes, a sharper shirt, and a belt or jacket if the setting is professional."
+        }
+
+        if lowered.contains("church") || lowered.contains("dinner") || lowered.contains("event") || lowered.contains("date") {
+            return "Occasion check: for \(occasionText), choose one dressier piece so the outfit feels intentional without looking overdone."
+        }
+
+        if lowered.contains("travel") || lowered.contains("vacation") || lowered.contains("trip") {
+            return "Occasion check: for \(occasionText), prioritize comfortable shoes, easy layers, and pieces from your closet that can be repeated."
+        }
+
+        return "Occasion check: for \(occasionText.isEmpty ? "your plans" : occasionText), match the outfit's formality to the setting and keep one piece as the visual focus."
+    }
+
+    private func plannedOccasionSummary(environment: String) -> String {
+        let plan = plannedOccasion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let code = dressCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let formality = occasionFormality.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = occasions.trimmingCharacters(in: .whitespacesAndNewlines)
+        let occasion = plan.isEmpty ? (fallback.isEmpty ? environment : fallback) : plan
+        let details = [code, formality].filter { !$0.isEmpty }
+
+        guard !details.isEmpty else {
+            return occasion
+        }
+
+        return "\(occasion), \(details.joined(separator: ", "))"
+    }
+
+    private func activeScanOccasionText(environment: String) -> String {
+        if let selected = selectedScanOccasion.canonical {
+            return selected.displayName
+        }
+
+        return plannedOccasionSummary(environment: environment)
+    }
+
+    private var currentScanOccasionForContext: Occasion? {
+        let active = plannedOccasion.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Occasion(rawValue: active)?.canonical ?? selectedScanOccasion.canonical
+    }
+
+    private func globalWeatherAlertCard(_ message: String, alert: GlobalWeatherAlert) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            let isCurrent = alert.kind == .currentRain || alert.kind == .currentDrizzle || alert.kind == .currentFreezingPrecipitation || alert.kind == .currentSnow || alert.kind == .currentMixedPrecipitation
+            let isStormRisk = alert.kind == .thunderstormRisk
+            Label(
+                isCurrent ? "Current • \(weatherCondition)" : (isStormRisk ? "Nearby • Thunderstorm risk" : "Later • Forecast precipitation"),
+                systemImage: isCurrent ? "cloud.rain.fill" : (isStormRisk ? "cloud.bolt.fill" : "umbrella.fill")
+            )
+            .font(.subheadline.weight(.bold))
+            Text(message).font(.subheadline)
+            Button { voiceAssistant.speak(message) } label: { Label("Listen to weather alert", systemImage: "speaker.wave.2.fill") }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Weather alert. \(message)")
+        }
+        .foregroundStyle(scanCream).padding(14)
+        .background(scanPanel.opacity(0.76), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(scanPanelBorder, lineWidth: 1))
+    }
+
+    private func occasionHonestyInstruction(for analysis: OutfitAnalysisResult) -> String {
+        if !analysis.outfitClassification.isUncertain,
+           analysis.outfitClassification.occasionCompatibility == .compatible {
+            return "- Confirmed outfit context: \(analysis.outfitClassification.effectiveCategory.displayName) is compatible with the selected occasion. Use its \(analysis.outfitClassification.scoringProfile.evaluationCriteria.joined(separator: ", ")) criteria and preserve the existing score."
+        }
+        guard let mismatch = FormalityMismatchEvaluator.evaluate(
+            detectedStyle: detectedStyleTitle(for: analysis),
+            occasion: currentScanOccasionForContext,
+            outfitClassification: analysis.outfitClassification
+        ) else {
+            return "- No deterministic occasion conflict was detected. Use the existing score and facts as provided."
+        }
+
+        return "- Deterministic occasion conflict: \(mismatch.message) Address this mismatch honestly and helpfully; do not praise this outfit as a strong fit for \(mismatch.occasion.displayName) unless the provided facts support that."
+    }
+
+    private func cleanOptionalSize(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func metricRow(title: String, value: String, icon: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 26)
+                .foregroundStyle(AppTab.scan.palette.accent)
+
+            Text(title)
+                .fontWeight(.semibold)
+
+            Spacer()
+
+            Text(value)
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+        }
+    }
+
+    private func beginGallerySelection() -> UUID {
+        invalidateActiveScanSession()
+        openedSavedScan = nil
+        savedScanImageZoomScale = 1
+        result = nil
+        scanMessage = nil
+        selectedUIImage = nil
+        visionAnalysisUIImage = nil
+        previewImageSourceToken = nil
+        visionImageSourceToken = nil
+        displayedImageSourceToken = nil
+        preparedAnalysis = nil
+        isShowingFullAnalysis = false
+        return gallerySelectionCoordinator.beginSelection()
+    }
+
+    @MainActor
+    private func loadImage(from item: PhotosPickerItem?, selectionToken: UUID) async {
+        guard let item,
+              let data = try? await item.loadTransferable(type: Data.self),
+              let uiImage = UIImage(data: data) else {
+            return
+        }
+
+        guard gallerySelectionCoordinator.accepts(selectionToken) else { return }
+
+        let scanImage = uiImage.scanSizedImage()
+        let analysisImage = uiImage.visionAnalysisImage()
+
+        guard gallerySelectionCoordinator.accepts(selectionToken) else { return }
+
+        currentScanSource = .gallery
+        selectedUIImage = scanImage
+        visionAnalysisUIImage = analysisImage
+        selectedImage = Image(uiImage: scanImage)
+        previewImageSourceToken = selectionToken
+        visionImageSourceToken = selectionToken
+        displayedImageSourceToken = selectionToken
+        preparedAnalysis = nil
+
+    }
+
+    private func deleteCurrentPhoto() {
+        invalidateActiveScanSession()
+        _ = gallerySelectionCoordinator.beginSelection()
+        openedSavedScan = nil
+        savedScanImageZoomScale = 1
+        selectedItem = nil
+        selectedImage = nil
+        selectedUIImage = nil
+        visionAnalysisUIImage = nil
+        previewImageSourceToken = nil
+        visionImageSourceToken = nil
+        displayedImageSourceToken = nil
+        result = nil
+        preparedAnalysis = nil
+        isAnalyzing = false
+        isPreparingCamera = false
+        isShowingFullAnalysis = false
+        scanMessage = ScanMessage(
+            title: "Photo removed",
+            description: "The selected scan photo was removed from this screen. Your photo library was not changed.",
+            icon: "trash",
+            isSuccess: true
+        )
+    }
+
+    private func startCameraCapture() {
+        guard !isAnalyzing && !isPreparingCamera else {
+            scanMessage = ScanMessage(
+                title: "Camera is preparing",
+                description: "Wait one moment before taking another photo.",
+                icon: "hourglass",
+                isSuccess: false
+            )
+            return
+        }
+
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            scanMessage = ScanMessage(
+                title: "Camera unavailable",
+                description: "This device does not have a camera available. Run the app on your physical iPhone or choose a photo from your library instead.",
+                icon: "camera.badge.ellipsis",
+                isSuccess: false
+            )
+            return
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            prepareNewCameraSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        prepareNewCameraSession()
+                    } else {
+                        scanMessage = ScanMessage(
+                            title: "Camera permission is off",
+                            description: "Open iPhone Settings, find KigoStylist, and turn Camera on. Then come back and tap Take Photo again.",
+                            icon: "camera.badge.exclamationmark",
+                            isSuccess: false
+                        )
+                    }
+                }
+            }
+        case .denied, .restricted:
+            scanMessage = ScanMessage(
+                title: "Camera permission is off",
+                description: "Open iPhone Settings, find KigoStylist, and turn Camera on. Then come back and tap Take Photo again.",
+                icon: "camera.badge.exclamationmark",
+                isSuccess: false
+            )
+        @unknown default:
+            scanMessage = ScanMessage(
+                title: "Camera permission unknown",
+                description: "Restart the app and try Take Photo again. If it still fails, choose Pick Photo for now.",
+                icon: "camera.badge.questionmark",
+                isSuccess: false
+            )
+        }
+    }
+
+    private func prepareNewCameraSession() {
+        invalidateActiveScanSession()
+        _ = gallerySelectionCoordinator.beginSelection()
+        isAnalyzing = false
+        selectedItem = nil
+        previewImageSourceToken = nil
+        visionImageSourceToken = nil
+        displayedImageSourceToken = nil
+        result = nil
+        scanMessage = nil
+        isPreparingCamera = false
+        isShowingCamera = true
+    }
+
+    #if DEBUG
+    /// Simulator-only acceptance seam. This does not invoke, bypass, or alter
+    /// production validation: it starts *after* a deterministic accepted result
+    /// and then exercises the production saved-scan persistence path.
+    private func injectBuild18033PersistenceAcceptanceFixtureIfRequested() {
+        guard ProcessInfo.processInfo.environment["STYLEMATCH_ACCEPTANCE_FIXTURE"] == "1" else {
+            return
+        }
+
+        let recordID = "build18033-debug-accepted-fixture-v1"
+        let image = Build18033PersistenceAcceptanceFixture.image
+        let labels = Build18033PersistenceAcceptanceFixture.labels
+        let validation = ScanValidation.acceptedPerson(labels)
+        let palette = Build18033PersistenceAcceptanceFixture.palette
+        let imageDigest = image.normalizedImageSHA256Digest()
+        let colorDetection = GarmentColorDetection(
+            garmentColors: palette,
+            confidence: 100,
+            notes: "Deterministic DEBUG-only acceptance fixture.",
+            maskingApplied: true,
+            maskTier: "debug_fixture",
+            confidenceLevel: .confident
+        )
+        let preparedFacts = PreparedScanFacts(
+            validation: validation,
+            labels: labels,
+            colorDetection: colorDetection,
+            fingerprint: recordID,
+            imageDigest: imageDigest,
+            colorPalette: palette,
+            scoringLabels: labels,
+            detectedItems: ["jacket", "shirt", "pants", "shoes"],
+            styleCategory: "Casual Wear",
+            outfitClassification: .uncertain(),
+            styleScore: StyleScoreResult(
+                total: 80,
+                breakdown: OutfitScoreBreakdown(
+                    colorHarmony: 24,
+                    patternBalance: 20,
+                    fitQuality: 16,
+                    occasionMatch: 12,
+                    accessoryUse: 4
+                ),
+                tier: "Good Match"
+            )
+        )
+
+        let savedResult = savedScan(
+            for: image,
+            validation: validation,
+            labels: labels,
+            scanSource: .gallery,
+            fingerprint: recordID,
+            imageDigest: imageDigest,
+            forceReanalyze: false,
+            colorDetection: colorDetection,
+            preparedFacts: preparedFacts
+        )
+
+        guard let savedScan = savedScan(for: recordID) else {
+            scanMessage = ScanMessage(
+                title: "Acceptance fixture not saved",
+                description: "The DEBUG-only acceptance fixture could not be verified.",
+                icon: "exclamationmark.triangle",
+                isSuccess: false
+            )
+            return
+        }
+
+        selectedUIImage = savedScan.savedImage
+        visionAnalysisUIImage = nil
+        result = savedScan.analysis
+        preparedAnalysis = savedScan.analysis
+        openedSavedScan = savedScan
+        activeScanFingerprint = savedScan.id
+        activeScanImageDigest = savedScan.imageDigest
+        scanMessage = ScanMessage(
+            title: savedResult.isRepeat ? "Acceptance fixture restored" : "Acceptance fixture saved",
+            description: "DEBUG-only fixture used the production saved-scan asset and history persistence path.",
+            icon: "checkmark.seal",
+            isSuccess: true
+        )
+    }
+    #endif
+
+    private func analyze(forceReanalyze: Bool = false) {
+        invalidateActiveScanSession()
+        openedSavedScan = nil
+        result = nil
+        scanMessage = nil
+        isAnalyzing = true
+        isShowingFullAnalysis = false
+        speakIfEnabled(VoiceScriptBuilder.scanStarted())
+
+        guard let selectedUIImage else {
+            isAnalyzing = false
+            let message = ScanMessage(
+                title: "Choose a photo first",
+                description: "Pick a person, outfit, or clothing item before running KigoStylist.",
+                icon: "photo",
+                isSuccess: false
+            )
+            scanMessage = message
+            speakIfEnabled(VoiceScriptBuilder.scanFailed(title: message.title, description: message.description))
+            return
+        }
+
+        let scanSessionID = UUID()
+        activeScanSessionID = scanSessionID
+        let previewImage = selectedUIImage
+        let imageToAnalyze = visionAnalysisUIImage ?? previewImage
+        let usesPreparedVisionImage = visionAnalysisUIImage != nil
+        let previewSourceToken = previewImageSourceToken
+        let visionSourceToken = visionImageSourceToken
+        let displaySourceToken = displayedImageSourceToken
+        let sourceTokensMatch = previewSourceToken == visionSourceToken
+            && visionSourceToken == displaySourceToken
+        let scanSource = currentScanSource
+        let historySnapshot = loadScanHistory()
+        let selectedOccasion = selectedScanOccasion.rawValue
+        DispatchQueue.global(qos: .userInitiated).async {
+            let imageDigest = imageToAnalyze.normalizedImageSHA256Digest()
+            let validation = validateFashionImage(imageToAnalyze)
+
+            let preparedFacts: PreparedScanFacts?
+            if validation.isAccepted {
+                let labels = validation.labels
+                let paletteBoxes = paletteRegionBoxes(
+                    for: imageToAnalyze,
+                    validation: validation,
+                    wholeImageLabels: labels
+                )
+                let colorDetection = imageToAnalyze.garmentColorDetection(
+                    regionBoxes: paletteBoxes,
+                    prefersPersonMask: validation.isPersonScan,
+                    flatLayRegionDiscoveryRan: !validation.isPersonScan && validation.regionPaletteBoxes.isEmpty
+                )
+                let fingerprint = normalizedOutfitFingerprint(
+                    for: imageToAnalyze,
+                    validation: validation,
+                    labels: labels,
+                    colorPalette: colorDetection.garmentColors
+                )
+                let exactStoredScan = historySnapshot[fingerprint].flatMap { storedScan in
+                    ScanImageIdentity.isExactMatch(
+                        storedFingerprint: fingerprint,
+                        storedImageDigest: storedScan.imageDigest,
+                        currentFingerprint: fingerprint,
+                        currentImageDigest: imageDigest
+                    ) ? storedScan : nil
+                }
+                let storedInputs = exactStoredScan?.deterministicInputs
+                let colorPalette = storedInputs?.colorPalette ?? colorDetection.garmentColors
+                let scoringLabels = storedInputs?.labels ?? labels
+                let detectedItems = storedInputs?.detectedItems ?? detectedClothingItems(from: scoringLabels)
+                let styleCategory = storedInputs?.styleCategory
+                    ?? detectedStyleCategorySignal(validation: validation, labels: scoringLabels)
+                let textObservations = recognizeGarmentText(in: imageToAnalyze)
+                let outfitClassification = exactStoredScan?.analysis?.outfitClassification ?? classifyOutfit(
+                    visualObservations: scoringLabels.map {
+                        OutfitVisualObservation(identifier: $0.identifier, confidence: Double($0.confidence))
+                    },
+                    textObservations: textObservations,
+                    selectedOccasion: selectedOccasion
+                )
+                let styleScore = exactStoredScan != nil && !forceReanalyze
+                    ? nil
+                    : calculateStyleScore(
+                        validation: validation,
+                        labels: scoringLabels,
+                        colorPalette: colorPalette,
+                        detectedItems: detectedItems,
+                        styleCategory: styleCategory
+                    )
+                preparedFacts = PreparedScanFacts(
+                    validation: validation,
+                    labels: labels,
+                    colorDetection: colorDetection,
+                    fingerprint: fingerprint,
+                    imageDigest: imageDigest,
+                    colorPalette: colorPalette,
+                    scoringLabels: scoringLabels,
+                    detectedItems: detectedItems,
+                    styleCategory: styleCategory,
+                    outfitClassification: outfitClassification,
+                    styleScore: styleScore
+                )
+            } else {
+                preparedFacts = nil
+            }
+
+            Task {
+                let resolvedPreparedFacts: PreparedScanFacts?
+                if let preparedFacts, preparedFacts.styleScore != nil {
+                    let canonicalClassification = await adjudicatedOutfitClassification(
+                        deterministic: preparedFacts.outfitClassification,
+                        validation: preparedFacts.validation,
+                        labels: preparedFacts.scoringLabels
+                    )
+                    resolvedPreparedFacts = preparedFacts.replacingOutfitClassification(canonicalClassification)
+                } else {
+                    resolvedPreparedFacts = preparedFacts
+                }
+
+                DispatchQueue.main.async {
+                guard activeScanSessionID == scanSessionID,
+                      selectedUIImage === previewImage,
+                      !usesPreparedVisionImage || (
+                        visionAnalysisUIImage === imageToAnalyze
+                            && sourceTokensMatch
+                            && previewSourceToken != nil
+                      ) else {
+                    return
+                }
+
+                guard validation.isAccepted else {
+                    visionAnalysisUIImage = nil
+                    preparedAnalysis = nil
+                    result = nil
+                    let message = ScanMessage(
+                        title: validation.rejectionTitle,
+                        description: validation.rejectionMessage,
+                        icon: validation.rejectionIcon,
+                        isSuccess: false
+                    )
+                    scanMessage = message
+                    speakIfEnabled(VoiceScriptBuilder.scanFailed(title: message.title, description: message.description))
+                    isAnalyzing = false
+                    return
+                }
+
+                guard let preparedFacts = resolvedPreparedFacts else {
+                    isAnalyzing = false
+                    return
+                }
+                let labels = preparedFacts.labels
+                let qualityDescription = validation.qualityDescription
+                let colorDetection = preparedFacts.colorDetection
+                let fingerprint = preparedFacts.fingerprint
+                let imageDigest = preparedFacts.imageDigest
+                activeScanFingerprint = fingerprint
+                activeScanImageDigest = imageDigest
+                let savedResult = savedScan(
+                    for: previewImage,
+                    validation: validation,
+                    labels: labels,
+                    scanSource: scanSource,
+                    fingerprint: fingerprint,
+                    imageDigest: imageDigest,
+                    forceReanalyze: forceReanalyze,
+                    colorDetection: colorDetection,
+                    preparedFacts: preparedFacts
+                )
+                visionAnalysisUIImage = nil
+                let analysis = savedResult.analysis
+                let displayAnalysis = analysisWithPersonalStylistIntelligence(analysis)
+
+                preparedAnalysis = displayAnalysis
+                result = displayAnalysis
+                ensureOutfitMemory(
+                    for: analysis,
+                    outfitFingerprint: fingerprint,
+                    imageDigest: imageDigest
+                )
+                let confidence = confidenceLevel(for: validation, labels: labels)
+                let message = ScanMessage(
+                    title: confidence == .low ? "Clearer photo recommended" : savedResult.title(defaultNewTitle: "Outfit score saved", repeatTitle: "Previous score restored"),
+                    description: ScanMessageCopy.savedScoreDescription(
+                        confidenceLabel: confidence.label,
+                        qualityDescription: qualityDescription,
+                        guidance: confidence.customerGuidance,
+                        savedResultMessage: savedResult.message
+                    ),
+                    icon: savedResult.isRepeat ? "clock.arrow.circlepath" : "checkmark.seal",
+                    isSuccess: true
+                )
+                scanMessage = message
+                isAnalyzing = false
+                speakIfEnabled(VoiceScriptBuilder.scanResult(from: displayAnalysis))
+
+                if !savedResult.isRepeat {
+                    requestChatGPTRecommendationUpgrade(
+                        for: displayAnalysis,
+                        scanSessionID: scanSessionID,
+                        identity: CompletedScanIdentity(
+                            validation: validation,
+                            labels: labels,
+                            fingerprint: fingerprint,
+                            imageDigest: imageDigest
+                        )
+                    )
+                }
+                }
+            }
+        }
+    }
+
+    private func instantAnalysis(for image: UIImage) -> OutfitAnalysisResult {
+        let validation = validateFashionImage(image)
+        let labels = validation.labels.isEmpty ? prototypeLabels(for: image) : validation.labels
+        let paletteBoxes = paletteRegionBoxes(for: image, validation: validation, wholeImageLabels: labels)
+        let colorDetection = image.garmentColorDetection(
+            regionBoxes: paletteBoxes,
+            prefersPersonMask: validation.isPersonScan,
+            flatLayRegionDiscoveryRan: !validation.isPersonScan && validation.regionPaletteBoxes.isEmpty
+        )
+        let colorPalette = colorDetection.garmentColors
+        let scoringLabels = labels
+        let detectedItems = detectedClothingItems(from: scoringLabels)
+        let styleCategory = detectedStyleCategorySignal(validation: validation, labels: scoringLabels)
+        let outfitClassification = classifyOutfit(
+            visualObservations: scoringLabels.map {
+                OutfitVisualObservation(identifier: $0.identifier, confidence: Double($0.confidence))
+            },
+            textObservations: recognizeGarmentText(in: image),
+            selectedOccasion: selectedScanOccasion.rawValue
+        )
+        let styleScore = calculateStyleScore(
+            validation: validation,
+            labels: scoringLabels,
+            colorPalette: colorPalette,
+            detectedItems: detectedItems,
+            styleCategory: styleCategory
+        )
+
+        return makeAnalysisResult(
+            score: styleScore.total,
+            validation: validation,
+            labels: scoringLabels,
+            imageQuality: validation.qualityDescription,
+            colorPalette: colorPalette,
+            colorPaletteMaskingApplied: colorDetection.maskingApplied,
+            colorPaletteMaskTier: colorDetection.maskTier,
+            colorPaletteConfidence: colorDetection.confidenceLevel,
+            colorPaletteDetectionConfidence: colorDetection.confidence,
+            colorPaletteNotes: colorDetection.notes,
+            scoreBreakdown: styleScore.breakdown,
+            outfitClassification: outfitClassification
+        )
+    }
+
+    private func validateFashionImage(_ image: UIImage) -> ScanValidation {
+        let detectedAttributes = detectGarmentAttributes(for: image)
+
+        if let qualityIssue = detectedAttributes.qualityIssue {
+            return .poorQuality(qualityIssue)
+        }
+
+        if !detectedAttributes.canAnalyze {
+            if let regionValidation = regionClothingValidation(
+                for: image,
+                wholeImageLabels: detectedAttributes.labels
+            ) {
+                return regionValidation
+            }
+            return .unknown
+        }
+
+        let labels = detectedAttributes.labels
+        let hasHuman = detectedAttributes.hasHuman
+        let clothingConfidence = clothingConfidence(in: labels)
+        let rejectedLabel = strongestRejectedLabel(in: labels)
+        let sceneMatch = clothingSceneMatch(in: labels)
+        let hasSleepwearEvidence = hasSleepwearLabelEvidence(in: labels)
+        let directClothingLabel = labels.first { label in
+            clothingTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) }
+        }
+
+        if hasHuman {
+            var personLabels = labels
+            personLabels.insert(DetectedLabel(identifier: "person wearing outfit", confidence: 0.88), at: 0)
+            if detectedAttributes.personGarmentRegion != nil {
+                personLabels.insert(DetectedLabel(identifier: "visible person clothing region", confidence: 0.76), at: min(1, personLabels.count))
+            }
+            if clothingConfidence < 0.28 {
+                personLabels.insert(DetectedLabel(identifier: "clothing", confidence: 0.58), at: min(1, personLabels.count))
+            }
+            return .acceptedPerson(Array(personLabels.prefix(12)))
+        }
+
+        if let sceneMatch, clothingConfidence >= 0.24 {
+            return .acceptedClothingScene(sceneMatch.scene, sceneMatch.label, Array(labels.prefix(12)))
+        }
+
+        if hasSleepwearEvidence {
+            if let sceneMatch {
+                return .acceptedClothingScene(sceneMatch.scene, sceneMatch.label, Array(labels.prefix(12)))
+            }
+            return .acceptedClothing("Sleepwear", Array(labels.prefix(12)))
+        }
+
+        if let clothingLabel = directClothingLabel, clothingConfidence >= 0.30 {
+            return .acceptedClothing(clothingLabel.identifier, Array(labels.prefix(12)))
+        }
+
+        if let rejectedLabel {
+            if flatLayRegionScene(in: labels) != nil {
+                if let regionValidation = regionClothingValidation(
+                    for: image,
+                    wholeImageLabels: labels
+                ) {
+                    return regionValidation
+                }
+            }
+            return .rejected(rejectedLabel)
+        }
+
+        if let regionValidation = regionClothingValidation(
+            for: image,
+            wholeImageLabels: labels
+        ) {
+            return regionValidation
+        }
+        return .unknown
+    }
+
+    private func detectGarmentAttributes(for image: UIImage) -> GarmentAttributeDetection {
+        if let qualityIssue = image.qualityIssue() {
+            return GarmentAttributeDetection(qualityIssue: qualityIssue, labels: [], hasHuman: false)
+        }
+
+        guard let cgImage = image.fastVisionCGImage() else {
+            return GarmentAttributeDetection(qualityIssue: nil, labels: [], hasHuman: false)
+        }
+
+        var labels = classifyImage(cgImage).map {
+            DetectedLabel(identifier: $0.identifier, confidence: $0.confidence)
+        }
+        let personGarmentRegion = defensiblePersonGarmentRegion(in: cgImage)
+        if let personGarmentRegion,
+           let torsoImage = crop(cgImage, to: personGarmentRegion) {
+            labels.append(contentsOf: classifyImage(torsoImage).map {
+                DetectedLabel(identifier: $0.identifier, confidence: $0.confidence)
+            })
+        }
+        labels.sort { $0.confidence > $1.confidence }
+
+        let detectorHumanSignal = detectsPersonSignal(
+            in: cgImage,
+            labels: labels
+        )
+        let hasHuman = detectorHumanSignal || personGarmentRegion != nil
+
+        return GarmentAttributeDetection(
+            qualityIssue: nil,
+            labels: Array(labels.prefix(12)),
+            hasHuman: hasHuman,
+            personGarmentRegion: personGarmentRegion
+        )
+    }
+
+    private func savedScan(
+        for image: UIImage,
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        scanSource: ScanSource,
+        fingerprint: String,
+        imageDigest: String,
+        forceReanalyze: Bool,
+        colorDetection: GarmentColorDetection,
+        preparedFacts: PreparedScanFacts
+    ) -> SavedScanResult {
+        var history = loadScanHistory()
+        let exactStoredScan = history[fingerprint].flatMap { storedScan in
+            ScanImageIdentity.isExactMatch(
+                storedFingerprint: fingerprint,
+                storedImageDigest: storedScan.imageDigest,
+                currentFingerprint: fingerprint,
+                currentImageDigest: imageDigest
+            ) ? storedScan : nil
+        }
+
+        if let storedScan = exactStoredScan,
+           !forceReanalyze,
+           let cachedAnalysis = storedScan.analysis {
+            let resolvedAnalysis: OutfitAnalysisResult
+            if cachedAnalysis.outfitClassification.isUncertain,
+               !preparedFacts.outfitClassification.isUncertain {
+                resolvedAnalysis = cachedAnalysis.replacingOutfitClassification(
+                    preparedFacts.outfitClassification
+                )
+                // Enrich this in-memory result without mutating a legacy saved
+                // scan merely because it was opened again. Explicit user
+                // corrections remain the only classification write path.
+            } else {
+                resolvedAnalysis = cachedAnalysis
+            }
+            return SavedScanResult(
+                analysis: resolvedAnalysis,
+                isRepeat: true,
+                isForced: false,
+                message: "Loaded from saved analysis. This outfit was already scanned, so KigoStylist kept the saved \(storedScan.score) \(scoreRatingTitle(for: storedScan.score)) score instead of rescoring it."
+            )
+        }
+
+        // Semantic-only matches are not exact images and must be analyzed from current facts.
+        let storedInputs = exactStoredScan?.deterministicInputs
+        let colorPalette = preparedFacts.colorPalette
+        let scoringLabels = preparedFacts.scoringLabels
+        let detectedItems = preparedFacts.detectedItems
+        let styleCategory = preparedFacts.styleCategory
+        let styleScore = preparedFacts.styleScore ?? calculateStyleScore(
+            validation: validation,
+            labels: scoringLabels,
+            colorPalette: colorPalette,
+            detectedItems: detectedItems,
+            styleCategory: styleCategory
+        )
+        let analysis = makeAnalysisResult(
+            score: styleScore.total,
+            validation: validation,
+            labels: scoringLabels,
+            imageQuality: validation.qualityDescription,
+            colorPalette: colorPalette,
+            colorPaletteMaskingApplied: colorDetection.maskingApplied,
+            colorPaletteMaskTier: colorDetection.maskTier,
+            colorPaletteConfidence: storedInputs?.colorPaletteConfidence ?? colorDetection.confidenceLevel,
+            colorPaletteDetectionConfidence: colorDetection.confidence,
+            colorPaletteNotes: colorDetection.notes,
+            scoreBreakdown: styleScore.breakdown,
+            outfitClassification: preparedFacts.outfitClassification
+        )
+        guard SavedScanHistoryCapacity.canInsert(
+            recordID: fingerprint,
+            existingRecordIDs: Set(history.keys)
+        ) else {
+            return SavedScanResult(
+                analysis: analysis,
+                isRepeat: true,
+                isForced: forceReanalyze,
+                message: "Saved scan limit reached. You can keep up to 500 saved scans. Delete an older scan before saving another."
+            )
+        }
+        let storedScan = StoredOutfitScan(
+            score: analysis.score,
+            analysis: analysis,
+            firstScannedAt: Date(),
+            scanCount: 1,
+            thumbnailData: image.scanThumbnailData(),
+            occasion: canonicalOccasionForPersistence(
+                selectedOccasion: selectedScanOccasion,
+                classification: analysis.outfitClassification
+            ),
+            imageDigest: imageDigest,
+            savedImageAsset: savedImageAsset(for: image),
+            deterministicInputs: StoredDeterministicScorerInputs(
+                colorPalette: colorPalette,
+                colorPaletteConfidence: storedInputs?.colorPaletteConfidence ?? colorDetection.confidenceLevel,
+                labels: scoringLabels,
+                detectedItems: detectedItems,
+                styleCategory: styleCategory
+            ),
+            scoreModelVersion: ScanScoreModelVersion.current.rawValue
+        )
+        history[fingerprint] = storedScan
+        if !saveScanHistory(history) {
+            SavedScanImageAssetStore().removeIfUnreferenced(
+                assetID: storedScan.savedImageAsset?.id,
+                referencedAssetIDs: Set(loadScanHistory().values.compactMap(\.savedImageAssetID))
+            )
+        }
+        return SavedScanResult(
+            analysis: analysis,
+            isRepeat: false,
+            isForced: forceReanalyze,
+            message: forceReanalyze
+                ? "You asked KigoStylist to refresh this outfit, so it updated the saved analysis while keeping scoring consistent for the same clothes."
+                : "KigoStylist saved this outfit analysis as \(analysis.score) \(scoreRatingTitle(for: analysis.score)) on this iPhone. If you open this scan again, KigoStylist uses this saved result unless the outfit is new."
+        )
+    }
+
+    private func cachedScan(for image: UIImage) -> SavedScanResult? {
+        let fingerprint = fastOutfitFingerprint(for: image)
+        let history = loadScanHistory()
+
+        guard let storedScan = history[fingerprint],
+              let cachedAnalysis = storedScan.analysis else {
+            return nil
+        }
+
+        return SavedScanResult(
+            analysis: cachedAnalysis,
+            isRepeat: true,
+            isForced: false,
+            message: "This outfit was already scanned, so KigoStylist opened the saved \(storedScan.score) \(scoreRatingTitle(for: storedScan.score)) result from this iPhone without sending it for a new AI score."
+        )
+    }
+
+    private func analysisWithPersonalStylistIntelligence(_ analysis: OutfitAnalysisResult) -> OutfitAnalysisResult {
+        let message = deterministicPersonalStylistMessage(for: analysis)
+        let generatedSections: [ChatGPTStylistSection]
+        if message.isEmpty {
+            generatedSections = []
+        } else {
+            let unifiedBody = message.sections
+                .map { section in "\(section.title): \(section.body)" }
+                .joined(separator: " ")
+            generatedSections = [ChatGPTStylistSection(
+                title: "Personal Stylist Intelligence",
+                body: unifiedBody
+            )]
+        }
+        let existingSections = analysis.chatGPTStylistSections
+            .filter { $0.title != "Personal Stylist Intelligence" }
+        let weatherEvidence = message.sections
+            .filter { $0.source == .weather }
+            .map(\.body)
+        let validatedSections = ScanNarrativeConsistencyValidator.validate(
+            generatedSections + existingSections,
+            facts: scanNarrativeFacts(for: analysis, weatherEvidence: weatherEvidence)
+        )
+        return analysis.replacingChatGPTStylistSections(validatedSections)
+    }
+
+    private func deterministicPersonalStylistMessage(for analysis: OutfitAnalysisResult) -> PersonalStylistMessage {
+        let narrativeFacts = scanNarrativeFacts(for: analysis)
+
+        let dealMatches: [PersonalStylistDealMatch]
+        if FeatureFlags.saleMatchingEnabled {
+            dealMatches = deterministicDealMatches(for: analysis)
+        } else {
+            dealMatches = []
+        }
+
+        let input = PersonalStylistEngineInput(
+            score: analysis.score,
+            scoreTier: scoreRatingTitle(for: analysis.score),
+            scoreBreakdown: analysis.scoreBreakdown,
+            detectedGarments: narrativeFacts.qualifiedGarments,
+            detectedItemConfidences: analysis.detectedItemConfidences,
+            colors: narrativeFacts.palette,
+            groundedRecommendations: groundedRecommendationResult(for: analysis).accepted,
+            detectedStyle: detectedStyleTitle(for: analysis),
+            occasion: activeScanOccasionText(environment: analysis.environment),
+            weather: weatherAdvisorAdvice(for: analysis, qualifiedGarments: narrativeFacts.qualifiedGarments),
+            memories: OutfitMemoryStore().memories,
+            profile: ProfileStore().currentProfile,
+            dealMatches: dealMatches,
+            outfitFingerprint: activeScanFingerprint,
+            imageDigest: activeScanImageDigest,
+            outfitClassification: analysis.outfitClassification
+        )
+        return PersonalStylistEngine.compose(
+            input: input,
+            weatherAdviceEnabled: FeatureFlags.weatherAdviceEnabled,
+            saleMatchingEnabled: FeatureFlags.saleMatchingEnabled
+        )
+    }
+
+    private func deterministicPersonalStylistPhrasingContext(for analysis: OutfitAnalysisResult) -> PersonalStylistEngineContext {
+        let narrativeFacts = scanNarrativeFacts(for: analysis)
+
+        let dealMatches: [PersonalStylistDealMatch]
+        if FeatureFlags.saleMatchingEnabled {
+            dealMatches = deterministicDealMatches(for: analysis)
+        } else {
+            dealMatches = []
+        }
+
+        let input = PersonalStylistEngineInput(
+            score: analysis.score,
+            scoreTier: scoreRatingTitle(for: analysis.score),
+            scoreBreakdown: analysis.scoreBreakdown,
+            detectedGarments: narrativeFacts.qualifiedGarments,
+            detectedItemConfidences: analysis.detectedItemConfidences,
+            colors: narrativeFacts.palette,
+            groundedRecommendations: groundedRecommendationResult(for: analysis).accepted,
+            detectedStyle: detectedStyleTitle(for: analysis),
+            occasion: activeScanOccasionText(environment: analysis.environment),
+            weather: weatherAdvisorAdvice(for: analysis, qualifiedGarments: narrativeFacts.qualifiedGarments),
+            memories: OutfitMemoryStore().memories,
+            profile: ProfileStore().currentProfile,
+            dealMatches: dealMatches,
+            outfitFingerprint: activeScanFingerprint,
+            imageDigest: activeScanImageDigest,
+            outfitClassification: analysis.outfitClassification
+        )
+        return PersonalStylistEngine.context(
+            input: input,
+            weatherAdviceEnabled: FeatureFlags.weatherAdviceEnabled,
+            saleMatchingEnabled: FeatureFlags.saleMatchingEnabled
+        )
+    }
+
+    private func weatherAdvisorAdvice(
+        for analysis: OutfitAnalysisResult,
+        qualifiedGarments: [String]
+    ) -> WeatherAdvisorAdvice? {
+        guard FeatureFlags.weatherAdviceEnabled else {
+            return nil
+        }
+
+        guard let snapshot = weatherAuthority.snapshot else {
+            return nil
+        }
+        let activity = WeatherContextEngine.inferActivity(
+            occasion: activeScanOccasionText(environment: analysis.environment),
+            environment: analysis.environment
+        )
+        return WeatherAdvisor.advice(for: WeatherAdvisorInput(
+            feelsLikeTemperature: snapshot.feelsLikeFahrenheit,
+            humidityPercent: snapshot.humidityPercent,
+            rainChancePercent: snapshot.rainChancePercent,
+            windMph: snapshot.windMph,
+            uvIndex: snapshot.uvIndex,
+            condition: snapshot.condition,
+            umbrellaAdvisory: WeatherUmbrellaAdvisory.make(snapshot: snapshot),
+            confidence: weatherConfidenceScore(),
+            detectedGarments: qualifiedGarments,
+            activity: activity,
+            citySummary: snapshot.locationName
+        ))?.attributed(to: snapshot)
+    }
+
+    private func scanNarrativeFacts(
+        for analysis: OutfitAnalysisResult,
+        weatherEvidence: [String] = []
+    ) -> ScanNarrativeFacts {
+        let closetRecordIDs: Set<UUID>
+        if let items = try? JSONDecoder().decode([ClosetItem].self, from: closetItemsData) {
+            closetRecordIDs = Set(items.map(\.id))
+        } else {
+            closetRecordIDs = []
+        }
+        return ScanNarrativeFacts(
+            palette: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+            detectedGarments: analysis.safeDetectedClothingItems,
+            detectedItemConfidences: analysis.detectedItemConfidences,
+            verifiedClosetRecordIDs: closetRecordIDs,
+            weatherEvidence: weatherEvidence
+        )
+    }
+
+    private func deterministicDealMatches(for analysis: OutfitAnalysisResult) -> [PersonalStylistDealMatch] {
+        // Sale matching is built as an async service but dormant by default.
+        // Keep the scan path inert until a future enabled caller can await an approved DealProvider.
+        []
+    }
+
+    private func requestChatGPTRecommendationUpgrade(
+        for analysis: OutfitAnalysisResult,
+        scanSessionID: UUID,
+        identity: CompletedScanIdentity
+    ) {
+        guard let session = StyleMatchAccountSessionStore.load(), session.expiresAt > Date() else {
+            return
+        }
+
+        let client = OpenAIStylistClient(model: openAIModel)
+        let phrasingContext = deterministicPersonalStylistPhrasingContext(for: analysis)
+        let detectedAttributes = lockedDetectedAttributes(from: analysis)
+        let scoreResult = lockedStyleScoreResult(from: analysis)
+        let prompt = PersonalizationContextBuilder.buildScanUpgradePrompt(
+            score: scoreResult.total,
+            tier: scoreResult.tier,
+            breakdown: [
+                "accessories": scoreResult.breakdown.accessoryUse,
+                "color": scoreResult.breakdown.colorHarmony,
+                "fit": scoreResult.breakdown.fitQuality,
+                "occasion": scoreResult.breakdown.occasionMatch,
+                "pattern": scoreResult.breakdown.patternBalance
+            ],
+            garments: analysis.safeDetectedClothingItems,
+            colors: detectedAttributes.colors,
+            patterns: detectedAttributes.patterns,
+            fitAssessment: detectedAttributes.fitAssessment,
+            weatherFacts: phrasingContext.weatherFacts,
+            historyFacts: phrasingContext.historyFacts,
+            guardrails: [
+                "Keep the response under four sentences, warm and specific.",
+                "Occasion is not a score input. When no occasion is selected, say: 'No occasion was selected. Occasion did not affect this score.' Never describe occasion as a deduction.",
+                "For a flat-lay photo, say: 'Fit was not evaluated from this flat-lay photo.' Never call fit poor, weak, or in need of tailoring.",
+                "A solid or no-pattern outfit can receive full pattern credit; do not criticize it merely for being solid. When no accessories are detected, explain: 'No accessories were detected. Under the current beta scoring model, this lowers the accessory component. Accessories remain an optional styling choice and their absence does not mean the outfit is unsuitable.' Do not recommend buying accessories merely to recover points.",
+                StylistMessageComposer.aiPhrasingInstruction
+            ]
+        )
+        // This is an optional enhancement after the local scan is complete. If the
+        // centralized budgeter cannot retain a valid bounded request, keep the saved
+        // local result and skip the upgrade rather than terminating the app.
+        guard prompt.isWithinBudget else {
+            return
+        }
+        let profile = StyleMatchStylistProfile(
+            name: "KigoStylist Customer",
+            favoriteColors: favoriteColors,
+            favoriteBrands: favoriteBrands,
+            preferredFit: fitPreference,
+            budget: budget,
+            sizeProfile: sizeProfile,
+            stylePreferences: stylePreferences,
+            occasions: activeScanOccasionText(environment: analysis.environment),
+            weather: "",
+            weatherPreferences: "",
+            dressCode: activeScanOccasionText(environment: analysis.environment),
+            shoppingHabits: "Budget \(budget); favorite brands \(favoriteBrands); past purchases \(pastPurchases).",
+            pastOutfitRatings: "",
+            frequentlyWornOutfits: favoriteOutfits,
+            pastPurchases: pastPurchases,
+            favoriteOutfits: favoriteOutfits,
+            closetInventory: closetInventory,
+            appContextSharingEnabled: shareAppContextWithChatGPT,
+            appContext: """
+            Current screen: Scan result.
+            """
+        )
+
+        Task {
+            do {
+                let advice = try await client.askStylist(
+                    profile: profile,
+                    question: prompt.message,
+                    debugRequestLabel: "scan_upgrade"
+                )
+                await MainActor.run {
+                    applyChatGPTRecommendation(
+                        advice,
+                        to: analysis,
+                        scanSessionID: scanSessionID,
+                        fingerprint: identity.fingerprint
+                    )
+                }
+            } catch {
+                await MainActor.run {
+                    guard activeScanSessionID == scanSessionID,
+                          activeScanFingerprint == identity.fingerprint else {
+                        return
+                    }
+                    scanMessage = ScanMessage(
+                        title: "Fast score ready",
+                        description: "KigoStylist saved the score. AI styling notes are temporarily unavailable, so you can still use the local scan result or try Ask AI again.",
+                        icon: "sparkles",
+                        isSuccess: false
+                    )
+                }
+            }
+        }
+    }
+
+    private func buildStylistAnalysisPrompt(structuredFacts: String, analysis: OutfitAnalysisResult) -> String {
+        """
+        \(stylistSystemPrompt)
+
+        CONTEXT FOR THIS SCAN:
+        Location: \(weatherCity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "unknown" : weatherCity)
+        Weather: \(weatherCondition.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "unknown" : weatherCondition), \(weatherTemperatureForPrompt)°F
+        Occasion: \(activeScanOccasionText(environment: analysis.environment))
+        User style preferences: \(stylePreferences.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "not specified" : stylePreferences)
+
+        Computer Vision Fact Layer:
+        \(structuredFacts)
+
+        KigoStylist Fashion Knowledge Database:
+        \(FashionKnowledgeBase.summary)
+
+        Important:
+        - KigoStylist already calculated the score before this AI request.
+        - The score value must stay \(analysis.score).
+        - Explain the score using scoreBreakdown.
+        - Do not invent score components or recalculate the score.
+
+        \(analysisSchema(for: analysis.score))
+        """
+    }
+
+    private func cleanWeatherFact(_ value: String) -> String {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "unknown" : cleaned
+    }
+
+    private func jsonString<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(value),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
+    }
+
+    private func lockedDetectedAttributes(from analysis: OutfitAnalysisResult) -> DetectedStyleAttributes {
+        DetectedStyleAttributes(
+            colors: analysis.colorPaletteConfidence == .confident
+                ? analysis.colorPalette.map { $0.lowercased() }
+                : [],
+            patterns: inferredPatternFacts(for: analysis)
+                .filter { !$0.localizedCaseInsensitiveContains("solid") && !$0.localizedCaseInsensitiveContains("low-pattern") },
+            fitAssessment: analysis.suggestions.first(where: { $0.localizedCaseInsensitiveContains("fit") }) ?? analysis.imageQuality,
+            detectedStyle: detectedStyleTitle(for: analysis),
+            accessories: inferredAccessoryFacts(for: analysis)
+        )
+    }
+
+    private func lockedStyleScoreResult(from analysis: OutfitAnalysisResult) -> StyleScoreResult {
+        let breakdown = styleScoreBreakdown(from: analysis)
+        return StyleScoreResult(total: clampedScore(analysis.score), breakdown: breakdown, tier: scoreRatingTitle(for: analysis.score))
+    }
+
+    private func styleScoreBreakdown(from analysis: OutfitAnalysisResult) -> OutfitScoreBreakdown {
+        if let saved = analysis.scoreBreakdown {
+            return OutfitScoreBreakdown(
+                colorHarmony: clampedComponent(saved.colorHarmony, max: 25),
+                patternBalance: clampedComponent(saved.patternBalance, max: 20),
+                fitQuality: clampedComponent(saved.fitQuality, max: 25),
+                occasionMatch: clampedComponent(saved.occasionMatch, max: 20),
+                accessoryUse: clampedComponent(saved.accessoryUse, max: 10)
+            )
+        }
+
+        let color = clampedComponent(firstScoreNumber(in: analysis.colorHarmony) ?? 15, max: 25)
+        let styleCoordination = clampedComponent(firstScoreNumber(in: analysis.styleCoordination) ?? 45, max: 75)
+        let pattern = min(20, styleCoordination / 4)
+        let fit = min(25, styleCoordination / 3)
+        let occasion = min(20, max(0, styleCoordination - pattern - fit - 5))
+        let accessories = min(10, max(0, styleCoordination - pattern - fit - occasion))
+
+        return OutfitScoreBreakdown(
+            colorHarmony: color,
+            patternBalance: pattern,
+            fitQuality: fit,
+            occasionMatch: occasion,
+            accessoryUse: accessories
+        )
+    }
+
+    private func firstScoreNumber(in text: String) -> Int? {
+        guard let match = text.range(of: #"\d+"#, options: .regularExpression) else {
+            return nil
+        }
+
+        return Int(text[match])
+    }
+
+    private func clampedComponent(_ value: Int, max: Int) -> Int {
+        Swift.min(max, Swift.max(0, value))
+    }
+
+    private var stylistSystemPrompt: String {
+        """
+        You are KigoStylist AI's Personal AI Stylist, a professional fashion consultant with expertise equivalent to a celebrity stylist, image consultant, and dress-code expert combined.
+
+        Your expertise covers color theory, dress codes, fit and tailoring, pattern and texture combinations, occasion appropriateness, weather, cultural context, current trends, timeless style principles, and budget-conscious recommendations.
+
+        Tone:
+        Speak like a knowledgeable, encouraging friend who happens to be a professional stylist. Be direct and specific, never generic. Avoid vague praise. Always explain why a recommendation works.
+
+        Critical accuracy rules:
+        1. Only describe what is actually visible in the image or provided in KigoStylist structured facts.
+        2. Distinguish garments worn on the body from background/environment.
+        3. Ignore walls, furniture, doors, floors, cabinets, appliances, and objects not worn on the body.
+        4. For colors, use colorDetection.garment_colors only.
+        5. If image quality, lighting, or angle makes something unclear, say it is unclear rather than guessing.
+        6. Do not comment on physical appearance beyond fit and styling.
+        7. Use outfitCategory and styleRankings from structured facts as the source of truth for style naming.
+        8. If cultural or traditional attire is detected, name the clothing respectfully and do not label it casual by default.
+        9. If structured facts show hoodie, hooded flannel, plaid shacket, jeans, work boots, hiking boots, or rugged casual evidence, describe the outfit as Casual, Rugged Casual, Outdoor Casual, or Everyday Casual.
+        10. Do not say business casual, suitable for work, office, or professional setting unless outfitCategory or the top style ranking is Business Casual and at least two business-style items are present.
+        11. Weather practicality is mandatory: in hot, humid, warm, or 80°F+ weather, do not recommend jackets, blazers, coats, sweaters, shackets, structured layers, or heavy layers unless the user explicitly asks for one.
+        12. Never guess clothing. If item confidence is below 85%, describe it as uncertain and do not build recommendations around it.
+        13. Before finalizing, validate every recommendation against weather, season, occasion, user preferences, budget, closet, saved sizes, and visible garment confidence.
+        14. If outfitCategory is Unrecognized Item or the occasion is Category Uncertain, state that the scan could not identify enough clothing detail and ask for a clearer photo; do not invent a style label or rationale.
+        15. If outfitCategory or the top style ranking is Sleepwear or Loungewear, explain it as sleepwear/loungewear only and never make it sound professional, office-ready, or business casual.
+        """
+    }
+
+    private func analysisSchema(for score: Int) -> String {
+        """
+        Return ONLY valid JSON in this exact format, no markdown and no text outside the JSON:
+
+        {
+          "detected_garments": ["item1", "item2"],
+          "garment_colors": ["color1", "color2"],
+          "detected_style": "string (e.g. Business Casual, Streetwear, Athleisure)",
+          "fit_assessment": "string describing fit",
+          "patterns": ["pattern1"],
+          "stylematch_score": \(score),
+          "score_reasoning": "string",
+          "strengths": "string",
+          "improvement_tips": ["tip1", "tip2", "tip3"],
+          "occasion_match": "string",
+          "weather_match": "string",
+          "follow_up_question": "string"
+        }
+        """
+    }
+
+    private var weatherTemperatureForPrompt: String {
+        let source = "\(weather) \(weatherCondition)"
+        if let match = source.range(of: #"[-+]?\d{2,3}"#, options: .regularExpression) {
+            return String(source[match])
+        }
+        return "unknown"
+    }
+
+    private func structuredOutfitFacts(for analysis: OutfitAnalysisResult, identity: CompletedScanIdentity? = nil) -> String {
+        let scoreResult = lockedStyleScoreResult(from: analysis)
+        let fingerprint = identity?.fingerprint ?? activeScanFingerprint ?? "saved-result"
+        let payload = OutfitFactPayload(
+            scanSource: currentScanSource.rawValue,
+            normalized: true,
+            detectedItems: analysis.safeDetectedClothingItems,
+            itemConfidence: analysis.detectedItemConfidences.map { item in
+                OutfitFactPayload.ItemConfidence(item: item.item, confidence: Double(item.confidence) / 100)
+            },
+            colors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+            colorDetection: OutfitFactPayload.GarmentColorFact(
+                garmentColors: analysis.colorPaletteConfidence == .confident ? analysis.colorPalette : [],
+                confidence: analysis.colorPaletteDetectionConfidence,
+                notes: analysis.colorPaletteConfidence == .confident
+                    ? analysis.colorPaletteNotes
+                    : "Low confidence: colors were hard to read in this photo. Do not assert specific garment colors.",
+                confidenceLevel: analysis.colorPaletteConfidence.userFacingLabel
+            ),
+            patterns: inferredPatternFacts(for: analysis),
+            fabricsAndTextures: inferredFabricFacts(for: analysis),
+            shoes: analysis.safeDetectedClothingItems.filter { $0.localizedCaseInsensitiveContains("shoe") || $0.localizedCaseInsensitiveContains("sneaker") || $0.localizedCaseInsensitiveContains("loafer") },
+            accessories: inferredAccessoryFacts(for: analysis),
+            outfitCategory: detectedStyleTitle(for: analysis),
+            styleRankings: styleRankings(for: analysis),
+            occasion: analysis.occasionFit,
+            weather: weatherLocationText,
+            weatherSource: weatherSource,
+            feelsLike: weatherFeelsLike,
+            rainChance: weatherRainChance,
+            humidity: weatherHumidity,
+            windSpeed: weatherWindSpeed,
+            uvIndex: weatherUVIndex,
+            lastUpdated: weatherLastUpdatedFact,
+            environment: analysis.environment,
+            lighting: analysis.imageQuality,
+            scanType: scanTypeFact(for: analysis),
+            styleScore: analysis.score,
+            scoreBreakdown: scoreResult.breakdown,
+            scoreTier: scoreRatingTitle(for: analysis.score),
+            scoreOwner: "KigoStylist AI scoring logic",
+            outfitFingerprint: fingerprint,
+            culturalAwareness: culturalAwarenessFact(for: analysis),
+            confidence: detectedStyleMeasuredConfidence(for: analysis).map { Double($0) / 100 },
+            guardrails: [
+                "Facts only in the Computer Vision layer.",
+                "ChatGPT explains and improves but does not control the score.",
+                "Do not infer race, ethnicity, nationality, religion, age, gender, or identity.",
+                "Do not guess brands unless high confidence evidence is provided.",
+                "Do not label traditional clothing casual by default.",
+                "Do not call hoodie, hooded flannel, plaid shacket, jeans, boots, or rugged casual outfits business casual unless at least two business-style items are detected.",
+                "If styleRankings show Casual or Rugged Casual first, describe the outfit as everyday casual, rugged casual, or outdoor casual and avoid work/business wording.",
+                "If outfitCategory is Sleepwear or Loungewear, explain it as home comfort clothing and avoid business/work/professional wording.",
+                "If outfitCategory is Unrecognized Item or occasion is Category Uncertain, say the scan did not identify enough clothing detail and ask for a clearer photo.",
+                "A style ranking without a confidence field is a detected label only. Never infer or quote a percentage for it.",
+                "Ask for a better image if lighting or clothing visibility is unreliable."
+            ]
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(payload),
+              let text = String(data: data, encoding: .utf8) else {
+            let colors = analysis.colorPaletteConfidence == .confident
+                ? analysis.colorPalette.joined(separator: ", ")
+                : "unclear; do not assert specific colors"
+            return "Detected items: \(analysis.safeDetectedClothingItems.joined(separator: ", ")); colors: \(colors); score: \(analysis.score)/100."
+        }
+
+        return text
+    }
+
+    private func inferredPatternFacts(for analysis: OutfitAnalysisResult) -> [String] {
+        let combined = (analysis.outfitDescription + " " + analysis.detectedClothingItems.joined(separator: " ")).lowercased()
+        let patterns = ["solid", "stripe", "plaid", "check", "floral", "print", "ankara", "kente", "embroidery", "pattern"]
+        let matches = patterns.filter { combined.contains($0) }
+        return matches.isEmpty ? ["solid or low-pattern appearance"] : matches
+    }
+
+    private func inferredFabricFacts(for analysis: OutfitAnalysisResult) -> [String] {
+        let combined = (analysis.outfitDescription + " " + analysis.detectedClothingItems.joined(separator: " ") + " " + analysis.summary).lowercased()
+        let fabrics = ["denim", "cotton", "linen", "leather", "wool", "silk", "ankara", "aso oke", "kente", "embroidered", "knit"]
+        let matches = fabrics.filter { combined.contains($0) }
+        return matches.isEmpty ? ["fabric was not reliably detected"] : matches
+    }
+
+    private func inferredAccessoryFacts(for analysis: OutfitAnalysisResult) -> [String] {
+        let terms = ["watch", "belt", "bag", "hat", "cap", "jewelry", "chain", "scarf", "head wrap", "gele", "shemagh", "keffiyeh"]
+        return analysis.detectedClothingItems.filter { item in
+            terms.contains { item.localizedCaseInsensitiveContains($0) }
+        }
+    }
+
+    private func scanTypeFact(for analysis: OutfitAnalysisResult) -> String {
+        let description = analysis.outfitDescription.lowercased()
+        if description.contains("person") || description.contains("worn") {
+            return "person wearing clothes"
+        }
+        if description.contains("mannequin") { return "mannequin" }
+        if description.contains("hanger") { return "hanger" }
+        if description.contains("bed") { return "clothes on bed" }
+        if description.contains("table") { return "clothes on table" }
+        if description.contains("floor") { return "clothes on floor" }
+        if description.contains("bag") { return "clothes in shopping bag" }
+        return "visible clothing scan"
+    }
+
+    private var weatherLastUpdatedFact: String {
+        guard liveWeatherUpdatedAt > 0 else {
+            return "not available"
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd h:mm a"
+        return formatter.string(from: Date(timeIntervalSince1970: liveWeatherUpdatedAt))
+    }
+
+    private func culturalAwarenessFact(for analysis: OutfitAnalysisResult) -> String {
+        let combined = (analysis.styleBalance + " " + analysis.summary + " " + analysis.detectedClothingItems.joined(separator: " ")).lowercased()
+        if combined.contains("traditional") || combined.contains("cultural") || combined.contains("agbada") || combined.contains("dashiki") || combined.contains("kaftan") || combined.contains("kente") || combined.contains("sari") || combined.contains("kimono") || combined.contains("hanbok") || combined.contains("abaya") {
+            return "Traditional or cultural attire may be present. Evaluate with cultural clothing rules and avoid western casual defaults."
+        }
+        return "No specific traditional attire confidence above threshold."
+    }
+
+    private func applyChatGPTRecommendation(
+        _ advice: String,
+        to analysis: OutfitAnalysisResult,
+        scanSessionID: UUID,
+        fingerprint: String
+    ) {
+        let trimmedAdvice = advice
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let sections = parseChatGPTStylistSections(from: advice, lockedScore: analysis.score)
+
+        guard !trimmedAdvice.isEmpty || !sections.isEmpty else {
+            return
+        }
+
+        let firstTip = sections.first(where: { $0.title == "Improvement Tips" })?.body ?? trimmedAdvice
+        let chatGPTRecommendation = ClothingRecommendation(
+            category: "ChatGPT",
+            title: firstTip,
+            reason: "ChatGPT used structured scan facts, weather, occasion, style memory, and the KigoStylist fashion rules.",
+            personalization: "Generated for this outfit only, not copied from another scan."
+        )
+        let updatedRecommendations = [chatGPTRecommendation] + analysis.recommendations.prefix(4)
+        let preservedLocalSections = analysis.chatGPTStylistSections
+            .filter { $0.title == "Personal Stylist Intelligence" }
+        let finalSections = (preservedLocalSections + sections)
+            .removingDuplicateStylistSections()
+        let validatedSections = ScanNarrativeConsistencyValidator.validate(
+            finalSections,
+            facts: scanNarrativeFacts(
+                for: analysis,
+                weatherEvidence: deterministicPersonalStylistPhrasingContext(for: analysis).weatherFacts
+            )
+        )
+        let updatedAnalysis = analysis
+            .replacingRecommendations(Array(updatedRecommendations))
+            .replacingChatGPTStylistSections(finalSections)
+        let displayAnalysis = updatedAnalysis
+            .replacingChatGPTStylistSections(validatedSections)
+
+        guard activeScanSessionID == scanSessionID,
+              activeScanFingerprint == fingerprint else {
+            return
+        }
+
+        result = displayAnalysis
+        preparedAnalysis = displayAnalysis
+        saveChatGPTUpgrade(updatedAnalysis, fingerprint: fingerprint)
+        scanMessage = ScanMessage(
+            title: "Stylist Analysis Ready",
+            description: "Structured scan facts were used to explain the score and suggest improvements.",
+            icon: "sparkles",
+            isSuccess: true
+        )
+    }
+
+    private func parseChatGPTStylistSections(from response: String, lockedScore: Int) -> [ChatGPTStylistSection] {
+        if let jsonSections = parseChatGPTStylistJSONSections(from: response, lockedScore: lockedScore), !jsonSections.isEmpty {
+            return sanitizeScoreSections(jsonSections, lockedScore: lockedScore)
+        }
+
+        let expectedTitles = [
+            "Outfit Summary",
+            "Why This Score",
+            "Strengths",
+            "Improvement Tips",
+            "Occasion Match",
+            "Weather Match",
+            "Ask AI Stylist"
+        ]
+        var sections: [ChatGPTStylistSection] = []
+        var currentTitle: String?
+        var currentLines: [String] = []
+
+        func flushSection() {
+            guard let currentTitle else { return }
+            let body = currentLines
+                .joined(separator: " ")
+                .replacingOccurrences(of: "  ", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !body.isEmpty {
+                sections.append(ChatGPTStylistSection(title: currentTitle, body: body))
+            }
+        }
+
+        for rawLine in response.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+
+            if let title = expectedTitles.first(where: { line.localizedCaseInsensitiveCompare("\($0):") == .orderedSame || line.localizedCaseInsensitiveCompare($0) == .orderedSame }) {
+                flushSection()
+                currentTitle = title
+                currentLines = []
+            } else {
+                currentLines.append(line.trimmingCharacters(in: CharacterSet(charactersIn: "-•* ")))
+            }
+        }
+
+        flushSection()
+
+        if sections.isEmpty {
+            return sanitizeScoreSections(
+                [ChatGPTStylistSection(title: "Outfit Summary", body: response.trimmingCharacters(in: .whitespacesAndNewlines))],
+                lockedScore: lockedScore
+            )
+        }
+
+        return sanitizeScoreSections(sections, lockedScore: lockedScore)
+    }
+
+    private func sanitizeScoreSections(_ sections: [ChatGPTStylistSection], lockedScore: Int) -> [ChatGPTStylistSection] {
+        sections.map { section in
+            let scoreSanitizedBody = sanitizeScoreMentions(section.body, lockedScore: lockedScore)
+            return ChatGPTStylistSection(
+                title: section.title,
+                body: sanitizeWeatherLayerAdvice(scoreSanitizedBody, sectionTitle: section.title)
+            )
+        }
+    }
+
+    private func sanitizeWeatherLayerAdvice(_ text: String, sectionTitle: String) -> String {
+        guard isHotWeatherContext else {
+            return text
+        }
+
+        let lowerTitle = sectionTitle.lowercased()
+        let shouldSanitize = lowerTitle.contains("improvement")
+            || lowerTitle.contains("weather")
+            || lowerTitle.contains("occasion")
+            || lowerTitle.contains("why")
+            || lowerTitle.contains("strength")
+            || lowerTitle.contains("summary")
+        guard shouldSanitize else {
+            return text
+        }
+
+        let hotWeatherAlternative = "For \(weatherLocationText), skip jackets, blazers, and heavy layers; add polish with breathable fabric, clean shoes, a belt, a watch, sunglasses, or a crisp lightweight shirt."
+        let layerPattern = #"(?i)(^|(?<=[.!?])\s*)[^.!?]*(jacket|blazer|coat|sweater|shacket|heavy layer|structured layer)[^.!?]*[.!?]?"#
+        guard let regex = try? NSRegularExpression(pattern: layerPattern) else {
+            return text
+        }
+
+        let fullRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        let sanitized = regex.stringByReplacingMatches(
+            in: text,
+            range: fullRange,
+            withTemplate: " \(hotWeatherAlternative)"
+        )
+        return sanitized
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sanitizeScoreMentions(_ text: String, lockedScore: Int) -> String {
+        var sanitized = text
+        let patterns = [
+            #"\b\d{1,3}\s*/\s*100\b"#,
+            #"(?i)\bscore\s+(of\s+)?\d{1,3}\b"#,
+            #"(?i)\breceived\s+(a\s+)?\d{1,3}\b"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
+            if pattern.contains("/\\s*100") {
+                sanitized = regex.stringByReplacingMatches(
+                    in: sanitized,
+                    range: range,
+                    withTemplate: "\(lockedScore)/100"
+                )
+            } else if pattern.localizedCaseInsensitiveContains("received") {
+                sanitized = regex.stringByReplacingMatches(
+                    in: sanitized,
+                    range: range,
+                    withTemplate: "received \(lockedScore)"
+                )
+            } else {
+                sanitized = regex.stringByReplacingMatches(
+                    in: sanitized,
+                    range: range,
+                    withTemplate: "score \(lockedScore)"
+                )
+            }
+        }
+
+        return sanitized
+    }
+
+    private func parseChatGPTStylistJSONSections(from response: String, lockedScore: Int) -> [ChatGPTStylistSection]? {
+        let cleaned = response
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let jsonText: String
+        if let start = cleaned.firstIndex(of: "{"),
+           let end = cleaned.lastIndex(of: "}"),
+           start <= end {
+            jsonText = String(cleaned[start...end])
+        } else {
+            jsonText = cleaned
+        }
+
+        guard let data = jsonText.data(using: .utf8) else {
+            return nil
+        }
+
+        guard let decoded = try? JSONDecoder().decode(StylistJSONAnalysis.self, from: data) else {
+            if let scoreExplanation = try? JSONDecoder().decode(StylistScoreExplanation.self, from: data) {
+                let tipsText = scoreExplanation.improvementTips.isEmpty
+                    ? "No extra changes are needed from the current scan."
+                    : scoreExplanation.improvementTips.prefix(3).joined(separator: " ")
+                return [
+                    ChatGPTStylistSection(title: "Why This Score", body: "\(lockedScore)/100. \(scoreExplanation.scoreReasoning)"),
+                    ChatGPTStylistSection(title: "Strengths", body: scoreExplanation.strengths),
+                    ChatGPTStylistSection(title: "Improvement Tips", body: tipsText)
+                ].filter { !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            }
+            return nil
+        }
+
+        let garmentText = decoded.detectedGarments.isEmpty
+            ? "Visible garments were not clear enough for the AI stylist to list reliably."
+            : decoded.detectedGarments.joined(separator: ", ")
+        let paletteText = decoded.garmentColors.isEmpty
+            ? "Garment colors were unclear."
+            : decoded.garmentColors.joined(separator: ", ")
+        let patternText = decoded.patterns.isEmpty
+            ? "No clear pattern was detected."
+            : decoded.patterns.joined(separator: ", ")
+        let scoreReasoning = "\(lockedScore)/100. \(decoded.scoreReasoning)"
+        let tipsText = decoded.improvementTips.isEmpty
+            ? "No extra changes are needed from the current scan."
+            : decoded.improvementTips.joined(separator: " ")
+
+        return [
+            ChatGPTStylistSection(title: "Detected Garments", body: garmentText),
+            ChatGPTStylistSection(title: "Color Palette", body: paletteText),
+            ChatGPTStylistSection(title: "Detected Style", body: decoded.detectedStyle),
+            ChatGPTStylistSection(title: "Fit Assessment", body: decoded.fitAssessment),
+            ChatGPTStylistSection(title: "Patterns & Texture", body: patternText),
+            ChatGPTStylistSection(title: "Why This Score", body: scoreReasoning),
+            ChatGPTStylistSection(title: "Strengths", body: decoded.strengths),
+            ChatGPTStylistSection(title: "Occasion Match", body: decoded.occasionMatch),
+            ChatGPTStylistSection(title: "Weather Match", body: decoded.weatherMatch),
+            ChatGPTStylistSection(title: "Improvement Tips", body: tipsText),
+            ChatGPTStylistSection(title: "Ask AI Stylist", body: decoded.followUpQuestion)
+        ].filter { !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func saveChatGPTUpgrade(_ analysis: OutfitAnalysisResult, fingerprint: String) {
+        guard let selectedUIImage else {
+            return
+        }
+
+        var history = loadScanHistory()
+        let existing = history[fingerprint]
+        let imageDigest = activeScanImageDigest ?? selectedUIImage.normalizedImageSHA256Digest()
+        history[fingerprint] = StoredOutfitScan(
+            score: analysis.score,
+            analysis: analysis,
+            firstScannedAt: existing?.firstScannedAt ?? Date(),
+            scanCount: existing?.scanCount ?? 1,
+            thumbnailData: existing?.thumbnailData ?? selectedUIImage.scanThumbnailData(),
+            customTitle: existing?.customTitle,
+            occasion: existing?.occasion?.canonical ?? selectedScanOccasion.canonical,
+            imageDigest: imageDigest,
+            savedImageAsset: existing?.savedImageAsset,
+            deterministicInputs: existing?.deterministicInputs
+        )
+        saveScanHistory(history)
+    }
+
+    private func invalidateActiveScanSession() {
+        activeScanSessionID = nil
+        activeScanFingerprint = nil
+        activeScanImageDigest = nil
+    }
+
+    private func fastOutfitFingerprint(for image: UIImage) -> String {
+        let widthBucket = Int(image.size.width / 80)
+        let heightBucket = Int(image.size.height / 80)
+        return "fast-\(widthBucket)x\(heightBucket)-\(image.outfitIdentitySignature())"
+    }
+
+    private func normalizedOutfitFingerprint(
+        for image: UIImage,
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        colorPalette: [String]
+    ) -> String {
+        let scanType = validation.arrangementFingerprint.normalizedForFingerprint
+        let clothing = detectedClothingItems(from: labels)
+            .map(\.normalizedForFingerprint)
+            .removingDuplicates()
+            .sorted()
+            .prefix(8)
+            .joined(separator: ".")
+        let colors = colorPalette
+            .map(\.normalizedForFingerprint)
+            .removingDuplicates()
+            .sorted()
+            .prefix(5)
+            .joined(separator: ".")
+        let patternSignal = inferredStablePatternSignal(from: labels)
+        let accessories = labels
+            .map(\.identifier)
+            .filter { label in
+                ["watch", "belt", "bag", "hat", "jewelry", "scarf", "tie", "shoe", "sneaker", "loafer", "boot"].contains { label.localizedCaseInsensitiveContains($0) }
+            }
+            .map(\.normalizedForFingerprint)
+            .removingDuplicates()
+            .sorted()
+            .prefix(5)
+            .joined(separator: ".")
+        let category = detectedStyleCategorySignal(validation: validation, labels: labels)
+        let fabric = inferredFabricSignal(from: labels)
+        return [
+            ScanImageIdentity.fingerprintVersion,
+            scanType,
+            clothing.isEmpty ? "clothing" : clothing,
+            colors.isEmpty ? "neutral" : colors,
+            patternSignal,
+            accessories.isEmpty ? "no-accessory" : accessories,
+            category,
+            fabric
+        ].joined(separator: "|")
+    }
+
+    private func inferredStablePatternSignal(from labels: [DetectedLabel]) -> String {
+        let text = labels.map(\.identifier).joined(separator: " ").lowercased()
+        let patterns = ["solid", "stripe", "plaid", "check", "floral", "print", "pattern", "embroidery", "ankara", "kente", "aso oke"]
+        let matches = patterns.filter { text.contains($0) }
+        return matches.isEmpty ? "low-pattern" : matches.map(\.normalizedForFingerprint).joined(separator: ".")
+    }
+
+    private func inferredFabricSignal(from labels: [DetectedLabel]) -> String {
+        let text = labels.map(\.identifier).joined(separator: " ").lowercased()
+        let fabrics = ["denim", "cotton", "linen", "leather", "wool", "silk", "knit", "fabric", "textile", "lace"]
+        let matches = fabrics.filter { text.contains($0) }
+        return matches.isEmpty ? "fabric-unknown" : matches.map(\.normalizedForFingerprint).joined(separator: ".")
+    }
+
+    private func detectedStyleCategorySignal(validation: ScanValidation, labels: [DetectedLabel]) -> String {
+        let text = labels.map(\.identifier).joined(separator: " ").lowercased()
+        guard validation.isAccepted else {
+            return "unrecognized"
+        }
+        if let noveltyStyle = noveltyClothingMatch(in: labels) {
+            return noveltyStyle.styleCategory.normalizedForFingerprint
+        }
+        if let sleepwearCategory = sleepwearOrLoungewearCategory(from: text) {
+            return sleepwearCategory.normalizedForFingerprint
+        }
+        if traditionalStyleMatch(in: labels, image: nil) != nil {
+            return "traditional"
+        }
+        if text.contains("suit") || text.contains("blazer") || text.contains("formal") {
+            return "formal"
+        }
+        if text.contains("sport") || text.contains("gym") || text.contains("athletic") {
+            return "athletic"
+        }
+        if text.contains("jeans") || text.contains("t-shirt") || text.contains("sneaker") {
+            return "casual"
+        }
+        return validation.sceneName.normalizedForFingerprint
+    }
+
+    private func confidenceLevel(for validation: ScanValidation, labels: [DetectedLabel]) -> OutfitConfidenceLevel {
+        guard validation.isAccepted else {
+            return .low
+        }
+
+        let bestClothing = clothingConfidence(in: labels)
+        let bestLabel = labels.map(\.confidence).max() ?? 0
+        let confidence = max(bestClothing, bestLabel)
+
+        if confidence >= 0.72 {
+            return .high
+        }
+        if confidence >= 0.38 {
+            return .medium
+        }
+        return .low
+    }
+
+    private func scoreFingerprint(for image: UIImage, validation: ScanValidation, labels: [DetectedLabel], colorPalette: [String]) -> String {
+        let palette = colorPalette
+            .map(\.normalizedForFingerprint)
+            .sorted()
+            .joined(separator: ".")
+        let clothingSignal = detectedClothingItems(from: labels)
+            .map(\.normalizedForFingerprint)
+            .removingDuplicates()
+            .prefix(5)
+            .joined(separator: ".")
+        let stableClothingSignal = clothingSignal.isEmpty ? "style-scan" : clothingSignal
+
+        return "\(validation.arrangementFingerprint)-\(stableClothingSignal)-\(palette)"
+    }
+
+    private func prototypeLabels(for image: UIImage) -> [DetectedLabel] {
+        [
+            DetectedLabel(identifier: "outfit", confidence: 0.98),
+            DetectedLabel(identifier: "clothing", confidence: 0.96),
+            DetectedLabel(identifier: "fashion", confidence: 0.94)
+        ]
+    }
+
+    private func outfitFingerprint(for image: UIImage, validation: ScanValidation) -> String {
+        let colorSignature = image.colorSignature()
+        let arrangement = validation.arrangementFingerprint
+        let labelSignature = validation.labels
+            .prefix(8)
+            .map { $0.identifier.normalizedForFingerprint }
+            .removingDuplicates()
+            .joined(separator: ".")
+
+        switch validation {
+        case .acceptedPerson:
+            return "person-\(arrangement)-\(labelSignature)-\(colorSignature)"
+        case .acceptedClothing(let label, _):
+            return "clothing-\(arrangement)-\(label.normalizedForFingerprint)-\(labelSignature)-\(colorSignature)"
+        case .acceptedClothingScene(let scene, let label, _):
+            return "\(scene.rawValue)-\(arrangement)-\(label.normalizedForFingerprint)-\(labelSignature)-\(colorSignature)"
+        case .acceptedRegionClothing(let scene, let label, _, _):
+            return "\(scene?.rawValue ?? "item")-region-\(arrangement)-\(label.normalizedForFingerprint)-\(labelSignature)-\(colorSignature)"
+        case .poorQuality(let issue):
+            return "poor-quality-\(issue.rawValue)-\(colorSignature)"
+        case .rejected(let label):
+            return "rejected-\(label.normalizedForFingerprint)-\(colorSignature)"
+        case .unknown:
+            return "unknown-\(colorSignature)"
+        }
+    }
+
+    private func calculateStyleScore(
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        colorPalette: [String],
+        detectedItems: [String],
+        styleCategory: String
+    ) -> StyleScoreResult {
+        let attributes = detectGarmentAttributes(
+            validation: validation,
+            labels: labels,
+            colorPalette: colorPalette,
+            detectedItems: detectedItems,
+            styleCategory: styleCategory
+        )
+        let result = calculateStyleScore(detectedAttributes: attributes)
+        return result
+    }
+
+    private func detectGarmentAttributes(
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        colorPalette: [String],
+        detectedItems: [String],
+        styleCategory: String
+    ) -> DetectedStyleAttributes {
+        DetectedStyleAttributes(
+            colors: colorPalette.map { $0.lowercased() },
+            patterns: inferredStablePatternSignal(from: labels)
+                .components(separatedBy: ".")
+                .filter { !$0.isEmpty && $0 != "low-pattern" },
+            fitAssessment: fitAssessmentSignal(validation: validation, labels: labels, detectedItems: detectedItems),
+            detectedStyle: styleCategory,
+            accessories: detectedAccessories(from: labels, detectedItems: detectedItems)
+        )
+    }
+
+    private func calculateStyleScore(detectedAttributes attributes: DetectedStyleAttributes) -> StyleScoreResult {
+        let breakdown = scoreComponents(attributes: attributes)
+        var total = normalizedScore(for: breakdown)
+        if total == 100 && !isPerfectScoreEvidenceBacked(attributes: attributes, breakdown: breakdown) {
+            total = 99
+        }
+
+        return StyleScoreResult(total: total, breakdown: breakdown, tier: scoreRatingTitle(for: total))
+    }
+
+    private func scoreComponents(attributes: DetectedStyleAttributes) -> OutfitScoreBreakdown {
+        OutfitScoreBreakdown(
+            colorHarmony: scoreColorHarmony(attributes.colors),
+            patternBalance: scorePatterns(attributes.patterns),
+            fitQuality: scoreFit(attributes.fitAssessment),
+            // Occasion is explanation-only; never a score input.
+            occasionMatch: 0,
+            accessoryUse: scoreAccessories(attributes.accessories)
+        )
+    }
+
+    private func scoreColorHarmony(_ colors: [String]) -> Int {
+        let normalized = colors.map { $0.lowercased() }.removingDuplicates()
+        let neutrals = ["black", "white", "gray", "grey", "navy", "beige", "tan", "brown", "charcoal", "cream", "denim"]
+        let hasOnlyNeutrals = !normalized.isEmpty && normalized.allSatisfy { color in
+            neutrals.contains { color.contains($0) }
+        }
+        let twoColorMax = normalized.count <= 3
+        let tooManyCompetingColors = normalized.count >= 5
+
+        var score = 15
+        if hasOnlyNeutrals { score += 5 }
+        if twoColorMax { score += 5 }
+        if tooManyCompetingColors { score -= 5 }
+        if normalized.contains("navy") && (normalized.contains("white") || normalized.contains("tan") || normalized.contains("brown")) { score += 2 }
+        return min(25, max(8, score))
+    }
+
+    private func scorePatterns(_ patterns: [String]) -> Int {
+        let filtered = patterns
+            .filter { !$0.localizedCaseInsensitiveContains("solid") && !$0.localizedCaseInsensitiveContains("low-pattern") }
+            .removingDuplicates()
+        if filtered.isEmpty { return 20 }
+        if filtered.count == 1 { return 18 }
+        return 10
+    }
+
+    private func scoreFit(_ fitAssessment: String) -> Int {
+        StyleScoreCalibration.fitScore(for: fitAssessment)
+    }
+
+    private func scoreAccessories(_ accessories: [String]) -> Int {
+        let count = accessories.removingDuplicates().count
+        if count == 0 { return 6 }
+        if count == 1 { return 8 }
+        return 10
+    }
+
+    private func isPerfectScoreEvidenceBacked(
+        attributes: DetectedStyleAttributes,
+        breakdown: OutfitScoreBreakdown
+    ) -> Bool {
+        let fitEvidence = attributes.fitAssessment.lowercased()
+        let positiveFitTerms = [
+            "verified excellent fit",
+            "excellent fit",
+            "exceptional fit",
+            "perfect fit",
+            "tailored",
+            "fitted",
+            "well-fitted",
+            "proper fit",
+            "clean fit",
+            "structured fit"
+        ]
+        let hasPositiveFitEvidence = positiveFitTerms.contains { fitEvidence.contains($0) }
+        let hasStrongColorEvidence = !attributes.colors.isEmpty && breakdown.colorHarmony == 25
+        let hasFullPatternEvidence = breakdown.patternBalance == 20
+        let hasStrongAccessoryEvidence = attributes.accessories.removingDuplicates().count >= 2 && breakdown.accessoryUse == 10
+
+        return hasPositiveFitEvidence
+            && hasStrongColorEvidence
+            && hasFullPatternEvidence
+            && hasStrongAccessoryEvidence
+    }
+
+    private func fitAssessmentSignal(validation: ScanValidation, labels: [DetectedLabel], detectedItems: [String]) -> String {
+        let text = (labels.map(\.identifier) + detectedItems).joined(separator: " ").lowercased()
+        if text.contains("oversized") || text.contains("baggy") { return "oversized" }
+        if text.contains("tailored") || text.contains("well-fitted") || text.contains("fitted") || text.contains("proper fit") || text.contains("clean fit") { return "tailored fit evidence" }
+        if text.contains("robe") || text.contains("sleepwear") || text.contains("loungewear") { return "relaxed" }
+        if validation.qualityScore < 80 { return "unclear fit" }
+        if validation.isPersonScan { return "worn fit visible but unverified" }
+        return "fit not evaluated from flat lay"
+    }
+
+    private func detectedAccessories(from labels: [DetectedLabel], detectedItems: [String]) -> [String] {
+        let terms = ["watch", "belt", "bag", "hat", "cap", "jewelry", "chain", "scarf", "tie", "sunglasses"]
+        return (labels.map(\.identifier) + detectedItems).filter { item in
+            terms.contains { item.localizedCaseInsensitiveContains($0) }
+        }.removingDuplicates()
+    }
+
+    private func loadScanHistory() -> [String: StoredOutfitScan] {
+        scanHistoryCache.history(from: outfitScanHistoryData)
+    }
+
+    private func savedImageAsset(for image: UIImage) -> SavedScanImageAsset? {
+        guard let jpegData = image.jpegData(compressionQuality: 0.92) else { return nil }
+        return SavedScanImageAssetStore().storeJPEG(
+            jpegData,
+            pixelWidth: Int(image.size.width * image.scale),
+            pixelHeight: Int(image.size.height * image.scale)
+        )
+    }
+
+    @discardableResult
+    private func saveScanHistory(_ history: [String: StoredOutfitScan]) -> Bool {
+        guard history.count <= SavedScanHistoryCapacity.maximumRecords,
+              let data = try? JSONEncoder().encode(history) else {
+            return false
+        }
+
+        scanHistoryCache.replace(with: history, encodedData: data)
+        outfitScanHistoryData = data
+        return true
+    }
+
+    private var recentStoredScans: [RecentOutfitScore] {
+        loadScanHistory()
+            .compactMap { savedScan(for: $0.key, storedScan: $0.value) }
+            .sorted { $0.firstScannedAt > $1.firstScannedAt }
+            .prefix(SavedScanHistoryCapacity.maximumRecords)
+            .map { $0 }
+    }
+
+    private func savedScan(
+        for id: String,
+        storedScan: StoredOutfitScan? = nil
+    ) -> RecentOutfitScore? {
+        let storedScan = storedScan ?? loadScanHistory()[id]
+        guard let storedScan, let analysis = storedScan.analysis else {
+            return nil
+        }
+
+        return RecentOutfitScore(
+            id: id,
+            score: storedScan.score,
+            analysis: analysis,
+            firstScannedAt: storedScan.firstScannedAt,
+            scanCount: storedScan.scanCount,
+            thumbnailData: storedScan.thumbnailData,
+            customTitle: storedScan.customTitle,
+            occasion: storedScan.occasion,
+            imageDigest: storedScan.imageDigest,
+            savedImageAsset: storedScan.savedImageAsset
+        )
+    }
+
+    private func detectsPersonSignal(
+        in cgImage: CGImage,
+        labels: [DetectedLabel]
+    ) -> Bool {
+        let hasHumanRectangle = detectsHumanRectangle(in: cgImage)
+        let hasFace = detectsFace(in: cgImage)
+
+        let personContextTerms = [
+            "person",
+            "people",
+            "human",
+            "portrait",
+            "face",
+            "head",
+            "body",
+            "torso",
+            "arm",
+            "hand",
+            "leg"
+        ]
+
+        let hasPersonContextLabel = labels.contains { label in
+            label.confidence >= 0.18 && personContextTerms.contains { term in
+                label.identifier.localizedCaseInsensitiveContains(term)
+            }
+        }
+        return hasHumanRectangle || hasFace || hasPersonContextLabel
+    }
+
+    private func detectsHumanRectangle(in cgImage: CGImage) -> Bool {
+        let request = VNDetectHumanRectanglesRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            return (request.results ?? []).contains { $0.confidence > 0.35 }
+        } catch {
+            return false
+        }
+    }
+
+    private func detectsFace(in cgImage: CGImage) -> Bool {
+        let request = VNDetectFaceRectanglesRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            return (request.results ?? []).contains { $0.confidence > 0.35 }
+        } catch {
+            return false
+        }
+    }
+
+    /// Generic image classification is supporting evidence only. When person
+    /// segmentation yields a bounded torso/lower-body region, the established
+    /// OCR and outfit-classification paths may inspect it even if generic labels
+    /// do not contain apparel terms.
+    private func defensiblePersonGarmentRegion(
+        in cgImage: CGImage
+    ) -> CGRect? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .balanced
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            guard let mask = request.results?.first?.pixelBuffer else { return nil }
+            guard let personBox = normalizedTopLeftBoundingBox(in: mask, threshold: 96) else {
+                return nil
+            }
+            return PersonGarmentRegionEvidence.torsoAndLowerBodyBox(for: personBox)
+        } catch {
+            return nil
+        }
+    }
+
+    private func classifyImage(_ cgImage: CGImage) -> [VNClassificationObservation] {
+        let request = VNClassifyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            return (request.results ?? []).filter { observation in
+                observation.confidence > 0.15 || isSleepwearObservationWorthKeeping(observation)
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private func recognizeGarmentText(in image: UIImage) -> [OutfitTextObservation] {
+
+        guard let cgImage = image.fastVisionCGImage() else { return [] }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        request.minimumTextHeight = 0.012
+        let handler = VNImageRequestHandler(
+            cgImage: cgImage,
+            orientation: image.cgImagePropertyOrientation
+        )
+
+        do {
+            try handler.perform([request])
+            let observations = (request.results ?? [])
+                .compactMap { observation -> OutfitTextObservation? in
+                    guard let candidate = observation.topCandidates(1).first,
+                          candidate.confidence >= 0.35 else {
+                        return nil
+                    }
+                    return OutfitTextObservation(
+                        text: candidate.string,
+                        confidence: Double(candidate.confidence)
+                    )
+                }
+                .prefix(12)
+                .map { $0 }
+            return observations
+        } catch {
+            // OCR is supporting evidence. A failure must leave classification
+            // uncertain rather than inventing text or rejecting the scan.
+            return []
+        }
+    }
+
+    private func classifyOutfit(
+        visualObservations: [OutfitVisualObservation],
+        textObservations: [OutfitTextObservation],
+        selectedOccasion: String?
+    ) -> OutfitClassificationResult {
+        OutfitClassificationEngine.classify(
+            visualObservations: visualObservations,
+            textObservations: textObservations,
+            selectedOccasion: selectedOccasion
+        )
+    }
+
+    private func adjudicatedOutfitClassification(
+        deterministic: OutfitClassificationResult,
+        validation: ScanValidation,
+        labels: [DetectedLabel]
+    ) async -> OutfitClassificationResult {
+        let normalizedLabels = labels.map(\.identifier).joined(separator: " ").lowercased()
+        let accessoryPresent = ["watch", "belt", "scarf", "jewelry", "necklace", "handbag", "purse"]
+            .contains { normalizedLabels.contains($0) }
+        let visibleMarkingPresent = ["logo", "brand mark", "embroider", "patch", "badge", "monogram"]
+            .contains { normalizedLabels.contains($0) }
+        let input = OutfitClassificationAdjudicationInput(
+            deterministic: deterministic,
+            detectedGarments: detectedClothingItems(from: labels),
+            apparelPresent: validation.isAccepted,
+            accessoryPresent: accessoryPresent,
+            readableGarmentTextPresent: !deterministic.detectedText.isEmpty,
+            visibleMarkingPresent: visibleMarkingPresent,
+            personEvidencePresent: validation.isPersonScan,
+            // Classification deliberately does not read hidden profile fields.
+            confirmedWorkplaceContextPresent: false,
+            imageQualityAccepted: validation.isAccepted
+        )
+        let fallback = OutfitClassificationAdjudicator.localSafetyResult(
+            deterministic: deterministic,
+            input: input
+        )
+        guard OutfitClassificationAdjudicator.needsAdjudication(
+            deterministic: deterministic,
+            input: input
+        ),
+        let session = StyleMatchAccountSessionStore.load(), session.expiresAt > Date() else {
+            return fallback
+        }
+
+        do {
+            let response = try await requestOutfitClassificationAdjudication(input)
+            return OutfitClassificationAdjudicator.applying(response, to: deterministic, input: input)
+        } catch {
+            return fallback
+        }
+    }
+
+    private func requestOutfitClassificationAdjudication(
+        _ input: OutfitClassificationAdjudicationInput
+    ) async throws -> OutfitClassificationAdjudication? {
+        let encodedInput = String(data: try JSONEncoder().encode(input), encoding: .utf8) ?? "{}"
+        let prompt = """
+        Return only a JSON object matching this exact schema:
+        {"finalOutfitType":"<OutfitCategory raw value>","confidence":0.0,"shouldOverrideDeterministic":true,"evidenceReasons":["apparelEvidence|accessorySecondary|uniformConstruction|visibleMarking|readableGarmentText|workOccasion|confirmedWorkplaceContext|insufficientEvidence"],"uncertaintyReason":"optional enum value or null"}
+
+        Decide only from these bounded local scan facts. Do not infer an employer, wearer, brand, or identity. Accessories cannot be the primary outfit when apparelPresent is true. Work selection alone cannot prove Work Uniform. Use otherUncertain if there is not enough evidence.
+        \(encodedInput)
+        """
+        let profile = StyleMatchStylistProfile(
+            name: "",
+            favoriteColors: "",
+            favoriteBrands: "",
+            preferredFit: "",
+            budget: "",
+            sizeProfile: "",
+            stylePreferences: "",
+            occasions: "",
+            weather: "",
+            weatherPreferences: "",
+            dressCode: "",
+            shoppingHabits: "",
+            pastOutfitRatings: "",
+            frequentlyWornOutfits: "",
+            pastPurchases: "",
+            favoriteOutfits: "",
+            closetInventory: "",
+            appContextSharingEnabled: false,
+            appContext: "Bounded scan classification adjudication. No profile, history, image, or chat-memory context is provided."
+        )
+        let client = OpenAIStylistClient(model: openAIModel)
+        let response = try await client.askStylist(
+            profile: profile,
+            messages: [],
+            question: prompt,
+            routeContext: ChatContext(screenContext: .aiTab())
+        )
+        return OutfitClassificationAdjudicator.decodeBoundedResponse(response)
+    }
+
+    private func isSleepwearObservationWorthKeeping(_ observation: VNClassificationObservation) -> Bool {
+        guard observation.confidence >= 0.05 else {
+            return false
+        }
+
+        let identifier = observation.identifier.lowercased()
+        let sleepwearLabels = [
+            "pajama", "pyjama", "sleepwear", "nightwear", "nightgown",
+            "robe", "bathrobe", "housecoat", "slipper", "slippers",
+            "house shoe", "sleep sock"
+        ]
+        return sleepwearLabels.contains { identifier.contains($0) }
+    }
+
+    private func clothingConfidence(in labels: [DetectedLabel]) -> Float {
+        labels.reduce(Float(0)) { best, label in
+            let isClothing = clothingTerms.contains { term in
+                label.identifier.localizedCaseInsensitiveContains(term)
+            }
+            return isClothing ? max(best, label.confidence) : best
+        }
+    }
+
+    private func regionClothingValidation(
+        for image: UIImage,
+        wholeImageLabels: [DetectedLabel]
+    ) -> ScanValidation? {
+        guard let cgImage = image.fastVisionCGImage() else { return nil }
+
+        let scene = flatLayRegionScene(in: wholeImageLabels)
+        let acceptanceThreshold: Float = scene == nil ? 0.30 : 0.24
+        let candidates = scanRegionCandidates(in: cgImage)
+        var strongestMatch: RegionClothingMatch?
+        var qualifyingBoxes: [CGRect] = []
+
+        for candidate in candidates {
+            guard let croppedImage = crop(cgImage, to: candidate.normalizedTopLeftBox) else {
+                continue
+            }
+
+            let regionLabels = classifyImage(croppedImage)
+                .map { DetectedLabel(identifier: $0.identifier, confidence: $0.confidence) }
+                .sorted { $0.confidence > $1.confidence }
+
+            guard let clothingLabel = regionLabels.first(where: { label in
+                clothingTerms.contains { term in
+                    label.identifier.localizedCaseInsensitiveContains(term)
+                }
+            }) else {
+                continue
+            }
+
+            if strongestMatch == nil || clothingLabel.confidence > (strongestMatch?.label.confidence ?? 0) {
+                strongestMatch = RegionClothingMatch(
+                    label: clothingLabel,
+                    labels: regionLabels,
+                    regionBox: candidate.normalizedTopLeftBox
+                )
+            }
+            if clothingLabel.confidence >= acceptanceThreshold {
+                qualifyingBoxes.append(candidate.normalizedTopLeftBox)
+                qualifyingBoxes.append(contentsOf: candidate.relatedPaletteBoxes)
+            }
+        }
+
+        guard let strongestMatch, strongestMatch.label.confidence >= acceptanceThreshold else { return nil }
+
+        let acceptedLabels = mergedRegionLabels(
+            regionLabels: strongestMatch.labels,
+            wholeImageLabels: wholeImageLabels
+        )
+        let paletteBoxes = qualifyingBoxes.reduce(into: [CGRect]()) { boxes, box in
+            if !boxes.contains(box) {
+                boxes.append(box)
+            }
+        }
+
+        if let scene {
+            return .acceptedRegionClothing(
+                scene,
+                strongestMatch.label.identifier,
+                acceptedLabels,
+                paletteBoxes
+            )
+        }
+        return .acceptedRegionClothing(nil, strongestMatch.label.identifier, acceptedLabels, paletteBoxes)
+    }
+
+    private func paletteRegionBoxes(
+        for image: UIImage,
+        validation: ScanValidation,
+        wholeImageLabels: [DetectedLabel]
+    ) -> [CGRect] {
+        guard !validation.isPersonScan else { return validation.regionPaletteBoxes }
+        if !validation.regionPaletteBoxes.isEmpty { return validation.regionPaletteBoxes }
+        guard let cgImage = image.fastVisionCGImage() else { return [] }
+
+        let scene = flatLayRegionScene(in: wholeImageLabels)
+        let threshold: Float = scene == nil ? 0.30 : 0.24
+        var boxes: [CGRect] = []
+
+        for candidate in scanRegionCandidates(in: cgImage) {
+            guard let croppedImage = crop(cgImage, to: candidate.normalizedTopLeftBox) else { continue }
+            let labels = classifyImage(croppedImage).map {
+                DetectedLabel(identifier: $0.identifier, confidence: $0.confidence)
+            }
+            guard labels.contains(where: { label in
+                label.confidence >= threshold && clothingTerms.contains { term in
+                    label.identifier.localizedCaseInsensitiveContains(term)
+                }
+            }) else { continue }
+
+            boxes.append(candidate.normalizedTopLeftBox)
+            boxes.append(contentsOf: candidate.relatedPaletteBoxes)
+        }
+
+        let uniqueBoxes = boxes.reduce(into: [CGRect]()) { result, box in
+            if !result.contains(box) { result.append(box) }
+        }
+        return uniqueBoxes
+    }
+
+    private func scanRegionCandidates(in cgImage: CGImage, limit: Int = 6) -> [ScanRegionCandidate] {
+        let foregroundCandidates = foregroundSubjectRegionCandidates(in: cgImage, limit: limit)
+        let objectnessCandidates = objectnessRegionCandidates(in: cgImage, limit: 3)
+        let baseCandidates = foregroundCandidates + objectnessCandidates
+        let imageSize = CGSize(width: cgImage.width, height: cgImage.height)
+        let subdividedCandidates = baseCandidates.flatMap {
+            subdividedRegionCandidates($0, imageSize: imageSize)
+        }
+        let deduplicated = deduplicatedRegionCandidates(baseCandidates + subdividedCandidates)
+        return Array(deduplicated.prefix(limit))
+    }
+
+    private func foregroundSubjectRegionCandidates(in cgImage: CGImage, limit: Int) -> [ScanRegionCandidate] {
+        guard #available(iOS 17.0, *), limit > 0 else {
+            return []
+        }
+
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            guard let observation = request.results?.first else {
+                return []
+            }
+
+            return observation.allInstances.prefix(limit).compactMap { instance in
+                guard let mask = try? observation.generateScaledMaskForImage(
+                    forInstances: IndexSet(integer: instance),
+                    from: handler
+                ),
+                let box = normalizedTopLeftBoundingBox(in: mask, threshold: 96) else {
+                    return nil
+                }
+                return ScanRegionCandidate(source: "foregroundSubject", normalizedTopLeftBox: expandedRegionBox(box))
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private func objectnessRegionCandidates(in cgImage: CGImage, limit: Int) -> [ScanRegionCandidate] {
+        guard limit > 0 else {
+            return []
+        }
+
+        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage)
+
+        do {
+            try handler.perform([request])
+            guard let salientObjects = request.results?.first?.salientObjects else {
+                return []
+            }
+
+            return salientObjects.prefix(limit).map { observation in
+                let visionBox = observation.boundingBox
+                let topLeftBox = CGRect(
+                    x: visionBox.minX,
+                    y: 1 - visionBox.maxY,
+                    width: visionBox.width,
+                    height: visionBox.height
+                )
+                return ScanRegionCandidate(source: "objectness", normalizedTopLeftBox: expandedRegionBox(topLeftBox))
+            }
+        } catch {
+            return []
+        }
+    }
+
+    private func subdividedRegionCandidates(
+        _ candidate: ScanRegionCandidate,
+        imageSize: CGSize
+    ) -> [ScanRegionCandidate] {
+        let box = candidate.normalizedTopLeftBox
+        guard box.width * box.height > 0.60 else {
+            return []
+        }
+
+        let halves = GarmentRegionGeometry.subdividedBoxes(
+            of: box,
+            imageSize: imageSize,
+            oversizedAreaThreshold: 0.60
+        )
+        return halves.map { half in
+            ScanRegionCandidate(
+                source: "subdivided",
+                normalizedTopLeftBox: half,
+                relatedPaletteBoxes: halves.filter { $0 != half }
+            )
+        }
+    }
+
+    private func deduplicatedRegionCandidates(
+        _ candidates: [ScanRegionCandidate],
+        overlapThreshold: CGFloat = 0.8
+    ) -> [ScanRegionCandidate] {
+        var result: [ScanRegionCandidate] = []
+
+        for candidate in candidates {
+            if let duplicateIndex = result.firstIndex(where: {
+                regionIntersectionOverUnion(
+                    candidate.normalizedTopLeftBox,
+                    $0.normalizedTopLeftBox
+                ) > overlapThreshold
+            }) {
+                let candidateArea = candidate.normalizedTopLeftBox.width * candidate.normalizedTopLeftBox.height
+                let existingArea = result[duplicateIndex].normalizedTopLeftBox.width
+                    * result[duplicateIndex].normalizedTopLeftBox.height
+                if candidateArea < existingArea {
+                    result[duplicateIndex] = candidate
+                }
+            } else {
+                result.append(candidate)
+            }
+        }
+
+        return result
+    }
+
+    private func regionIntersectionOverUnion(_ first: CGRect, _ second: CGRect) -> CGFloat {
+        let intersection = first.intersection(second)
+        guard !intersection.isNull, !intersection.isEmpty else {
+            return 0
+        }
+
+        let intersectionArea = intersection.width * intersection.height
+        let unionArea = first.width * first.height
+            + second.width * second.height
+            - intersectionArea
+        return unionArea > 0 ? intersectionArea / unionArea : 0
+    }
+
+    private func normalizedTopLeftBoundingBox(
+        in pixelBuffer: CVPixelBuffer,
+        threshold: UInt8
+    ) -> CGRect? {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+
+        for y in 0..<height {
+            for x in 0..<width where bytes[y * bytesPerRow + x] > threshold {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+
+        guard maxX >= minX, maxY >= minY else {
+            return nil
+        }
+
+        return CGRect(
+            x: CGFloat(minX) / CGFloat(width),
+            y: CGFloat(minY) / CGFloat(height),
+            width: CGFloat(maxX - minX + 1) / CGFloat(width),
+            height: CGFloat(maxY - minY + 1) / CGFloat(height)
+        )
+    }
+
+    private func expandedRegionBox(_ box: CGRect) -> CGRect {
+        let expanded = box.insetBy(dx: -box.width * 0.08, dy: -box.height * 0.08)
+        return expanded.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    private func crop(_ cgImage: CGImage, to normalizedTopLeftBox: CGRect) -> CGImage? {
+        let pixelBox = CGRect(
+            x: normalizedTopLeftBox.minX * CGFloat(cgImage.width),
+            y: normalizedTopLeftBox.minY * CGFloat(cgImage.height),
+            width: normalizedTopLeftBox.width * CGFloat(cgImage.width),
+            height: normalizedTopLeftBox.height * CGFloat(cgImage.height)
+        )
+        .integral
+        .intersection(CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+
+        guard pixelBox.width >= 2, pixelBox.height >= 2 else {
+            return nil
+        }
+        return cgImage.cropping(to: pixelBox)
+    }
+
+    private func flatLayRegionScene(in labels: [DetectedLabel]) -> ClothingScanScene? {
+        if labels.contains(where: { label in mannequinTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .mannequin
+        }
+        if labels.contains(where: { label in hangerTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .hanger
+        }
+        if labels.contains(where: { label in bedTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .bed
+        }
+        if labels.contains(where: { label in tableTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .table
+        }
+        if labels.contains(where: { label in floorTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return .floor
+        }
+        return nil
+    }
+
+    private func mergedRegionLabels(
+        regionLabels: [DetectedLabel],
+        wholeImageLabels: [DetectedLabel]
+    ) -> [DetectedLabel] {
+        var seen = Set<String>()
+        return (regionLabels + wholeImageLabels)
+            .sorted { $0.confidence > $1.confidence }
+            .filter { seen.insert($0.identifier.lowercased()).inserted }
+            .prefix(12)
+            .map { $0 }
+    }
+
+    private func strongestRejectedLabel(in labels: [DetectedLabel]) -> String? {
+        let strongRejected = labels.first { label in
+            label.confidence >= 0.32 && rejectedTerms.contains { term in
+                label.identifier.localizedCaseInsensitiveContains(term)
+            }
+        }
+
+        return strongRejected?.identifier
+    }
+
+    private func traditionalStyleMatch(in labels: [DetectedLabel], image: UIImage?) -> TraditionalStyleMatch? {
+        guard noveltyClothingMatch(in: labels) == nil else {
+            return nil
+        }
+
+        let labelText = labels.map(\.identifier).joined(separator: " ").lowercased()
+
+        if let rule = traditionalClothingRules.first(where: { rule in
+            rule.terms.contains { labelText.contains($0.lowercased()) }
+        }) {
+            let strongestRuleConfidence = labels
+                .filter { label in
+                    rule.terms.contains { label.identifier.localizedCaseInsensitiveContains($0) }
+                }
+                .map(\.confidence)
+                .max() ?? 0
+            let supportingFeatureCount = traditionalSupportFeatureCount(in: labelText)
+            let hasExplicitGarmentLabel = strongestRuleConfidence >= 0.55
+            let hasMultipleTraditionalFeatures = supportingFeatureCount >= 2
+
+            guard hasExplicitGarmentLabel || hasMultipleTraditionalFeatures else {
+                return nil
+            }
+
+            let confidence: Float = hasExplicitGarmentLabel && hasMultipleTraditionalFeatures ? 0.96 : 0.91
+
+            return TraditionalStyleMatch(
+                garment: rule.garment,
+                styleCategory: rule.styleCategory,
+                occasionCategory: rule.occasionCategory,
+                dressCode: rule.dressCode,
+                confidence: confidence,
+                summary: "Detected \(rule.garment). Confidence: \(Int((confidence * 100).rounded()))%. Style category: \(rule.styleCategory). Occasion: \(rule.occasionCategory). Dress code: \(rule.dressCode). KigoStylist evaluates visible clothing details such as fabric, pattern, embroidery, neckline, sleeves, silhouette, layering, headwear, color harmony, fit, and accessories. It does not infer race, ethnicity, nationality, religion, age, gender, or identity."
+            )
+        }
+
+        guard let image,
+              shouldUseAfricanTraditionalFallback(labels: labels, image: image) else {
+            return nil
+        }
+
+        return TraditionalStyleMatch(
+            garment: "African Traditional Wear",
+            styleCategory: "Cultural Wear",
+            occasionCategory: inferredTraditionalOccasion(),
+            dressCode: "Formal Traditional",
+            confidence: 0.91,
+            summary: "Detected African traditional wear from multiple visible clothing signals: textile color, pattern density, garment structure, and occasion context. Confidence: 91%. Style category: Cultural Wear. Occasion: \(inferredTraditionalOccasion()). Dress code: Formal Traditional. KigoStylist evaluates fabric presentation, pattern balance, color harmony, fit, layering, headwear, accessories, and overall coordination. It does not infer race, ethnicity, nationality, religion, age, gender, or identity."
+        )
+    }
+
+    private func shouldUseAfricanTraditionalFallback(labels: [DetectedLabel], image: UIImage) -> Bool {
+        guard noveltyClothingMatch(in: labels) == nil else {
+            return false
+        }
+
+        let labelText = labels.map(\.identifier).joined(separator: " ").lowercased()
+        let hasAcceptedClothingContext = labelText.contains("person")
+            || labelText.contains("clothing")
+            || labelText.contains("apparel")
+            || labelText.contains("fashion")
+            || labelText.contains("dress")
+            || labelText.contains("shirt")
+            || labelText.contains("robe")
+            || labelText.contains("gown")
+            || labelText.contains("fabric")
+            || labelText.contains("textile")
+            || labelText.contains("suit")
+        let contextText = "\(plannedOccasion) \(dressCode) \(occasionFormality) \(occasions) \(stylePreferences)".lowercased()
+        let userTraditionalContext = ["traditional", "native", "african", "nigerian", "wedding", "ceremony", "cultural", "heritage"].contains { contextText.contains($0) }
+        let textileScore = image.traditionalTextileSignalScore()
+        let supportCount = traditionalSupportFeatureCount(in: labelText)
+
+        return hasAcceptedClothingContext && textileScore >= 8 && userTraditionalContext && supportCount >= 1
+    }
+
+    private func noveltyClothingMatch(in labels: [DetectedLabel]) -> NoveltyClothingMatch? {
+        let labelText = labels.map(\.identifier).joined(separator: " ").lowercased()
+        let ruleMatches = noveltyClothingRules.compactMap { rule -> (rule: NoveltyClothingRule, score: Int, confidence: Float)? in
+            let matchedTerms = rule.terms.filter { labelText.contains($0) }
+            let confidence = labels
+                .filter { label in rule.terms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }
+                .map(\.confidence)
+                .max() ?? (matchedTerms.isEmpty ? 0 : 0.62)
+            let score = matchedTerms.count * 2 + Int((confidence * 10).rounded())
+            guard score > 0 else { return nil }
+            return (rule, score, confidence)
+        }
+
+        guard let best = ruleMatches.sorted(by: { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.confidence > rhs.confidence
+            }
+            return lhs.score > rhs.score
+        }).first else {
+            return nil
+        }
+
+        let confidence = max(best.confidence, best.score >= 7 ? 0.92 : 0.84)
+        return NoveltyClothingMatch(
+            garment: best.rule.garment,
+            styleCategory: best.rule.styleCategory,
+            occasionCategory: best.rule.occasionCategory,
+            dressCode: best.rule.dressCode,
+            confidence: min(confidence, 0.98),
+            occasionNote: "Occasion check: this reads as \(best.rule.styleCategory.lowercased()), so KigoStylist recommends it for home, themed events, sleepwear, cozy lounging, or playful casual settings instead of formal or traditional occasions.",
+            summary: "Detected \(best.rule.garment). Style category: \(best.rule.styleCategory). This classification takes priority over Traditional Wear because the scan includes novelty, sleepwear, character, plush, robe, slipper, costume, or loungewear signals. KigoStylist avoids guessing cultural attire unless confidence is at least 90% and multiple traditional garment features are visible."
+        )
+    }
+
+    private func clothingPurposeClassification(
+        validation: ScanValidation,
+        labels: [DetectedLabel],
+        image: UIImage?,
+        primaryPalette: [String]
+    ) -> ClothingPurposeMatch? {
+        let labelText = labels.map(\.identifier).joined(separator: " ").lowercased()
+        let sceneText = "\(validation.sceneName) \(validation.arrangementFingerprint) \(detectedEnvironment(from: labels))".lowercased()
+        let contextText = "\(labelText) \(sceneText)"
+        let imageSleepwearBoost = image?.sleepwearVisualSignalScore(primaryPalette: primaryPalette) ?? 0
+
+        let sleepwearTerms = [
+            "pajama", "pyjama", "sleepwear", "nightwear", "nightgown", "sleep shirt",
+            "sleep set", "matching sleep", "robe", "bathrobe", "fleece robe", "plush robe",
+            "morning robe", "housecoat", "slipper", "slippers", "fuzzy slipper",
+            "plush slipper", "bedroom slipper", "house shoe", "sleep sock", "flannel pajama",
+            "flannel pajamas", "pajama flannel"
+        ]
+        let loungeTerms = [
+            "loungewear", "lounge set", "house clothes", "indoor wear", "homewear",
+            "blanket hoodie", "fuzzy slipper", "plush robe", "plush slipper"
+        ]
+        let childTerms = [
+            "child", "kid", "girl", "boy", "children", "toddler", "youth", "young person",
+            "children's room", "kids room", "toy"
+        ]
+        let bedroomTerms = [
+            "bedroom", "bathroom", "bed", "blanket", "pillow", "dresser", "closet",
+            "children's room", "kids room", "home"
+        ]
+        let matchingSetTerms = [
+            "matching set", "coordinated set", "two-piece", "two piece",
+            "matching top and bottom", "top and bottom", "matching outfit",
+            "shirt and pants set", "pants set"
+        ]
+        let comfortPatternTerms = [
+            "stripe", "striped", "red and white", "pink and white", "pink red",
+            "pastel", "soft", "loose", "barefoot"
+        ]
+
+        let sleepMatches = sleepwearTerms.filter { contextText.contains($0) }.count
+        let loungeMatches = loungeTerms.filter { contextText.contains($0) }.count
+        let childMatches = childTerms.filter { contextText.contains($0) }.count
+        let bedroomMatches = bedroomTerms.filter { contextText.contains($0) }.count
+        let matchingSetMatches = matchingSetTerms.filter { contextText.contains($0) }.count
+        let comfortPatternMatches = comfortPatternTerms.filter { contextText.contains($0) }.count
+        let contextualSleepwearSetSignal = (childMatches > 0 || bedroomMatches > 0)
+            && (matchingSetMatches > 0 || imageSleepwearBoost >= 5)
+            && (comfortPatternMatches > 0 || imageSleepwearBoost >= 5)
+        let visualHomeSleepwearSignal = imageSleepwearBoost >= 6 && (childMatches > 0 || bedroomMatches > 0)
+        let hasStrongSleepwearSignal = sleepMatches >= 1 || contextualSleepwearSetSignal || visualHomeSleepwearSignal
+        let hasIndoorComfortSignal = loungeMatches >= 1
+            || contextualSleepwearSetSignal
+            || visualHomeSleepwearSignal
+            || (imageSleepwearBoost >= 5 && bedroomMatches > 0)
+
+        if hasStrongSleepwearSignal || (hasIndoorComfortSignal && childMatches > 0) {
+            let category = childMatches > 0 ? "Children's Sleepwear" : (sleepMatches > 0 || contextualSleepwearSetSignal || visualHomeSleepwearSignal ? "Sleepwear" : "Indoor Wear")
+            let confidence = min(0.94, Float(0.78 + Double(sleepMatches + loungeMatches + bedroomMatches + childMatches + matchingSetMatches + comfortPatternMatches) * 0.04 + Double(imageSleepwearBoost) * 0.01))
+            return ClothingPurposeMatch(
+                garment: category,
+                styleCategory: category,
+                occasionCategory: childMatches > 0 ? "Kids Sleepwear or Home Comfort" : "Home, Sleepwear, or Loungewear",
+                dressCode: "Sleepwear",
+                confidence: max(confidence, 0.84),
+                occasionNote: "Occasion check: this reads as \(category.lowercased()), so KigoStylist keeps it in home, bedtime, or relaxed indoor settings instead of business, office, smart casual, or formal categories.",
+                summary: childMatches > 0
+                    ? "This appears to be children's sleepwear or home loungewear. The soft robe, pajama-style pieces, indoor setting, or slipper signals point to comfort and relaxing at home, not business casual."
+                    : "This appears to be sleepwear, loungewear, or indoor wear. Soft fabric, robe, slipper, pajama, or home-environment signals take priority over business or formal styling."
+            )
+        }
+
+        if hasIndoorComfortSignal && (loungeMatches > 0 || bedroomMatches > 0) {
+            return ClothingPurposeMatch(
+                garment: "Loungewear",
+                styleCategory: "Loungewear",
+                occasionCategory: "Home or Casual Comfort",
+                dressCode: "Relaxed",
+                confidence: 0.84,
+                occasionNote: "Occasion check: this reads as loungewear or indoor wear, so KigoStylist avoids business, professional, formal, or office labels.",
+                summary: "This appears to be loungewear or indoor wear. The home setting and comfort-focused clothing signals make relaxed styling more realistic than business or formal styling."
+            )
+        }
+
+        let athleticTerms = ["athletic", "sportswear", "gym", "workout", "running", "training", "jersey"]
+        if athleticTerms.contains(where: { contextText.contains($0) }) {
+            return ClothingPurposeMatch(
+                garment: "Athletic Wear",
+                styleCategory: "Athletic Wear",
+                occasionCategory: "Gym, Training, or Casual Sport",
+                dressCode: "Athletic",
+                confidence: 0.88,
+                occasionNote: "Occasion check: this reads as athletic wear, so recommendations should focus on movement, comfort, and sport styling.",
+                summary: "This appears to be athletic wear. KigoStylist evaluates comfort, color coordination, shoe pairing, and activity fit rather than business formality."
+            )
+        }
+
+        let uniformTerms = ["uniform", "scrub", "medical", "school uniform", "work uniform"]
+        if uniformTerms.contains(where: { contextText.contains($0) }) {
+            return ClothingPurposeMatch(
+                garment: "Uniform",
+                styleCategory: contextText.contains("scrub") ? "Medical Scrubs" : "Uniform",
+                occasionCategory: "Work, School, or Service Uniform",
+                dressCode: "Uniform",
+                confidence: 0.88,
+                occasionNote: "Occasion check: this reads as a uniform, so styling advice should respect the purpose and dress requirements.",
+                summary: "This appears to be uniform-related clothing. KigoStylist evaluates neatness, fit, comfort, and appropriate accessories rather than casual or formal labels."
+            )
+        }
+
+        if isRuggedCasualEvidence(contextText) {
+            return ClothingPurposeMatch(
+                garment: "Rugged Casual",
+                styleCategory: "Rugged Casual",
+                occasionCategory: "Everyday Casual",
+                dressCode: "Casual",
+                confidence: contextText.contains("boot") ? 0.93 : 0.90,
+                occasionNote: "Occasion check: this reads as rugged casual or outdoor casual, so KigoStylist keeps business casual confidence low unless clear business-style pieces are visible.",
+                summary: "This appears to be a rugged casual everyday outfit. The hooded, plaid, flannel, denim, or casual footwear signals create a relaxed outdoor/workwear casual look rather than a business casual look."
+            )
+        }
+
+        return nil
+    }
+
+    private func traditionalSupportFeatureCount(in text: String) -> Int {
+        let supportTerms = [
+            "embroidery", "embroidered", "woven", "textile", "fabric", "pattern", "ceremonial",
+            "heritage", "traditional", "native", "ankara", "aso oke", "kente", "head wrap",
+            "headwrap", "gele", "duku", "robe", "kaftan", "agbada", "dashiki", "sari", "saree",
+            "kimono", "hanbok", "thobe", "abaya", "kilt", "dirndl", "huipil"
+        ]
+        return supportTerms.reduce(0) { count, term in
+            text.contains(term) ? count + 1 : count
+        }
+    }
+
+    private var noveltyClothingRules: [NoveltyClothingRule] {
+        [
+            NoveltyClothingRule(garment: "Character Clothing", terms: ["hello kitty", "kitty", "disney", "pokemon", "pokémon", "marvel", "dc comics", "anime", "cartoon", "character", "mascot", "graphic character"], styleCategory: "Character Clothing", occasionCategory: "Playful Casual", dressCode: "Novelty Casual"),
+            NoveltyClothingRule(garment: "Onesie", terms: ["onesie", "one-piece pajamas", "one piece pajama", "romper pajama", "jumpsuit pajama"], styleCategory: "Onesie", occasionCategory: "Sleepwear or Loungewear", dressCode: "Loungewear"),
+            NoveltyClothingRule(garment: "Sleepwear", terms: ["pajama", "pyjama", "sleepwear", "nightwear", "sleep shirt", "sleep set", "matching sleepwear"], styleCategory: "Sleepwear", occasionCategory: "Home or Sleepwear", dressCode: "Sleepwear"),
+            NoveltyClothingRule(garment: "Loungewear", terms: ["loungewear", "lounge set", "robe", "bathrobe", "blanket hoodie", "plush robe", "fuzzy slipper", "house shoe"], styleCategory: "Loungewear", occasionCategory: "Home or Casual Comfort", dressCode: "Relaxed"),
+            NoveltyClothingRule(garment: "Costume or Novelty Wear", terms: ["costume", "cosplay", "animal costume", "unicorn", "bear hoodie", "bunny hoodie", "animal ears", "cat ears", "hood with ears", "plush hoodie"], styleCategory: "Novelty Wear", occasionCategory: "Themed Event or Playful Casual", dressCode: "Novelty Casual"),
+            NoveltyClothingRule(garment: "Fuzzy Slippers", terms: ["slipper", "slippers", "fuzzy slipper", "plush slipper", "house shoe"], styleCategory: "Loungewear", occasionCategory: "Home or Sleepwear", dressCode: "Relaxed")
+        ]
+    }
+
+    private func inferredTraditionalOccasion() -> String {
+        let contextText = "\(plannedOccasion) \(dressCode) \(occasionFormality) \(occasions)".lowercased()
+
+        if contextText.contains("wedding") {
+            return "Traditional Wedding"
+        }
+        if contextText.contains("church") || contextText.contains("religious") {
+            return "Religious Celebration"
+        }
+        if contextText.contains("festival") || contextText.contains("celebration") {
+            return "Cultural Festival"
+        }
+        if contextText.contains("graduation") {
+            return "Graduation"
+        }
+        if contextText.contains("ceremony") || contextText.contains("formal") {
+            return "Ceremony"
+        }
+
+        return "Cultural Celebration"
+    }
+
+    private var traditionalClothingRules: [TraditionalClothingRule] {
+        [
+            TraditionalClothingRule(garment: "Traditional Nigerian Agbada", terms: ["agbada"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Nigerian Wear"),
+            TraditionalClothingRule(garment: "Senator Wear", terms: ["senator wear", "senator suit"], styleCategory: "Heritage Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Isiagu", terms: ["isiagu"], styleCategory: "Heritage Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Buba and Iro", terms: ["buba", "iro", "buba and iro"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Ankara", terms: ["ankara", "wax print", "african print"], styleCategory: "Cultural Wear", occasionCategory: "Cultural Celebration"),
+            TraditionalClothingRule(garment: "Aso Oke", terms: ["aso oke", "aso-oke"], styleCategory: "Ceremonial Wear", occasionCategory: "Traditional Wedding"),
+            TraditionalClothingRule(garment: "Dashiki", terms: ["dashiki"], styleCategory: "Cultural Wear", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Kaftan", terms: ["kaftan", "caftan"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Boubou", terms: ["boubou"], styleCategory: "Traditional Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Grand Boubou", terms: ["grand boubou"], styleCategory: "Cultural Formal Wear", occasionCategory: "Ceremony"),
+            TraditionalClothingRule(garment: "Moroccan Djellaba", terms: ["djellaba", "jellaba"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Traditional African Head Wrap", terms: ["gele", "duku", "head wrap", "headwrap"], styleCategory: "Traditional Accessory", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Kente", terms: ["kente"], styleCategory: "Heritage Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Kanzu", terms: ["kanzu"], styleCategory: "Traditional Wear", occasionCategory: "Religious or Ceremonial Attire"),
+            TraditionalClothingRule(garment: "Gomesi", terms: ["gomesi"], styleCategory: "Traditional Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Shuka", terms: ["shuka", "maasai shuka"], styleCategory: "Heritage Wear", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Habesha Kemis", terms: ["habesha kemis", "habesha dress"], styleCategory: "Traditional Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Kimono", terms: ["kimono"], styleCategory: "Traditional Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Yukata", terms: ["yukata"], styleCategory: "Festival Wear", occasionCategory: "Festival Wear"),
+            TraditionalClothingRule(garment: "Hanfu", terms: ["hanfu"], styleCategory: "Traditional Wear", occasionCategory: "Heritage Wear"),
+            TraditionalClothingRule(garment: "Qipao / Cheongsam", terms: ["qipao", "cheongsam"], styleCategory: "Traditional Wear", occasionCategory: "Evening or Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Hanbok", terms: ["hanbok"], styleCategory: "Traditional Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Saree", terms: ["saree", "sari"], styleCategory: "Traditional Wear", occasionCategory: "Wedding Traditional Wear"),
+            TraditionalClothingRule(garment: "Salwar Kameez", terms: ["salwar kameez", "shalwar kameez"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Sherwani", terms: ["sherwani"], styleCategory: "Wedding Traditional Wear", occasionCategory: "Wedding Traditional Wear"),
+            TraditionalClothingRule(garment: "Kurta Pajama", terms: ["kurta pajama", "kurta pyjama", "kurta"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Lehenga", terms: ["lehenga"], styleCategory: "Wedding Traditional Wear", occasionCategory: "Wedding Traditional Wear"),
+            TraditionalClothingRule(garment: "Ao Dai", terms: ["ao dai", "aodai"], styleCategory: "National Dress", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Chut Thai", terms: ["chut thai"], styleCategory: "National Dress", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Batik Clothing", terms: ["batik"], styleCategory: "Heritage Wear", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Traditional Indonesian Clothing", terms: ["kebaya", "sarong", "songket", "indonesian traditional clothing"], styleCategory: "National Dress", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Thobe", terms: ["thobe", "thoab"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Kandura", terms: ["kandura"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Dishdasha", terms: ["dishdasha"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Bisht", terms: ["bisht"], styleCategory: "Ceremonial Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Abaya", terms: ["abaya"], styleCategory: "Traditional Wear", occasionCategory: "Religious Attire"),
+            TraditionalClothingRule(garment: "Jalabiya", terms: ["jalabiya", "jellabiya"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Keffiyeh", terms: ["keffiyeh", "keffiyah"], styleCategory: "Traditional Accessory", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Shemagh", terms: ["shemagh"], styleCategory: "Traditional Accessory", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Scottish Kilt", terms: ["kilt"], styleCategory: "National Dress", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Lederhosen", terms: ["lederhosen"], styleCategory: "Festival Wear", occasionCategory: "Festival Wear"),
+            TraditionalClothingRule(garment: "Dirndl", terms: ["dirndl"], styleCategory: "Festival Wear", occasionCategory: "Festival Wear"),
+            TraditionalClothingRule(garment: "Vyshyvanka", terms: ["vyshyvanka", "embroidered shirt"], styleCategory: "Heritage Wear", occasionCategory: "National Dress"),
+            TraditionalClothingRule(garment: "Flamenco Dress", terms: ["flamenco dress", "flamenco"], styleCategory: "Cultural Wear", occasionCategory: "Festival Wear"),
+            TraditionalClothingRule(garment: "Native American Regalia", terms: ["native american regalia", "regalia"], styleCategory: "Ceremonial Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Charro Suit", terms: ["charro suit", "charro"], styleCategory: "Heritage Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Huipil", terms: ["huipil"], styleCategory: "Heritage Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Pollera", terms: ["pollera"], styleCategory: "Traditional Wear", occasionCategory: "Festival Wear"),
+            TraditionalClothingRule(garment: "Poncho", terms: ["poncho"], styleCategory: "Traditional Wear", occasionCategory: "Traditional Wear"),
+            TraditionalClothingRule(garment: "Traditional Andean Clothing", terms: ["andean clothing", "andean", "chullo"], styleCategory: "Heritage Wear", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Lava-lava", terms: ["lava-lava", "lavalava"], styleCategory: "Traditional Wear", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Pareo", terms: ["pareo"], styleCategory: "Traditional Wear", occasionCategory: "Cultural Wear"),
+            TraditionalClothingRule(garment: "Maori Traditional Garments", terms: ["maori cloak", "korowai", "maori garment"], styleCategory: "Ceremonial Wear", occasionCategory: "Ceremonial Wear"),
+            TraditionalClothingRule(garment: "Samoan Ceremonial Clothing", terms: ["samoan ceremonial", "samoan traditional clothing", "ie toga"], styleCategory: "Ceremonial Wear", occasionCategory: "Ceremony"),
+            TraditionalClothingRule(garment: "Tongan Ceremonial Clothing", terms: ["tongan ceremonial", "tongan traditional clothing", "taovala"], styleCategory: "Ceremonial Wear", occasionCategory: "Ceremony"),
+            TraditionalClothingRule(garment: "Pacific Ceremonial Dress", terms: ["pacific ceremonial dress", "pacific traditional dress"], styleCategory: "Ceremonial Wear", occasionCategory: "Ceremonial Wear")
+        ]
+    }
+
+    private func clothingSceneMatch(in labels: [DetectedLabel]) -> ClothingSceneMatch? {
+        let clothingLabel = labels.first { label in
+            clothingTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) }
+        }
+
+        guard let clothingLabel else {
+            return nil
+        }
+
+        if labels.contains(where: { label in mannequinTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .mannequin, label: clothingLabel.identifier)
+        }
+
+        if labels.contains(where: { label in hangerTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .hanger, label: clothingLabel.identifier)
+        }
+
+        if labels.contains(where: { label in bedTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .bed, label: clothingLabel.identifier)
+        }
+
+        if labels.contains(where: { label in bagTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .bag, label: clothingLabel.identifier)
+        }
+
+        if labels.contains(where: { label in tableTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .table, label: clothingLabel.identifier)
+        }
+
+        if labels.contains(where: { label in floorTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .floor, label: clothingLabel.identifier)
+        }
+
+        if labels.contains(where: { label in shoppingDisplayTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+            return ClothingSceneMatch(scene: .shoppingDisplay, label: clothingLabel.identifier)
+        }
+
+        return nil
+    }
+
+    private func detectedClothingItems(from labels: [DetectedLabel]) -> [String] {
+        let standardItems = labels
+            .filter { label in
+                clothingTerms.contains { label.identifier.localizedCaseInsensitiveContains($0) }
+            }
+            .compactMap { GarmentLabelMapper.humanReadableTerm(for: $0.identifier) }
+            .removingDuplicates()
+            .prefix(8)
+            .map { $0 }
+
+        if let noveltyStyle = noveltyClothingMatch(in: labels) {
+            return ([noveltyStyle.garment] + standardItems)
+                .removingDuplicates()
+                .prefix(8)
+                .map { $0 }
+        }
+
+        guard let culturalStyle = traditionalStyleMatch(in: labels, image: nil) else {
+            return standardItems
+        }
+
+        return ([culturalStyle.garment] + standardItems)
+            .removingDuplicates()
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private func detectedItemConfidences(for items: [String], labels: [DetectedLabel], culturalStyle: TraditionalStyleMatch?) -> [DetectedItemConfidence] {
+        items
+            .prefix(8)
+            .enumerated()
+            .map { index, item in
+                let itemKey = item.lowercased()
+                let matchedConfidence = labels
+                    .filter { label in
+                        let labelKey = label.identifier.lowercased()
+                        return labelKey.contains(itemKey) || itemKey.contains(labelKey)
+                    }
+                    .map(\.confidence)
+                    .max()
+
+                let confidence: Int
+                if let culturalStyle, culturalStyle.garment.localizedCaseInsensitiveCompare(item) == .orderedSame {
+                    confidence = Int((culturalStyle.confidence * 100).rounded())
+                } else if let matchedConfidence {
+                    confidence = Int((matchedConfidence * 100).rounded())
+                } else {
+                    confidence = max(72, 82 - index * 2)
+                }
+
+                return DetectedItemConfidence(item: item, confidence: min(max(confidence, 72), 99))
+            }
+    }
+
+    private func detectedEnvironment(from labels: [DetectedLabel]) -> String {
+        let environmentRules: [(String, [String])] = [
+            ("Home", ["home", "bedroom", "living room", "kitchen", "house"]),
+            ("Office", ["office", "desk", "conference room", "workplace"]),
+            ("Closet", ["closet", "wardrobe", "clothing rack"]),
+            ("Bedroom", ["bedroom", "bed", "dresser"]),
+            ("Store", ["store", "shop", "retail", "boutique"]),
+            ("Dressing Room", ["dressing room", "fitting room", "mirror"]),
+            ("Church", ["church", "chapel", "sanctuary"]),
+            ("Wedding", ["wedding", "bride", "groom", "banquet"]),
+            ("Party", ["party", "club", "celebration"]),
+            ("School", ["school", "classroom", "campus"]),
+            ("Gym", ["gym", "fitness", "exercise"]),
+            ("Beach", ["beach", "sand", "ocean", "swim"]),
+            ("Business", ["business", "suit", "formal", "meeting"]),
+            ("Casual", ["casual", "jeans", "sneaker", "t-shirt"]),
+            ("Outdoor", ["outdoor", "park", "street", "sidewalk"]),
+            ("Parking Garage", ["parking", "garage"])
+        ]
+
+        for rule in environmentRules {
+            if labels.contains(where: { label in rule.1.contains { label.identifier.localizedCaseInsensitiveContains($0) } }) {
+                return rule.0
+            }
+        }
+
+        return "Unspecified"
+    }
+
+    private var clothingTerms: [String] {
+        [
+            "clothing",
+            "apparel",
+            "shirt",
+            "t-shirt",
+            "polo",
+            "top",
+            "pants",
+            "trousers",
+            "jeans",
+            "dress",
+            "skirt",
+            "suit",
+            "blazer",
+            "jacket",
+            "coat",
+            "shoe",
+            "footwear",
+            "sneaker",
+            "boot",
+            "loafer",
+            "heel",
+            "sandal",
+            "hat",
+            "cap",
+            "belt",
+            "bag",
+            "handbag",
+            "purse",
+            "watch",
+            "accessory",
+            "uniform",
+            "fashion",
+            "fabric",
+            "textile",
+            "laundry",
+            "wardrobe",
+            "closet",
+            "outfit",
+            "garment",
+            "sweater",
+            "hoodie",
+            "shorts",
+            "blouse",
+            "tie",
+            "scarf",
+            "sock",
+            "bra",
+            "underwear",
+            "pajama",
+            "pyjama",
+            "sleepwear",
+            "nightwear",
+            "nightgown",
+            "robe",
+            "bathrobe",
+            "housecoat",
+            "slipper",
+            "slippers",
+            "bedroom slipper",
+            "house shoe",
+            "fuzzy slipper",
+            "plush slipper",
+            "loungewear",
+            "onesie",
+            "clothes"
+        ] + traditionalClothingRules.flatMap(\.terms)
+    }
+
+    private func hasSleepwearLabelEvidence(in labels: [DetectedLabel]) -> Bool {
+        sleepwearOrLoungewearCategory(from: labels.map(\.identifier).joined(separator: " ")) != nil
+    }
+
+    private var mannequinTerms: [String] {
+        [
+            "mannequin",
+            "dummy",
+            "dress form",
+            "display"
+        ]
+    }
+
+    private var hangerTerms: [String] {
+        [
+            "hanger",
+            "coat hanger",
+            "clothes hanger",
+            "rack",
+            "clothing rack"
+        ]
+    }
+
+    private var bedTerms: [String] {
+        [
+            "bed",
+            "mattress",
+            "blanket",
+            "sheet",
+            "bedroom"
+        ]
+    }
+
+    private var bagTerms: [String] {
+        [
+            "bag",
+            "shopping bag",
+            "handbag",
+            "suitcase",
+            "luggage",
+            "duffel",
+            "backpack",
+            "tote"
+        ]
+    }
+
+    private var tableTerms: [String] {
+        [
+            "table",
+            "desk",
+            "countertop",
+            "surface",
+            "flat lay",
+            "flatlay"
+        ]
+    }
+
+    private var floorTerms: [String] {
+        [
+            "floor",
+            "rug",
+            "carpet",
+            "tile",
+            "wood floor"
+        ]
+    }
+
+    private var shoppingDisplayTerms: [String] {
+        [
+            "store",
+            "shop",
+            "retail",
+            "display",
+            "showcase",
+            "product",
+            "catalog",
+            "boutique",
+            "shelf",
+            "rack"
+        ]
+    }
+
+    private var rejectedTerms: [String] {
+        [
+            "animal",
+            "dog",
+            "cat",
+            "bird",
+            "car",
+            "vehicle",
+            "truck",
+            "motorcycle",
+            "bicycle",
+            "tree",
+            "plant",
+            "flower",
+            "landscape",
+            "mountain",
+            "sky",
+            "water",
+            "food",
+            "building",
+            "furniture",
+            "wall",
+            "empty room",
+            "room",
+            "chair",
+            "sofa",
+            "couch",
+            "cabinet",
+            "television",
+            "computer",
+            "phone"
+        ]
+    }
+}
+
+// Each section is constructed when SwiftUI evaluates this body's own view
+// boundary, after its parent's builder has returned. Erasing an already-built
+// value does not provide this separation (18051 exhausted the device stack).
+struct ScanRenderSection: View {
+    let content: () -> AnyView
+
+    var body: some View { content() }
+}
+
+struct ScanSourceControl: View {
+    @Binding var selectedItem: PhotosPickerItem?
+    let background: Color
+    let cream: Color
+    let border: Color
+    let isDisabled: Bool
+    let onStartCamera: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                ScanCameraSourceButton(
+                    background: background, cream: cream,
+                    isDisabled: isDisabled, onStartCamera: onStartCamera
+                )
+                ScanGallerySourcePicker(
+                    selectedItem: $selectedItem, background: background,
+                    border: border, isDisabled: isDisabled
+                )
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(background.opacity(0.18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(border.opacity(0.7), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct ScanCameraSourceButton: View {
+    let background: Color
+    let cream: Color
+    let isDisabled: Bool
+    let onStartCamera: () -> Void
+
+    var body: some View {
+        Button(action: onStartCamera) {
+            ScanCameraSourceLabel(background: background, cream: cream)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .accessibilityLabel("Camera")
+        .accessibilityHint("Takes a photo for a new outfit scan.")
+    }
+}
+
+private struct ScanCameraSourceLabel: View {
+    let background: Color
+    let cream: Color
+
+    var body: some View {
+        Label("Camera", systemImage: "camera.fill")
+            .font(.headline)
+            .fontWeight(.bold)
+            .foregroundStyle(background)
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .background(cream)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+private struct ScanGallerySourcePicker: View {
+    @Binding var selectedItem: PhotosPickerItem?
+    let background: Color
+    let border: Color
+    let isDisabled: Bool
+
+    var body: some View {
+        PhotosPicker(selection: $selectedItem, matching: .images) {
+            ScanGallerySourceLabel(background: background, border: border)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .accessibilityLabel("Gallery")
+        .accessibilityHint("Chooses a photo from your library for a new outfit scan.")
+    }
+}
+
+private struct ScanGallerySourceLabel: View {
+    let background: Color
+    let border: Color
+
+    var body: some View {
+        Label("Gallery", systemImage: "photo.fill")
+            .font(.headline)
+            .fontWeight(.bold)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 54)
+            .background(background.opacity(0.35))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(border, lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+}
+
+// Keep the start card behind a concrete View boundary. Building its entire
+// modified Button type inside ScanView exhausted the main-thread stack in
+// distributed build 18050 while Swift resolved the nested view metadata.
+struct ScanStartCard: View {
+    let cream: Color
+    let muted: Color
+    let isDisabled: Bool
+    let onStartCamera: () -> Void
+
+    var body: some View {
+        Button(action: onStartCamera) {
+            ScanStartCardLabel(cream: cream, muted: muted)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .accessibilityLabel("Start a full-look scan")
+        .accessibilityHint("Opens the camera.")
+    }
+}
+
+private struct ScanStartCardLabel: View {
+    let cream: Color
+    let muted: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "camera.viewfinder")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(StyleMatchPremiumPalette.ink)
+                .frame(width: 58, height: 58)
+                .background(cream, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Start with a full look")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                Text("Tap to open Camera • full body or mirror photo recommended")
+                    .font(.caption)
+                    .foregroundStyle(muted)
+                    .multilineTextAlignment(.leading)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(cream)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 92)
+        .background(cream.opacity(0.07), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(cream.opacity(0.24), lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+    }
+}
+
+private struct CameraCaptureView: UIViewControllerRepresentable {
+    let onImageCaptured: (UIImage, ScanSource) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.allowsEditing = false
+        picker.modalPresentationStyle = .fullScreen
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImageCaptured: onImageCaptured, dismiss: dismiss)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onImageCaptured: (UIImage, ScanSource) -> Void
+        let dismiss: DismissAction
+
+        init(onImageCaptured: @escaping (UIImage, ScanSource) -> Void, dismiss: DismissAction) {
+            self.onImageCaptured = onImageCaptured
+            self.dismiss = dismiss
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            guard let image = info[.originalImage] as? UIImage else {
+                dismiss()
+                return
+            }
+
+            let source: ScanSource = picker.cameraDevice == .front ? .cameraFront : .cameraBack
+            dismiss()
+            onImageCaptured(image, source)
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            dismiss()
+        }
+    }
+}
+
+private struct ScanMessage {
+    let title: String
+    let description: String
+    let icon: String
+    let isSuccess: Bool
+}
+
+private enum TryNextAction {
+    case shop
+    case similar
+    case closet
+    case askAI
+}
+
+private enum ScanHistoryFilter: String, CaseIterable, Identifiable {
+    case all
+    case favorites
+    case business
+    case casual
+    case formal
+    case travel
+    case saved
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .all:
+            return "All"
+        case .favorites:
+            return "Favorites"
+        case .business:
+            return "Business"
+        case .casual:
+            return "Casual"
+        case .formal:
+            return "Formal"
+        case .travel:
+            return "Travel"
+        case .saved:
+            return "Saved"
+        }
+    }
+
+    func includes(_ scan: RecentOutfitScore, favoriteOutfits: String) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .saved:
+            return scan.scanCount >= 1
+        case .favorites:
+            return scan.isFavorite(in: favoriteOutfits)
+        case .business:
+            return scan.occasion?.canonical == .work || scan.matchesAny(["business", "office", "work", "meeting", "professional", "polished"])
+        case .casual:
+            return scan.occasion?.canonical == .casualDay || scan.matchesAny(["casual", "weekend", "sneaker", "jeans", "everyday"])
+        case .formal:
+            let occasion = scan.occasion?.canonical
+            return occasion == .weddingGuest || occasion == .businessFormal || occasion == .specialEvent || scan.matchesAny(["formal", "wedding", "suit", "church", "interview", "dress"])
+        case .travel:
+            return scan.occasion?.canonical == .travel || scan.matchesAny(["travel", "airport", "luggage", "trip", "vacation"])
+        }
+    }
+}
+
+private enum ScanSource: String {
+    case cameraFront = "front_camera"
+    case cameraBack = "back_camera"
+    case gallery = "gallery"
+}
+
+private enum OutfitConfidenceLevel: Equatable {
+    case high
+    case medium
+    case low
+
+    var label: String {
+        switch self {
+        case .high:
+            return "High"
+        case .medium:
+            return "Medium"
+        case .low:
+            return "Low"
+        }
+    }
+
+    var fingerprintBucket: String {
+        switch self {
+        case .high:
+            return "high"
+        case .medium:
+            return "medium"
+        case .low:
+            return "low"
+        }
+    }
+
+    var customerGuidance: String {
+        switch self {
+        case .high:
+            return "The outfit signal is strong."
+        case .medium:
+            return "The outfit is visible, but better lighting or a clearer full-body frame can improve reliability."
+        case .low:
+            return "We need a clearer outfit image for accurate scoring. Try better lighting, less background clutter, and the full outfit in frame."
+        }
+    }
+}
+
+private enum ScanValidation {
+    case acceptedPerson([DetectedLabel])
+    case acceptedClothing(String, [DetectedLabel])
+    case acceptedClothingScene(ClothingScanScene, String, [DetectedLabel])
+    case acceptedRegionClothing(ClothingScanScene?, String, [DetectedLabel], [CGRect])
+    case poorQuality(ImageQualityIssue)
+    case rejected(String)
+    case unknown
+
+    var labels: [DetectedLabel] {
+        switch self {
+        case .acceptedPerson(let labels),
+             .acceptedClothing(_, let labels),
+             .acceptedClothingScene(_, _, let labels),
+             .acceptedRegionClothing(_, _, let labels, _):
+            return labels
+        case .poorQuality, .rejected, .unknown:
+            return []
+        }
+    }
+
+    var sceneName: String {
+        switch self {
+        case .acceptedPerson:
+            return "Person Wearing Clothes"
+        case .acceptedClothing:
+            return "Clothing Item"
+        case .acceptedClothingScene(let scene, _, _):
+            return scene.displayName
+        case .acceptedRegionClothing(let scene, _, _, _):
+            return scene?.displayName ?? "Clothing Item"
+        case .poorQuality:
+            return "Low Quality Photo"
+        case .rejected:
+            return "Unsupported Photo"
+        case .unknown:
+            return "Unknown Photo"
+        }
+    }
+
+    var arrangementFingerprint: String {
+        switch self {
+        case .acceptedPerson:
+            return "worn"
+        case .acceptedClothing:
+            return "item"
+        case .acceptedClothingScene(let scene, _, _):
+            return scene.rawValue
+        case .acceptedRegionClothing(let scene, _, _, _):
+            return scene?.rawValue ?? "item"
+        case .poorQuality(let issue):
+            return issue.rawValue
+        case .rejected:
+            return "rejected"
+        case .unknown:
+            return "unknown"
+        }
+    }
+
+    var isAccepted: Bool {
+        switch self {
+        case .acceptedPerson, .acceptedClothing, .acceptedClothingScene, .acceptedRegionClothing:
+            return true
+        case .poorQuality, .rejected, .unknown:
+            return false
+        }
+    }
+
+    var qualityDescription: String {
+        switch self {
+        case .acceptedPerson:
+            return "Source: local detection. Person wearing clothing detected with clear enough image quality."
+        case .acceptedClothing(let label, _):
+            return "Source: local detection. Clothing detected: \(label)."
+        case .acceptedClothingScene(let scene, let label, _):
+            return "Source: local detection. \(scene.displayName) detected with visible clothing: \(label)."
+        case .acceptedRegionClothing(let scene, let label, _, _):
+            return "Source: local region detection. \(scene?.displayName ?? "Clothing item") detected with visible clothing: \(label)."
+        case .poorQuality(let issue):
+            return issue.message
+        case .rejected(let label):
+            return "Unsupported image detected: \(label)."
+        case .unknown:
+            return "No reliable clothing signal detected."
+        }
+    }
+
+    var qualityScore: Int {
+        switch self {
+        case .acceptedPerson:
+            return 92
+        case .acceptedClothing:
+            return 88
+        case .acceptedClothingScene, .acceptedRegionClothing:
+            return 84
+        case .poorQuality:
+            return 35
+        case .rejected:
+            return 20
+        case .unknown:
+            return 30
+        }
+    }
+
+    var rejectionTitle: String {
+        switch self {
+        case .poorQuality:
+            return "Please retake the photo"
+        case .rejected:
+            return "No outfit detected"
+        case .unknown:
+            return "Outfit details not detected"
+        case .acceptedPerson, .acceptedClothing, .acceptedClothingScene, .acceptedRegionClothing:
+            return "Ready to score"
+        }
+    }
+
+    var rejectionMessage: String {
+        switch self {
+        case .poorQuality(let issue):
+            return "We need a clearer outfit image for accurate scoring. \(issue.message)"
+        case .rejected:
+            return "KigoStylist could not find visible clothing. Please scan clothes on a person, hanger, bed, table, floor, mannequin, or shopping bag."
+        case .unknown:
+            return "KigoStylist could not identify enough outfit details to score this photo. Make sure the full outfit or clothing item is clearly visible and in focus."
+        case .acceptedPerson, .acceptedClothing, .acceptedClothingScene, .acceptedRegionClothing:
+            return qualityDescription
+        }
+    }
+
+    var rejectionIcon: String {
+        switch self {
+        case .poorQuality:
+            return "camera.metering.unknown"
+        case .rejected:
+            return "xmark.seal"
+        case .unknown:
+            return "camera.viewfinder"
+        case .acceptedPerson, .acceptedClothing, .acceptedClothingScene, .acceptedRegionClothing:
+            return "checkmark.seal"
+        }
+    }
+
+    var regionPaletteBoxes: [CGRect] {
+        guard case .acceptedRegionClothing(_, _, _, let boxes) = self else { return [] }
+        return boxes
+    }
+
+    var isPersonScan: Bool {
+        if case .acceptedPerson = self { return true }
+        return false
+    }
+}
+
+private enum ClothingScanScene: String {
+    case mannequin
+    case hanger
+    case bed
+    case bag
+    case table
+    case floor
+    case shoppingDisplay
+
+    var displayName: String {
+        switch self {
+        case .mannequin:
+            return "Mannequin"
+        case .hanger:
+            return "Hanger"
+        case .bed:
+            return "Clothes on Bed"
+        case .bag:
+            return "Clothes in Bag"
+        case .table:
+            return "Clothes on Table"
+        case .floor:
+            return "Clothes on Floor"
+        case .shoppingDisplay:
+            return "Shopping Display"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .mannequin:
+            return "person"
+        case .hanger:
+            return "tshirt"
+        case .bed:
+            return "bed.double"
+        case .bag:
+            return "bag"
+        case .table:
+            return "tablecells"
+        case .floor:
+            return "square.grid.3x3"
+        case .shoppingDisplay:
+            return "storefront"
+        }
+    }
+}
+
+private struct ClothingSceneMatch {
+    let scene: ClothingScanScene
+    let label: String
+}
+
+private struct TraditionalClothingRule {
+    let garment: String
+    let terms: [String]
+    let styleCategory: String
+    let occasionCategory: String
+    let dressCode: String
+
+    init(garment: String, terms: [String], styleCategory: String, occasionCategory: String, dressCode: String = "Formal Traditional") {
+        self.garment = garment
+        self.terms = terms
+        self.styleCategory = styleCategory
+        self.occasionCategory = occasionCategory
+        self.dressCode = dressCode
+    }
+}
+
+private struct TraditionalStyleMatch {
+    let garment: String
+    let styleCategory: String
+    let occasionCategory: String
+    let dressCode: String
+    let confidence: Float
+    let summary: String
+}
+
+private struct NoveltyClothingMatch {
+    let garment: String
+    let styleCategory: String
+    let occasionCategory: String
+    let dressCode: String
+    let confidence: Float
+    let occasionNote: String
+    let summary: String
+}
+
+private struct ClothingPurposeMatch {
+    let garment: String
+    let styleCategory: String
+    let occasionCategory: String
+    let dressCode: String
+    let confidence: Float
+    let occasionNote: String
+    let summary: String
+}
+
+private struct NoveltyClothingRule {
+    let garment: String
+    let terms: [String]
+    let styleCategory: String
+    let occasionCategory: String
+    let dressCode: String
+}
+
+private struct StylistJSONAnalysis: Decodable {
+    let detectedGarments: [String]
+    let garmentColors: [String]
+    let detectedStyle: String
+    let fitAssessment: String
+    let patterns: [String]
+    let scoreReasoning: String
+    let strengths: String
+    let occasionMatch: String
+    let weatherMatch: String
+    let improvementTips: [String]
+    let followUpQuestion: String
+
+    enum CodingKeys: String, CodingKey {
+        case detectedGarments = "detected_garments"
+        case garmentColors = "garment_colors"
+        case detectedStyle = "detected_style"
+        case fitAssessment = "fit_assessment"
+        case patterns
+        case scoreReasoning = "score_reasoning"
+        case strengths
+        case occasionMatch = "occasion_match"
+        case weatherMatch = "weather_match"
+        case improvementTips = "improvement_tips"
+        case followUpQuestion = "follow_up_question"
+    }
+}
+
+private struct StylistScoreExplanation: Decodable {
+    let scoreReasoning: String
+    let strengths: String
+    let improvementTips: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case scoreReasoning = "score_reasoning"
+        case strengths
+        case improvementTips = "improvement_tips"
+    }
+}
+
+private struct StyleScoreResult: Encodable {
+    let total: Int
+    let breakdown: OutfitScoreBreakdown
+    let tier: String
+}
+
+private struct DetectedStyleAttributes: Encodable {
+    let colors: [String]
+    let patterns: [String]
+    let fitAssessment: String
+    let detectedStyle: String
+    let accessories: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case colors
+        case patterns
+        case fitAssessment = "fit_assessment"
+        case detectedStyle = "detected_style"
+        case accessories
+    }
+}
+
+private typealias GarmentAttributes = DetectedStyleAttributes
+
+private struct ScoreModifier: Encodable {
+    let value: Int
+    let isMismatch: Bool
+    let reason: String
+}
+
+private enum GarmentFormality: Int {
+    case veryCasual
+    case casual
+    case smartCasual
+    case businessCasual
+    case formal
+}
+
+private func formalityAdjustment(attributes: GarmentAttributes, occasion: Occasion?) -> ScoreModifier {
+    guard let occasion else {
+        return ScoreModifier(value: 0, isMismatch: false, reason: "No specific occasion selected.")
+    }
+
+    let formality = inferredGarmentFormality(from: attributes)
+    let warning: (mismatch: Bool, reason: String)
+
+    switch occasion {
+    case .wedding, .weddingGuest:
+        switch formality {
+        case .veryCasual:
+            warning = (true, "This reads as very casual for a wedding. Consider a dressier layer, polished shoes, or sharper accessories.")
+        case .casual:
+            warning = (true, "This reads as pretty casual for a wedding. Consider adding a more elevated piece.")
+        case .smartCasual:
+            warning = (false, "Smart casual can work for relaxed weddings, but elevated accessories may help.")
+        case .businessCasual, .formal:
+            warning = (false, "The outfit formality fits a wedding or dressy event.")
+        }
+    case .formalEvent, .businessFormal, .specialEvent:
+        switch formality {
+        case .veryCasual:
+            warning = (true, "This reads as very casual for a formal event. A more polished outfit would fit the occasion better.")
+        case .casual:
+            warning = (true, "This reads as casual for a formal event. Consider dressier clothing or refined shoes.")
+        case .smartCasual:
+            warning = (true, "Smart casual may still be too relaxed for a formal event.")
+        case .businessCasual:
+            warning = (false, "Business casual is close, but a formal event may need sharper finishing.")
+        case .formal:
+            warning = (false, "The outfit formality fits a formal event.")
+        }
+    case .work:
+        switch formality {
+        case .veryCasual:
+            warning = (true, "This reads as very casual for work. A cleaner top, chinos, or polished shoes would make it more work-ready.")
+        case .casual:
+            warning = (true, "This reads as casual for work. Add one polished piece if your workplace expects business casual.")
+        case .smartCasual:
+            warning = (false, "Smart casual is usually appropriate for many workplaces.")
+        case .businessCasual, .formal:
+            warning = (false, "The outfit formality fits a work setting.")
+        }
+    case .dateNight:
+        switch formality {
+        case .veryCasual:
+            warning = (true, "This reads very casual for date night. One elevated piece could make it feel more intentional.")
+        case .casual:
+            warning = (false, "Casual can work for relaxed date plans.")
+        case .smartCasual, .businessCasual, .formal:
+            warning = (false, "The outfit has enough polish for date night.")
+        }
+    case .travel:
+        switch formality {
+        case .veryCasual, .casual:
+            warning = (false, "Casual comfort fits travel well.")
+        case .smartCasual, .businessCasual:
+            warning = (false, "The outfit can work for travel if it remains comfortable.")
+        case .formal:
+            warning = (false, "Formal clothing may be less comfortable for travel.")
+        }
+    case .casual, .casualDay, .party:
+        switch formality {
+        case .veryCasual, .casual:
+            warning = (false, "The outfit formality fits a casual setting.")
+        case .smartCasual, .businessCasual, .formal:
+            warning = (false, "The outfit is dressier than required, but still wearable casually.")
+        }
+    case .gym, .loungewear, .general, .other:
+        warning = (false, "No special formality warning for this occasion.")
+    }
+
+    return ScoreModifier(
+        value: 0,
+        isMismatch: warning.mismatch,
+        reason: warning.reason
+    )
+}
+
+private func inferredGarmentFormality(from attributes: GarmentAttributes) -> GarmentFormality {
+    let evidence = (
+        [attributes.detectedStyle, attributes.fitAssessment] +
+        attributes.patterns +
+        attributes.accessories
+    )
+    .joined(separator: " ")
+    .lowercased()
+
+    if evidence.containsAny(["black tie", "formal", "suit", "tuxedo", "gown", "ceremonial", "traditional wedding"]) {
+        return .formal
+    }
+
+    if evidence.containsAny(["business casual", "office", "work", "oxford", "polo", "chino", "loafers", "cardigan", "blazer"]) {
+        return .businessCasual
+    }
+
+    if evidence.containsAny(["smart casual", "elevated casual", "tailored", "button-down", "button down", "dress shoe"]) {
+        return .smartCasual
+    }
+
+    if evidence.containsAny(["pajama", "sleepwear", "robe", "slipper", "onesie", "loungewear", "hoodie", "graphic", "fleece", "plush"]) {
+        return .veryCasual
+    }
+
+    if evidence.containsAny(["casual", "rugged", "outdoor", "streetwear", "jeans", "denim", "sneaker", "boot", "flannel"]) {
+        return .casual
+    }
+
+    return .casual
+}
+
+private struct GarmentAttributeDetection {
+    let qualityIssue: ImageQualityIssue?
+    let labels: [DetectedLabel]
+    let hasHuman: Bool
+    let personGarmentRegion: CGRect?
+
+    init(
+        qualityIssue: ImageQualityIssue?,
+        labels: [DetectedLabel],
+        hasHuman: Bool,
+        personGarmentRegion: CGRect? = nil
+    ) {
+        self.qualityIssue = qualityIssue
+        self.labels = labels
+        self.hasHuman = hasHuman
+        self.personGarmentRegion = personGarmentRegion
+    }
+
+    var canAnalyze: Bool {
+        qualityIssue == nil && (!labels.isEmpty || hasHuman)
+    }
+}
+
+private struct ScanRegionCandidate {
+    let source: String
+    let normalizedTopLeftBox: CGRect
+    let relatedPaletteBoxes: [CGRect]
+
+    init(source: String, normalizedTopLeftBox: CGRect, relatedPaletteBoxes: [CGRect] = []) {
+        self.source = source
+        self.normalizedTopLeftBox = normalizedTopLeftBox
+        self.relatedPaletteBoxes = relatedPaletteBoxes
+    }
+}
+
+private struct RegionClothingMatch {
+    let label: DetectedLabel
+    let labels: [DetectedLabel]
+    let regionBox: CGRect
+}
+
+private struct StyleScoreContext: Encodable {
+    let occasion: String
+    let weather: String
+    let temperature: String
+    let feelsLike: String
+    let humidity: String
+    let rainChance: String
+    let wind: String
+    let uvIndex: String
+    let season: String
+    let timeOfDay: String
+}
+
+private struct DesignIdeaUserPreferences: Encodable {
+    let favoriteColors: String
+    let favoriteBrands: String
+    let preferredFit: String
+    let budget: String
+    let sizeProfile: String
+    let stylePreferences: String
+    let occasions: String
+    let closetInventory: String
+    let userRequest: String
+
+    enum CodingKeys: String, CodingKey {
+        case favoriteColors = "favorite_colors"
+        case favoriteBrands = "favorite_brands"
+        case preferredFit = "preferred_fit"
+        case budget
+        case sizeProfile = "size_profile"
+        case stylePreferences = "style_preferences"
+        case occasions
+        case closetInventory = "closet_inventory"
+        case userRequest = "user_request"
+    }
+}
+
+private struct CustomGarmentDesignIdea: Decodable {
+    let designConcept: String
+    let garmentType: String
+    let suggestedColors: [String]
+    let suggestedFabric: String
+    let suggestedPattern: String
+    let fitStyle: String
+    let designNotes: String
+    let estimatedPriceRange: String
+
+    enum CodingKeys: String, CodingKey {
+        case designConcept = "design_concept"
+        case garmentType = "garment_type"
+        case suggestedColors = "suggested_colors"
+        case suggestedFabric = "suggested_fabric"
+        case suggestedPattern = "suggested_pattern"
+        case fitStyle = "fit_style"
+        case designNotes = "design_notes"
+        case estimatedPriceRange = "estimated_price_range"
+    }
+}
+
+private struct ScannerExample: Identifiable {
+    let id = UUID()
+    let title: String
+    let detail: String
+    let icon: String
+    let tint: Color
+}
+
+private struct AnalysisCategoryItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let icon: String
+    let detail: String
+}
+
+private struct OutfitFactPayload: Encodable {
+    let scanSource: String
+    let normalized: Bool
+    let detectedItems: [String]
+    let itemConfidence: [ItemConfidence]
+    let colors: [String]
+    let colorDetection: GarmentColorFact
+    let patterns: [String]
+    let fabricsAndTextures: [String]
+    let shoes: [String]
+    let accessories: [String]
+    let outfitCategory: String
+    let styleRankings: [StyleClassificationRanking]
+    let occasion: String
+    let weather: String
+    let weatherSource: String
+    let feelsLike: String
+    let rainChance: String
+    let humidity: String
+    let windSpeed: String
+    let uvIndex: String
+    let lastUpdated: String
+    let environment: String
+    let lighting: String
+    let scanType: String
+    let styleScore: Int
+    let scoreBreakdown: OutfitScoreBreakdown
+    let scoreTier: String
+    let scoreOwner: String
+    let outfitFingerprint: String
+    let culturalAwareness: String
+    let confidence: Double?
+    let guardrails: [String]
+
+    struct ItemConfidence: Encodable {
+        let item: String
+        let confidence: Double
+    }
+
+    struct GarmentColorFact: Encodable {
+        let garmentColors: [String]
+        let confidence: Int
+        let notes: String
+        let confidenceLevel: String
+
+        enum CodingKeys: String, CodingKey {
+            case garmentColors = "garment_colors"
+            case confidence
+            case notes
+            case confidenceLevel = "confidence_level"
+        }
+    }
+}
+
+private struct ScanAIChatMessage: Identifiable {
+    enum Role {
+        case customer
+        case assistant
+    }
+
+    let id: UUID
+    let role: Role
+    var text: String
+    let createdAt: Date
+    var edited: Bool
+    var editedAt: Date?
+    var failedPrompt: String?
+    var failureReason: String?
+
+    var isEdited: Bool {
+        edited || editedAt != nil
+    }
+
+    init(
+        id: UUID = UUID(),
+        role: Role,
+        text: String,
+        createdAt: Date = Date(),
+        edited: Bool = false,
+        editedAt: Date? = nil,
+        failedPrompt: String? = nil,
+        failureReason: String? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.createdAt = createdAt
+        self.edited = edited || editedAt != nil
+        self.editedAt = editedAt
+        self.failedPrompt = failedPrompt
+        self.failureReason = failureReason
+    }
+}
+
+#if DEBUG
+private enum Build18033PersistenceAcceptanceFixture {
+    static let palette = ["navy", "white", "olive"]
+    static let labels = [
+        DetectedLabel(identifier: "person wearing outfit", confidence: 0.98),
+        DetectedLabel(identifier: "navy jacket", confidence: 0.94),
+        DetectedLabel(identifier: "white shirt", confidence: 0.92),
+        DetectedLabel(identifier: "olive pants", confidence: 0.90),
+        DetectedLabel(identifier: "white shoes", confidence: 0.88)
+    ]
+
+    /// A deterministic local raster image compiled only into Debug builds. It
+    /// contains no user, Photos-library, recovery, or network-sourced content.
+    static let image: UIImage = {
+        let size = CGSize(width: 360, height: 540)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            UIColor(red: 0.95, green: 0.94, blue: 0.90, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+
+            UIColor(red: 0.80, green: 0.64, blue: 0.48, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 145, y: 46, width: 70, height: 78)).fill()
+
+            UIColor(red: 0.05, green: 0.13, blue: 0.26, alpha: 1).setFill()
+            let jacket = UIBezierPath(roundedRect: CGRect(x: 94, y: 124, width: 172, height: 164), cornerRadius: 18)
+            jacket.fill()
+
+            UIColor.white.setFill()
+            UIBezierPath(roundedRect: CGRect(x: 150, y: 132, width: 60, height: 148), cornerRadius: 8).fill()
+
+            UIColor(red: 0.33, green: 0.38, blue: 0.21, alpha: 1).setFill()
+            UIBezierPath(roundedRect: CGRect(x: 118, y: 284, width: 55, height: 164), cornerRadius: 12).fill()
+            UIBezierPath(roundedRect: CGRect(x: 187, y: 284, width: 55, height: 164), cornerRadius: 12).fill()
+
+            UIColor.white.setFill()
+            UIBezierPath(roundedRect: CGRect(x: 102, y: 446, width: 86, height: 34), cornerRadius: 14).fill()
+            UIBezierPath(roundedRect: CGRect(x: 172, y: 446, width: 86, height: 34), cornerRadius: 14).fill()
+        }
+    }()
+}
+#endif
+
+private struct CompareScanPresentation: Identifiable {
+    let snapshot: ScanComparisonSnapshot
+    let older: RecentOutfitScore
+    let newer: RecentOutfitScore
+    var id: String { "\(snapshot.olderID)-\(snapshot.newerID)" }
+}
+
+private struct CompareScanSelectorView: View {
+    let source: RecentOutfitScore
+    let scans: [RecentOutfitScore]
+    let onSelect: (RecentOutfitScore) -> Void
+    @Environment(\.dismiss) private var dismiss
+    var body: some View { NavigationStack { List(scans.filter { $0.id != source.id }) { scan in Button { dismiss(); onSelect(scan) } label: { HStack { thumbnail(scan); VStack(alignment: .leading) { Text(scan.title).fontWeight(.semibold); Text(scan.dateText).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text("\(scan.score)").font(.title3.bold()) } .accessibilityLabel("Compare \(source.title) with \(scan.title), \(scan.score) out of 100") } } .navigationTitle("Select Another Scan").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } } } }
+    @ViewBuilder private func thumbnail(_ scan: RecentOutfitScore) -> some View { if let image = scan.savedImage ?? scan.thumbnailImage { Image(uiImage: image).resizable().scaledToFill().frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 10)) } else { Image(systemName: "photo").frame(width: 52, height: 52).background(.secondary.opacity(0.15), in: RoundedRectangle(cornerRadius: 10)) } }
+}
+
+private struct CompareScansView: View {
+    let presentation: CompareScanPresentation
+    let onAskStylist: () -> Void
+    let onSave: () -> Void
+    let onCompareAnother: () -> Void
+    let onHistory: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var didSave = false
+    private var snapshot: ScanComparisonSnapshot { presentation.snapshot }
+    var body: some View { NavigationStack { ScrollView { VStack(spacing: 16) { Text("Understand what improved or changed").foregroundStyle(.secondary); HStack(spacing: 12) { scoreCard(presentation.older, label: "Older Scan"); Text("VS").font(.caption.bold()).padding(10).overlay(Circle().stroke(.yellow)); scoreCard(presentation.newer, label: "Newer Scan") }; scoreChange; categoryCard; insightCard(title: "What Improved", lines: snapshot.improvementSummary.isEmpty ? ["No measured category improved between these scans."] : snapshot.improvementSummary, tint: .green); insightCard(title: "What to Keep Working On", lines: workOnLines, tint: .orange); Button(action: onAskStylist) { Label("Ask Stylist About This Comparison", systemImage: "sparkles").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent).tint(.purple).controlSize(.large); Button { onSave(); didSave = true } label: { Label(didSave ? "Comparison Saved" : "Save Comparison", systemImage: didSave ? "checkmark.circle.fill" : "bookmark") }.buttonStyle(.bordered).disabled(didSave); HStack { ShareLink(item: "KigoStylist comparison: \(snapshot.olderScore) to \(snapshot.newerScore)") { Label("Share Summary", systemImage: "square.and.arrow.up") }; Spacer(); Button { dismiss(); onCompareAnother() } label: { Label("Compare Another", systemImage: "arrow.left.arrow.right") } }.buttonStyle(.bordered); Button("View Local Comparison History") { dismiss(); onHistory() }.font(.footnote) } .padding() } .navigationTitle("Compare Scans").toolbar { ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } } } } }
+    private func scoreCard(_ scan: RecentOutfitScore, label: String) -> some View { VStack(spacing: 8) { Text(label).font(.headline); Text(scan.dateText).font(.caption).foregroundStyle(.secondary); if let image = scan.savedImage ?? scan.thumbnailImage { Image(uiImage: image).resizable().scaledToFill().frame(height: 150).clipShape(RoundedRectangle(cornerRadius: 14)) } else { Image(systemName: "photo").frame(height: 150).frame(maxWidth: .infinity).background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 14)) }; Text("\(scan.score)").font(.system(size: 34, weight: .bold)); Text(scan.title).font(.caption).lineLimit(1) }.frame(maxWidth: .infinity).padding(12).background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 18)) }
+    private var scoreChange: some View { VStack(alignment: .leading, spacing: 6) { Text("Score Change").font(.headline); Text(deltaText).font(.title2.bold()).foregroundStyle(deltaColor); Text("\(snapshot.olderScore) → \(snapshot.newerScore)").foregroundStyle(.secondary); GeometryReader { geo in Path { path in path.move(to: CGPoint(x: 0, y: geo.size.height * 0.75)); path.addLine(to: CGPoint(x: geo.size.width, y: snapshot.overallDelta >= 0 ? geo.size.height * 0.25 : geo.size.height * 0.9)) }.stroke(.purple, lineWidth: 3) }.frame(height: 42) }.padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 18)).accessibilityLabel(deltaText) }
+    private var categoryCard: some View { VStack(alignment: .leading, spacing: 10) { Text("Category Comparison").font(.headline); if snapshot.compatibility != .fullyCompatible { Text("Some category comparisons are unavailable because these scans were scored with different or unknown scoring models.").font(.footnote).foregroundStyle(.secondary) } else if snapshot.categoryDeltas.isEmpty { Text("Not available: one or both scans are missing category scores.").font(.footnote).foregroundStyle(.secondary) } else { ForEach(snapshot.categoryDeltas) { item in HStack { Text(item.id); Spacer(); Text("\(item.olderValue)/\(item.maximum) → \(item.newerValue)/\(item.maximum)"); Text(status(item.delta)).font(.caption.bold()).foregroundStyle(item.delta > 0 ? .green : item.delta < 0 ? .red : .secondary) }.accessibilityLabel("\(item.id) \(status(item.delta)) from \(item.olderValue) out of \(item.maximum) to \(item.newerValue) out of \(item.maximum), \(abs(item.delta)) points") } } }.padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 18)) }
+    private func insightCard(title: String, lines: [String], tint: Color) -> some View { VStack(alignment: .leading, spacing: 8) { Text(title).font(.headline); ForEach(lines, id: \.self) { Label($0, systemImage: "checkmark.circle.fill").foregroundStyle(tint) } }.frame(maxWidth: .infinity, alignment: .leading).padding().background(.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 18)) }
+    private var workOnLines: [String] { if !snapshot.workOnSummary.isEmpty { return snapshot.workOnSummary }; if let weak = snapshot.categoryDeltas.min(by: { $0.newerValue < $1.newerValue }) { return ["Keep refining \(weak.id.lowercased())."] }; return ["No compatible category advice is available for this comparison."] }
+    private var deltaText: String { snapshot.overallDelta == 0 ? "No overall score change" : snapshot.overallDelta > 0 ? "Improved by \(snapshot.overallDelta) points" : "Down by \(abs(snapshot.overallDelta)) points" }
+    private var deltaColor: Color { snapshot.overallDelta == 0 ? .primary : snapshot.overallDelta > 0 ? .green : .red }
+    private func status(_ value: Int) -> String { value > 0 ? "Improved" : value < 0 ? "Declined" : "No Change" }
+}
+
+private struct ComparisonHistoryView: View { let comparisons: [StoredScanComparison]; @Environment(\.dismiss) private var dismiss; var body: some View { NavigationStack { List(comparisons) { record in VStack(alignment: .leading, spacing: 4) { Text(record.createdAt, style: .date).font(.caption); Text("\(record.olderScore) → \(record.newerScore) (\(record.overallDelta >= 0 ? "+" : "")\(record.overallDelta))").font(.headline); Text(record.compatibility == .fullyCompatible ? "Compatible category comparison" : "Limited comparison").font(.caption).foregroundStyle(.secondary); if !record.summary.isEmpty { Text(record.summary).font(.footnote).foregroundStyle(.secondary) } } }.navigationTitle("Local Comparison History").toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } } } }
+}
+
+private struct RecentOutfitScore: Identifiable {
+    let id: String
+    let score: Int
+    let analysis: OutfitAnalysisResult
+    let firstScannedAt: Date
+    let scanCount: Int
+    let thumbnailData: Data?
+    let customTitle: String?
+    let occasion: Occasion?
+    let imageDigest: String?
+    let savedImageAsset: SavedScanImageAsset?
+
+    var title: String {
+        if let customTitle,
+           !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return customTitle
+        }
+
+        if let occasionTitle {
+            return occasionTitle
+        }
+
+        if let itemTitle {
+            return itemTitle
+        }
+
+        if let color = primaryColor {
+            return "\(color) Weekend Look"
+        }
+
+        return "Weekend Look"
+    }
+
+    var dateText: String {
+        Self.formatter.string(from: firstScannedAt)
+    }
+
+    var thumbnailImage: UIImage? {
+        guard let thumbnailData else {
+            return nil
+        }
+
+        return UIImage(data: thumbnailData)
+    }
+
+    var savedImage: UIImage? {
+        guard let data = SavedScanImageAssetStore().imageData(for: savedImageAsset?.id) else { return nil }
+        return UIImage(data: data)
+    }
+
+    var savedImageAssetID: String? {
+        savedImageAsset?.id
+    }
+
+    var scoreRatingTitle: String {
+        switch score {
+        case 92...100:
+            return "Excellent"
+        case 86...91:
+            return "Strong"
+        case 78...85:
+            return "Good"
+        case 65...77:
+            return "Tune-Up"
+        default:
+            return "Improve"
+        }
+    }
+
+    var occasionText: String? {
+        effectiveOccasion?.occasion.displayName
+    }
+
+    var compactHistoryContextText: String? {
+        RecentHistoryEffectiveOccasionResolver.compactDescriptor(
+            legacyDescriptor: styleContextText,
+            detectedStyle: analysis.styleBalance,
+            effectiveOccasion: effectiveOccasion
+        )
+    }
+
+    var styleContextText: String {
+        let text = searchableText
+        if text.contains("traditional wedding") || text.contains("wedding traditional") {
+            return "Wedding Traditional Wear"
+        }
+        if text.contains("ceremonial wear") || text.contains("ceremony") || text.contains("regalia") {
+            return "Ceremonial Wear"
+        }
+        if text.contains("festival wear") || text.contains("festival") {
+            return "Festival Wear"
+        }
+        if text.contains("heritage wear") || text.contains("national dress") {
+            return "Heritage Wear"
+        }
+        if text.contains("traditional wear") || text.contains("cultural wear") || text.contains("religious attire") {
+            return "Traditional Wear"
+        }
+        if text.contains("church") {
+            return "Church"
+        }
+        if text.contains("airport") || text.contains("travel") {
+            return "Travel"
+        }
+        if text.contains("wedding") {
+            return "Wedding"
+        }
+        if text.contains("date") || text.contains("dinner") {
+            return "Date Night"
+        }
+        if text.contains("gym") || text.contains("workout") {
+            return "Gym"
+        }
+        if text.contains("children's sleepwear") || text.contains("kids sleepwear") {
+            return "Children's Sleepwear"
+        }
+        if text.contains("pajama") || text.contains("pyjama") || text.contains("sleepwear") || text.contains("robe") || text.contains("slipper") {
+            return "Sleepwear"
+        }
+        if text.contains("loungewear") || text.contains("indoor wear") || text.contains("house clothes") {
+            return "Loungewear"
+        }
+        if text.contains("business") || text.contains("office") || text.contains("work") || text.contains("meeting") || text.contains("polished") {
+            return "Business Casual"
+        }
+        if text.contains("casual") || text.contains("sneaker") || text.contains("jeans") {
+            return "Casual"
+        }
+
+        let occasion = analysis.occasionFit.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !occasion.isEmpty {
+            return occasion
+        }
+
+        return "Category Uncertain"
+    }
+
+    private var effectiveOccasion: RecentHistoryEffectiveOccasion? {
+        RecentHistoryEffectiveOccasionResolver.resolve(
+            authority: nil,
+            legacyCanonicalOccasion: occasion
+        )
+    }
+
+    func matchesAny(_ terms: [String]) -> Bool {
+        let text = searchableText + " " + title.lowercased() + " " + styleContextText.lowercased()
+        return terms.contains { text.contains($0) }
+    }
+
+    func isFavorite(in favoriteOutfits: String) -> Bool {
+        let favorites = favoriteOutfits.lowercased()
+        guard !favorites.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        if favorites.contains(title.lowercased()) {
+            return true
+        }
+
+        let usefulTerms = (title + " " + styleContextText)
+            .lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { term in
+                term.count > 3 && !["outfit", "look", "style", "match", "scan"].contains(term)
+            }
+
+        return usefulTerms.contains { favorites.contains($0) }
+    }
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d"
+        return formatter
+    }()
+
+    private var occasionTitle: String? {
+        let text = searchableText
+        let color = primaryColor
+
+        if text.contains("airport") || text.contains("travel") || text.contains("luggage") {
+            return "Airport Travel Outfit"
+        }
+        if text.contains("church") || text.contains("chapel") || text.contains("sanctuary") {
+            return "Church Outfit"
+        }
+        if text.contains("wedding") {
+            return "Wedding Outfit"
+        }
+        if text.contains("date") || text.contains("dinner") {
+            return "Date Night"
+        }
+        if text.contains("winter") || text.contains("cold") || text.contains("coat") {
+            return "Winter Layers"
+        }
+        if text.contains("summer") || text.contains("hot") || text.contains("beach") {
+            return "Summer Casual"
+        }
+        if text.contains("children's sleepwear") || text.contains("kids sleepwear") || text.contains("pajama") || text.contains("pyjama") || text.contains("sleepwear") || text.contains("robe") || text.contains("slipper") {
+            return "Cozy Sleepwear"
+        }
+        if text.contains("loungewear") || text.contains("indoor wear") || text.contains("house clothes") {
+            return "Loungewear"
+        }
+        if text.contains("business") || text.contains("office") || text.contains("meeting") || text.contains("formal") {
+            return [color, "Business Outfit"].compactMap { $0 }.joined(separator: " ")
+        }
+        if text.contains("casual") || text.contains("sneaker") || text.contains("jeans") || text.contains("t-shirt") {
+            return text.contains("weekend") ? "Weekend Look" : "Summer Casual"
+        }
+
+        return nil
+    }
+
+    private var itemTitle: String? {
+        let text = searchableText
+        let color = primaryColor
+
+        if text.contains("suit") {
+            return [color, "Suit"].compactMap { $0 }.joined(separator: " ")
+        }
+        if text.contains("blazer") {
+            return [color, "Blazer Look"].compactMap { $0 }.joined(separator: " ")
+        }
+        if text.contains("polo") {
+            return [color, "Polo Outfit"].compactMap { $0 }.joined(separator: " ")
+        }
+        if text.contains("dress") {
+            return [color, "Dress Outfit"].compactMap { $0 }.joined(separator: " ")
+        }
+        if text.contains("jacket") {
+            return [color, "Jacket Outfit"].compactMap { $0 }.joined(separator: " ")
+        }
+
+        return nil
+    }
+
+    private var primaryColor: String? {
+        let genericColors = Set(["Neutral", "Dark", "Light", "Color", "Colors"])
+        return analysis.colorPalette
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).capitalized }
+            .first { !$0.isEmpty && !genericColors.contains($0) }
+    }
+
+    private var searchableText: String {
+        (
+            analysis.outfitDescription + " " +
+            analysis.detectedClothingItems.joined(separator: " ") + " " +
+            analysis.environment + " " +
+            analysis.occasionFit + " " +
+            analysis.formality + " " +
+            analysis.seasonalMatch + " " +
+            analysis.summary
+        ).lowercased()
+    }
+}
+
+private struct SavedScanResult {
+    let analysis: OutfitAnalysisResult
+    let isRepeat: Bool
+    let isForced: Bool
+    let message: String
+
+    func title(defaultNewTitle: String, repeatTitle: String) -> String {
+        if isForced {
+            return "Outfit reanalyzed"
+        }
+
+        return isRepeat ? repeatTitle : defaultNewTitle
+    }
+}
+
+private struct PreparedScanFacts {
+    let validation: ScanValidation
+    let labels: [DetectedLabel]
+    let colorDetection: GarmentColorDetection
+    let fingerprint: String
+    let imageDigest: String
+    let colorPalette: [String]
+    let scoringLabels: [DetectedLabel]
+    let detectedItems: [String]
+    let styleCategory: String
+    let outfitClassification: OutfitClassificationResult
+    let styleScore: StyleScoreResult?
+
+    func replacingOutfitClassification(_ classification: OutfitClassificationResult) -> Self {
+        Self(
+            validation: validation,
+            labels: labels,
+            colorDetection: colorDetection,
+            fingerprint: fingerprint,
+            imageDigest: imageDigest,
+            colorPalette: colorPalette,
+            scoringLabels: scoringLabels,
+            detectedItems: detectedItems,
+            styleCategory: styleCategory,
+            outfitClassification: classification,
+            styleScore: styleScore
+        )
+    }
+}
+
+private struct CompletedScanIdentity {
+    let validation: ScanValidation
+    let labels: [DetectedLabel]
+    let fingerprint: String
+    let imageDigest: String
+}
+
+private final class ScanHistoryDecodeCache {
+    private var encodedData = Data()
+    private var decodedHistory = [String: StoredOutfitScan]()
+
+    func history(from data: Data) -> [String: StoredOutfitScan] {
+        guard data != encodedData else { return decodedHistory }
+        encodedData = data
+        decodedHistory = (try? JSONDecoder().decode([String: StoredOutfitScan].self, from: data)) ?? [:]
+        return decodedHistory
+    }
+
+    func replace(with history: [String: StoredOutfitScan], encodedData: Data) {
+        self.encodedData = encodedData
+        decodedHistory = history
+    }
+}
+
+private struct RenameSheetDismissGuard: UIViewControllerRepresentable {
+    let hasUnsavedChanges: Bool
+    let onAttemptDismiss: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIViewController {
+        UIViewController()
+    }
+
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {
+        context.coordinator.parent = self
+        uiViewController.parent?.presentationController?.delegate = context.coordinator
+    }
+
+    final class Coordinator: NSObject, UIAdaptivePresentationControllerDelegate {
+        var parent: RenameSheetDismissGuard
+
+        init(parent: RenameSheetDismissGuard) {
+            self.parent = parent
+        }
+
+        func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+            !parent.hasUnsavedChanges
+        }
+
+        func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+            if parent.hasUnsavedChanges {
+                parent.onAttemptDismiss()
+            }
+        }
+    }
+}
+
+private enum ImageQualityIssue: String {
+    case tooDark
+    case tooBright
+    case lowContrast
+    case blurry
+
+    var message: String {
+        switch self {
+        case .tooDark:
+            return "The photo looks underexposed. Please retake it in brighter lighting before scoring."
+        case .tooBright:
+            return "The photo looks overexposed. Please retake it away from harsh direct light before scoring."
+        case .lowContrast:
+            return "The photo does not have enough visible detail. Please retake it with clearer lighting and contrast."
+        case .blurry:
+            return "The photo looks blurry. Please retake it with the clothing in focus before scoring."
+        }
+    }
+}
+
+private extension String {
+    var normalizedForFingerprint: String {
+        lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+            .prefix(24)
+            .description
+    }
+
+    func containsAny(_ terms: [String]) -> Bool {
+        terms.contains { contains($0) }
+    }
+}
+
+private extension Sequence where Element: Hashable {
+    func removingDuplicates() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
+    }
+}
+
+private extension Sequence {
+    func removingDuplicates<Key: Hashable>(by key: (Element) -> Key) -> [Element] {
+        var seen = Set<Key>()
+        return filter { seen.insert(key($0)).inserted }
+    }
+}
+
+private extension OutfitAnalysisResult {
+    func replacingRecommendations(_ recommendations: [ClothingRecommendation]) -> OutfitAnalysisResult {
+        OutfitAnalysisResult(
+            score: score,
+            scoreBreakdown: scoreBreakdown,
+            colorMatch: colorMatch,
+            occasionFit: occasionFit,
+            styleBalance: styleBalance,
+            colorHarmony: colorHarmony,
+            styleCoordination: styleCoordination,
+            formality: formality,
+            seasonalMatch: seasonalMatch,
+            summary: summary,
+            outfitDescription: outfitDescription,
+            detectedClothingItems: detectedClothingItems,
+            colorPalette: colorPalette,
+            colorPaletteMaskingApplied: colorPaletteMaskingApplied,
+            colorPaletteMaskTier: colorPaletteMaskTier,
+            colorPaletteConfidence: colorPaletteConfidence,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence,
+            colorPaletteNotes: colorPaletteNotes,
+            environment: environment,
+            imageQuality: imageQuality,
+            outfitClassification: outfitClassification,
+            skinToneStyleNote: nil,
+            detectedItemConfidences: detectedItemConfidences,
+            chatGPTStylistSections: chatGPTStylistSections,
+            suggestions: suggestions,
+            recommendations: recommendations
+        )
+    }
+
+    func replacingChatGPTStylistSections(_ sections: [ChatGPTStylistSection]) -> OutfitAnalysisResult {
+        OutfitAnalysisResult(
+            score: score,
+            scoreBreakdown: scoreBreakdown,
+            colorMatch: colorMatch,
+            occasionFit: occasionFit,
+            styleBalance: styleBalance,
+            colorHarmony: colorHarmony,
+            styleCoordination: styleCoordination,
+            formality: formality,
+            seasonalMatch: seasonalMatch,
+            summary: summary,
+            outfitDescription: outfitDescription,
+            detectedClothingItems: detectedClothingItems,
+            colorPalette: colorPalette,
+            colorPaletteMaskingApplied: colorPaletteMaskingApplied,
+            colorPaletteMaskTier: colorPaletteMaskTier,
+            colorPaletteConfidence: colorPaletteConfidence,
+            colorPaletteDetectionConfidence: colorPaletteDetectionConfidence,
+            colorPaletteNotes: colorPaletteNotes,
+            environment: environment,
+            imageQuality: imageQuality,
+            outfitClassification: outfitClassification,
+            skinToneStyleNote: nil,
+            detectedItemConfidences: detectedItemConfidences,
+            chatGPTStylistSections: sections,
+            suggestions: suggestions,
+            recommendations: recommendations
+        )
+    }
+
+}
+
+#if DEBUG
+private enum StyleMatchPaletteExtractionTracker {
+    private static let lock = NSLock()
+    private static var invocationCounts: [ObjectIdentifier: Int] = [:]
+
+    static func nextInvocation(for image: UIImage) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let identifier = ObjectIdentifier(image)
+        let next = invocationCounts[identifier, default: 0] + 1
+        invocationCounts[identifier] = next
+        return next
+    }
+}
+#endif
+
+private extension UIImage {
+    func sleepwearVisualSignalScore(primaryPalette: [String]) -> Int {
+        var score = SleepwearPrimaryPaletteSignal.score(for: primaryPalette)
+        score += redPinkStripeSignalScore()
+        if outfitIdentitySignature().contains("soft") {
+            score += 1
+        }
+        return score
+    }
+
+    private func redPinkStripeSignalScore() -> Int {
+        let width = 18
+        let height = 24
+        let samples = sampledRGB(width: width, height: height)
+        guard samples.count == width * height else {
+            return 0
+        }
+
+        var redPinkColumns = [Bool]()
+        var lightColumns = [Bool]()
+
+        for x in 0..<width {
+            var redPinkCount = 0
+            var lightCount = 0
+
+            for y in 0..<height {
+                let pixel = samples[y * width + x]
+                let red = Int(pixel.red)
+                let green = Int(pixel.green)
+                let blue = Int(pixel.blue)
+
+                if red > 120, red > green + 18, red > blue + 8 {
+                    redPinkCount += 1
+                }
+
+                let brightness = red + green + blue
+                if brightness > 590, abs(red - green) < 60, abs(green - blue) < 80 {
+                    lightCount += 1
+                }
+            }
+
+            redPinkColumns.append(Double(redPinkCount) / Double(height) > 0.18)
+            lightColumns.append(Double(lightCount) / Double(height) > 0.28)
+        }
+
+        let redPinkColumnCount = redPinkColumns.filter { $0 }.count
+        let lightColumnCount = lightColumns.filter { $0 }.count
+        var alternationCount = 0
+        for index in 1..<width {
+            let changesRedPinkState = redPinkColumns[index] != redPinkColumns[index - 1]
+            let hasRedPinkColumn = redPinkColumns[index] || redPinkColumns[index - 1]
+            let hasLightColumn = lightColumns[index] || lightColumns[index - 1]
+            if changesRedPinkState && hasRedPinkColumn && hasLightColumn {
+                alternationCount += 1
+            }
+        }
+
+        if redPinkColumnCount >= 2, lightColumnCount >= 2, alternationCount >= 2 {
+            return 2
+        }
+
+        if redPinkColumnCount >= 2, lightColumnCount >= 2 {
+            return 1
+        }
+
+        return 0
+    }
+
+    func scanSizedImage(maxSide: CGFloat = 900) -> UIImage {
+        let largestSide = max(size.width, size.height)
+        let resizeScale = largestSide > maxSide && largestSide > 0 ? maxSide / largestSide : 1
+        let targetSize = CGSize(
+            width: max(1, (size.width * resizeScale).rounded()),
+            height: max(1, (size.height * resizeScale).rounded())
+        )
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+
+    /// Normalizes orientation once, then bounds only the image used by local Vision.
+    /// This retains enough detail for small occupational cues without retaining the
+    /// full source asset alongside the preview.
+    func visionAnalysisImage(maxSide: CGFloat = 1_800) -> UIImage {
+        scanSizedImage(maxSide: maxSide)
+    }
+
+    func shareCardPreparedImage(maxPixelDimension: CGFloat = 1_600) -> UIImage {
+        let pixelWidth = size.width * scale
+        let pixelHeight = size.height * scale
+        let largestPixelDimension = max(pixelWidth, pixelHeight)
+        guard largestPixelDimension > maxPixelDimension, largestPixelDimension > 0 else {
+            return self
+        }
+
+        let resizeScale = maxPixelDimension / largestPixelDimension
+        let targetSize = CGSize(
+            width: max(1, pixelWidth * resizeScale),
+            height: max(1, pixelHeight * resizeScale)
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: targetSize, format: format)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+    }
+
+    func scanThumbnailData(maxSide: CGFloat = 180) -> Data? {
+        let largestSide = max(size.width, size.height)
+        let scale = largestSide > 0 ? min(1, maxSide / largestSide) : 1
+        let targetSize = CGSize(width: max(1, size.width * scale), height: max(1, size.height * scale))
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        let thumbnail = renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+
+        return thumbnail.jpegData(compressionQuality: 0.72)
+    }
+
+    func qualityIssue() -> ImageQualityIssue? {
+        let samples = sampledRGB(width: 16, height: 16)
+        guard !samples.isEmpty else {
+            return nil
+        }
+
+        let brightnessValues = samples.map { (Double($0.red) + Double($0.green) + Double($0.blue)) / 3.0 }
+        let averageBrightness = brightnessValues.reduce(0, +) / Double(brightnessValues.count)
+        let minBrightness = brightnessValues.min() ?? averageBrightness
+        let maxBrightness = brightnessValues.max() ?? averageBrightness
+        let contrast = maxBrightness - minBrightness
+
+        if averageBrightness < 35 {
+            return .tooDark
+        }
+
+        if averageBrightness > 226 {
+            return .tooBright
+        }
+
+        if contrast < 28 {
+            return .lowContrast
+        }
+
+        if contrast < 38 && size.width > 600 && size.height > 600 {
+            return .blurry
+        }
+
+        return nil
+    }
+
+    func normalizedLightingBucket() -> String {
+        let samples = sampledRGB(width: 12, height: 12)
+        guard !samples.isEmpty else {
+            return "unknown"
+        }
+
+        let brightnessValues = samples.map { (Double($0.red) + Double($0.green) + Double($0.blue)) / 3.0 }
+        let averageBrightness = brightnessValues.reduce(0, +) / Double(brightnessValues.count)
+        let contrast = (brightnessValues.max() ?? averageBrightness) - (brightnessValues.min() ?? averageBrightness)
+
+        if averageBrightness < 55 { return "dark" }
+        if averageBrightness > 210 { return "bright" }
+        if contrast < 34 { return "flat" }
+        if contrast > 150 { return "high-contrast" }
+        return "balanced"
+    }
+
+    func garmentColorPalette() -> [String] {
+        garmentColorDetection().garmentColors
+    }
+
+    func garmentColorDetection(
+        regionBoxes: [CGRect] = [],
+        prefersPersonMask: Bool = false,
+        flatLayRegionDiscoveryRan: Bool = false
+    ) -> GarmentColorDetection {
+        #if DEBUG
+        let debugTiming = GarmentPaletteStageTiming()
+        #else
+        let debugTiming: GarmentPaletteStageTiming? = nil
+        #endif
+        let backgroundSamples = prefersPersonMask ? [] : paletteBackgroundSamples(width: 48, height: 48)
+        #if DEBUG
+        let backgroundNamingStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        let backgroundReferences = GarmentColorPaletteEngine.backgroundFamilyShares(from: backgroundSamples)
+        #if DEBUG
+        debugTiming.add(ProcessInfo.processInfo.systemUptime - backgroundNamingStart, to: .naming)
+        #endif
+        var candidates: [MaskedGarmentPaletteSamples] = []
+        if !regionBoxes.isEmpty {
+            candidates.append(garmentCropPaletteSamples(regionBoxes: regionBoxes, width: 80, height: 100))
+        }
+        candidates.append(contentsOf: maskedGarmentPaletteCandidates(
+            width: 80,
+            height: 100,
+            hasHuman: prefersPersonMask
+        ))
+        let candidateFamilyMemo = GarmentColorPaletteEngine.CandidateFamilyMemo()
+        let evaluatedCandidates = candidates.filter { $0.tier != .couldNotIsolateGarment }.map { candidate in
+            let garmentSampleCount = candidate.rawGarmentSampleCount ?? GarmentColorPaletteEngine.garmentSampleCount(
+                in: candidate.samples,
+                allowsSkinExclusion: prefersPersonMask
+            )
+            let fastFamilyShares = GarmentColorPaletteEngine.fastCandidateFamilyShares(
+                in: candidate.samples,
+                allowsSkinExclusion: prefersPersonMask,
+                backgroundFamilyShares: backgroundReferences,
+                illuminantReferenceSamples: backgroundSamples,
+                memo: candidateFamilyMemo
+            )
+            return GarmentPaletteSampleCandidate(
+                samples: candidate.samples,
+                tier: candidate.tier,
+                source: candidate.source,
+                maskingApplied: candidate.maskingApplied,
+                garmentSampleCount: garmentSampleCount,
+                familyShares: fastFamilyShares
+            )
+        }
+        let selection = GarmentPaletteSourceSelector.select(evaluatedCandidates)
+        let selectedCandidate = selection.candidate
+        let maskedSamples = selectedCandidate.map {
+            MaskedGarmentPaletteSamples(
+                samples: $0.samples,
+                tier: $0.tier,
+                maskingApplied: $0.maskingApplied,
+                source: $0.source,
+                cropsMerged: $0.source == .garmentCrop ? regionBoxes.count : 0,
+                rawGarmentSampleCount: $0.garmentSampleCount
+            )
+        } ?? failedPaletteSamples(width: 80, height: 100)
+        if maskedSamples.tier == .couldNotIsolateGarment {
+            #if DEBUG
+            GarmentPaletteDiagnosticChannel.record(GarmentPaletteDiagnosticRecord.make(
+                candidates: evaluatedCandidates,
+                selection: selection,
+                extraction: nil,
+                chosenSource: maskedSamples.source,
+                maskTier: maskedSamples.tier,
+                flatLayRegionDiscoveryRan: flatLayRegionDiscoveryRan
+            ))
+            #endif
+            return GarmentColorDetection(
+                garmentColors: [],
+                confidence: 0,
+                notes: "Couldn't isolate the outfit from the background. Try retaking the photo with the outfit filling more of the frame.",
+                maskingApplied: false,
+                maskTier: maskedSamples.tier.rawValue,
+                confidenceLevel: .low
+            )
+        }
+
+        let extraction = GarmentColorPaletteEngine.extractPalette(
+            from: maskedSamples.samples,
+            source: maskedSamples.source,
+            allowsSkinExclusion: prefersPersonMask,
+            forceLowConfidence: !selection.hasConfidenceEvidence,
+            confidenceSampleCount: selectedCandidate?.garmentSampleCount,
+            backgroundFamilyShares: backgroundReferences,
+            illuminantReferenceSamples: backgroundSamples,
+            confidenceEvidenceSatisfied: selection.hasConfidenceEvidence,
+            corroboratedFamilies: selection.corroboratedFamilies,
+            confidenceReason: selection.confidenceReason,
+            debugTiming: debugTiming
+        )
+        let finalColors = extraction.palette
+        let confidence = extraction.confidence
+        let noteColors = finalColors.joined(separator: ", ")
+
+        #if DEBUG
+        GarmentPaletteDiagnosticChannel.record(GarmentPaletteDiagnosticRecord.make(
+            candidates: evaluatedCandidates,
+            selection: selection,
+            extraction: extraction,
+            chosenSource: maskedSamples.source,
+            maskTier: maskedSamples.tier,
+            flatLayRegionDiscoveryRan: flatLayRegionDiscoveryRan
+        ))
+        #endif
+
+        let sourceNote = maskedSamples.maskingApplied
+            ? "Colors came from masked garment-region pixels only"
+            : "Couldn’t isolate the outfit from the background"
+
+        return GarmentColorDetection(
+            garmentColors: finalColors,
+            confidence: confidence,
+            notes: "\(sourceNote): \(noteColors).",
+            maskingApplied: maskedSamples.maskingApplied,
+            maskTier: maskedSamples.tier.rawValue,
+            confidenceLevel: extraction.confidenceLevel
+        )
+    }
+
+    private func validatedGarmentColors(_ colors: [String]) -> [String] {
+        GarmentColorPaletteEngine.validatedGarmentColors(colors)
+    }
+
+    private func maskedGarmentPaletteCandidates(
+        width: Int,
+        height: Int,
+        hasHuman: Bool
+    ) -> [MaskedGarmentPaletteSamples] {
+        guard let cgImage,
+              let rgbBytes = renderedRGBBytes(width: width, height: height) else {
+            return []
+        }
+        let attempts: [(GarmentMaskTier, () throws -> GarmentRegionMask?)] = hasHuman
+            ? [
+                (.personSegmentation, { try self.personSegmentationMask(cgImage: cgImage, width: width, height: height) }),
+                (.foregroundSubject, { try self.foregroundSubjectMask(cgImage: cgImage, width: width, height: height) }),
+                (.saliencyCrop, { try self.saliencyCropMask(cgImage: cgImage, width: width, height: height) })
+            ]
+            : [
+                (.foregroundSubject, { try self.foregroundSubjectMask(cgImage: cgImage, width: width, height: height) }),
+                (.personSegmentation, { try self.personSegmentationMask(cgImage: cgImage, width: width, height: height) }),
+                (.saliencyCrop, { try self.saliencyCropMask(cgImage: cgImage, width: width, height: height) })
+            ]
+
+        return attempts.compactMap { tier, attempt in
+            do {
+                guard let rawMask = try attempt(),
+                      rawMask.includedCount >= GarmentRegionMasker.minimumMaskedPixelCount else {
+                    return nil
+                }
+                let mask = rawMask.eroded(radius: 1)
+                let strongForegroundMask = rawMask.adaptivelyErodedStrongMask()
+                return MaskedGarmentPaletteSamples(
+                    samples: paletteSamples(
+                        width: width,
+                        height: height,
+                        rgbBytes: rgbBytes,
+                        mask: mask,
+                        strongForegroundMask: strongForegroundMask
+                    ),
+                    tier: tier,
+                    maskingApplied: true,
+                    source: paletteSource(for: tier),
+                    cropsMerged: 0
+                )
+            } catch {
+                return nil
+            }
+        }
+    }
+
+    private func garmentCropPaletteSamples(
+        regionBoxes: [CGRect],
+        width: Int,
+        height: Int
+    ) -> MaskedGarmentPaletteSamples {
+        guard let cgImage else { return failedPaletteSamples(width: width, height: height) }
+        let cropSamples = regionBoxes.compactMap { box -> [GarmentPalettePixel]? in
+            guard let cropped = cropTopLeftNormalized(cgImage, to: box),
+                  let bytes = renderedRGBBytes(cgImage: cropped, width: width, height: height) else {
+                return nil
+            }
+            let rawForegroundMask = try? foregroundSubjectMask(
+                cgImage: cropped,
+                width: width,
+                height: height
+            )
+            let foregroundMask = rawForegroundMask?.eroded(radius: 1)
+            guard let foregroundMask,
+                  foregroundMask.includedCount >= GarmentColorPaletteEngine.minimumGarmentPixelCount else {
+                return nil
+            }
+            let strongForegroundMask = rawForegroundMask?.adaptivelyErodedStrongMask()
+            return paletteSamples(
+                width: width,
+                height: height,
+                rgbBytes: bytes,
+                mask: foregroundMask,
+                strongForegroundMask: strongForegroundMask
+            )
+        }
+        let balanced = GarmentCropContributionBalancer.balance(cropSamples)
+        let samples = balanced.samples
+        guard !samples.isEmpty else { return failedPaletteSamples(width: width, height: height) }
+        return MaskedGarmentPaletteSamples(
+            samples: samples,
+            tier: .foregroundSubject,
+            maskingApplied: true,
+            source: .garmentCrop,
+            cropsMerged: cropSamples.count,
+            rawGarmentSampleCount: balanced.rawSampleCount
+        )
+    }
+
+    private func paletteBackgroundSamples(width: Int, height: Int) -> [GarmentPalettePixel] {
+        guard let rgbBytes = renderedRGBBytes(width: width, height: height) else { return [] }
+        let allPixelsMask = GarmentRegionMask(
+            width: width,
+            height: height,
+            included: [Bool](repeating: true, count: width * height),
+            tier: .foregroundSubject
+        )
+        return paletteSamples(width: width, height: height, rgbBytes: rgbBytes, mask: allPixelsMask)
+            .filter { sample in
+                sample.x <= 0.10 || sample.x >= 0.90 || sample.y <= 0.10 || sample.y >= 0.90
+            }
+    }
+
+    private func paletteSource(for tier: GarmentMaskTier) -> GarmentPaletteSource {
+        switch tier {
+        case .foregroundSubject: return .foregroundSubject
+        case .personSegmentation: return .personSegmentation
+        case .saliencyCrop: return .saliencyCrop
+        case .couldNotIsolateGarment: return .unavailable
+        }
+    }
+
+    private func foregroundSubjectMask(cgImage: CGImage, width: Int, height: Int) throws -> GarmentRegionMask? {
+        guard #available(iOS 17.0, *) else {
+            return nil
+        }
+
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
+        try handler.perform([request])
+        guard let observation = request.results?.first,
+              !observation.allInstances.isEmpty else {
+            return nil
+        }
+
+        let maskBuffer = try observation.generateScaledMaskForImage(
+            forInstances: observation.allInstances,
+            from: handler
+        )
+        return pixelBufferMask(maskBuffer, width: width, height: height, tier: .foregroundSubject, threshold: 96)
+    }
+
+    private func personSegmentationMask(cgImage: CGImage, width: Int, height: Int) throws -> GarmentRegionMask? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .balanced
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
+        try handler.perform([request])
+        guard let mask = request.results?.first?.pixelBuffer else {
+            return nil
+        }
+        return pixelBufferMask(mask, width: width, height: height, tier: .personSegmentation, threshold: 96)
+    }
+
+    private func saliencyCropMask(cgImage: CGImage, width: Int, height: Int) throws -> GarmentRegionMask? {
+        let request = VNGenerateAttentionBasedSaliencyImageRequest()
+        let handler = VNImageRequestHandler(cgImage: cgImage, orientation: cgImagePropertyOrientation)
+        try handler.perform([request])
+        guard let observation = request.results?.first,
+              let salientObjects = observation.salientObjects,
+              !salientObjects.isEmpty else {
+            return nil
+        }
+
+        let unionBox = salientObjects
+            .map(\.boundingBox)
+            .reduce(CGRect.null) { partial, rect in
+                partial.isNull ? rect : partial.union(rect)
+            }
+            .insetBy(dx: -0.02, dy: -0.02)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+
+        guard !unionBox.isNull, unionBox.width > 0, unionBox.height > 0 else {
+            return nil
+        }
+
+        var included = Array(repeating: false, count: width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let normalizedX = Double(x) / Double(max(1, width - 1))
+                let normalizedYFromTop = Double(y) / Double(max(1, height - 1))
+                let visionY = 1.0 - normalizedYFromTop
+                if unionBox.contains(CGPoint(x: CGFloat(normalizedX), y: CGFloat(visionY))) {
+                    included[y * width + x] = true
+                }
+            }
+        }
+        return GarmentRegionMask(width: width, height: height, included: included, tier: .saliencyCrop)
+    }
+
+    private func pixelBufferMask(_ pixelBuffer: CVPixelBuffer, width: Int, height: Int, tier: GarmentMaskTier, threshold: UInt8) -> GarmentRegionMask? {
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return nil
+        }
+
+        let maskWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let maskHeight = CVPixelBufferGetHeight(pixelBuffer)
+        let stride = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let bytes = base.assumingMemoryBound(to: UInt8.self)
+        var included = Array(repeating: false, count: width * height)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let maskX = min(maskWidth - 1, max(0, Int((Double(x) / Double(max(1, width - 1))) * Double(maskWidth - 1))))
+                let maskY = min(maskHeight - 1, max(0, Int((Double(y) / Double(max(1, height - 1))) * Double(maskHeight - 1))))
+                included[y * width + x] = bytes[maskY * stride + maskX] > threshold
+            }
+        }
+
+        return GarmentRegionMask(width: width, height: height, included: included, tier: tier)
+    }
+
+    private func paletteSamples(
+        width: Int,
+        height: Int,
+        rgbBytes: [UInt8],
+        mask: GarmentRegionMask,
+        strongForegroundMask: GarmentRegionMask? = nil
+    ) -> [GarmentPalettePixel] {
+        guard rgbBytes.count >= width * height * 4 else {
+            return []
+        }
+
+        var samples: [GarmentPalettePixel] = []
+        samples.reserveCapacity(width * height)
+        for y in 0..<height {
+            for x in 0..<width {
+                let rgbIndex = (y * width + x) * 4
+                let normalizedX = Double(x) / Double(max(1, width - 1))
+                let normalizedY = Double(y) / Double(max(1, height - 1))
+                let isIncluded = mask.contains(x: x, y: y)
+                samples.append(
+                    GarmentPalettePixel(
+                        red: rgbBytes[rgbIndex],
+                        green: rgbBytes[rgbIndex + 1],
+                        blue: rgbBytes[rgbIndex + 2],
+                        x: normalizedX,
+                        y: normalizedY,
+                        isInsidePersonMask: isIncluded,
+                        isLikelySkinZone: isIncluded && likelyExposedSkinZone(x: normalizedX, y: normalizedY),
+                        isStrongForegroundEvidence: strongForegroundMask?.contains(x: x, y: y) == true
+                    )
+                )
+            }
+        }
+        return samples
+    }
+
+    private func failedPaletteSamples(width: Int, height: Int) -> MaskedGarmentPaletteSamples {
+        let mask = GarmentRegionMask.couldNotIsolate(width: width, height: height)
+        return MaskedGarmentPaletteSamples(
+            samples: [],
+            tier: mask.tier,
+            maskingApplied: false,
+            source: .unavailable,
+            cropsMerged: 0
+        )
+    }
+
+    var cgImagePropertyOrientation: CGImagePropertyOrientation {
+        switch imageOrientation {
+        case .up: return .up
+        case .down: return .down
+        case .left: return .left
+        case .right: return .right
+        case .upMirrored: return .upMirrored
+        case .downMirrored: return .downMirrored
+        case .leftMirrored: return .leftMirrored
+        case .rightMirrored: return .rightMirrored
+        @unknown default: return .up
+        }
+    }
+
+    private func renderedRGBBytes(width: Int, height: Int) -> [UInt8]? {
+        guard let cgImage else {
+            return nil
+        }
+
+        return renderedRGBBytes(cgImage: cgImage, width: width, height: height)
+    }
+
+    private func renderedRGBBytes(cgImage: CGImage, width: Int, height: Int) -> [UInt8]? {
+
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return nil
+        }
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return bytes
+    }
+
+    private func cropTopLeftNormalized(_ cgImage: CGImage, to box: CGRect) -> CGImage? {
+        let bounds = CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height)
+        let pixelRect = CGRect(
+            x: box.minX * CGFloat(cgImage.width),
+            y: box.minY * CGFloat(cgImage.height),
+            width: box.width * CGFloat(cgImage.width),
+            height: box.height * CGFloat(cgImage.height)
+        ).integral.intersection(bounds)
+        guard pixelRect.width >= 2, pixelRect.height >= 2 else { return nil }
+        return cgImage.cropping(to: pixelRect)
+    }
+
+    private func likelyExposedSkinZone(x: Double, y: Double) -> Bool {
+        let upperFaceOrNeck = y < 0.24 && x > 0.32 && x < 0.68
+        let sideArmZone = y > 0.24 && y < 0.82 && (x < 0.26 || x > 0.74)
+        let lowerHandZone = y > 0.58 && y < 0.92 && (x < 0.34 || x > 0.66)
+        return upperFaceOrNeck || sideArmZone || lowerHandZone
+    }
+
+    private func sampledGarmentRGB(width: Int, height: Int) -> [RGBPixel] {
+        let samples = garmentSamplingCrops().flatMap { crop in
+            sampledRGB(in: crop, width: width, height: height)
+        }
+        let zoneWidth = width
+        let zoneHeight = height
+        let centerWeightedSamples = samples.enumerated().compactMap { index, pixel -> RGBPixel? in
+            let localIndex = index % max(1, zoneWidth * zoneHeight)
+            let x = localIndex % zoneWidth
+            let y = localIndex / zoneWidth
+            let normalizedX = Double(x) / Double(max(1, zoneWidth - 1))
+            let normalizedY = Double(y) / Double(max(1, zoneHeight - 1))
+            let isOuterEdge = normalizedX < 0.08 || normalizedX > 0.92 || normalizedY < 0.04 || normalizedY > 0.96
+            let isFaceHeavyZone = normalizedY < 0.13 && normalizedX > 0.30 && normalizedX < 0.70
+            guard !isOuterEdge && !isFaceHeavyZone else {
+                return nil
+            }
+            return pixel
+        }
+
+        return centerWeightedSamples.isEmpty ? samples : centerWeightedSamples
+    }
+
+    private func garmentSamplingCrops() -> [CGRect] {
+        [
+            CGRect(x: 0.32, y: 0.20, width: 0.36, height: 0.28),
+            CGRect(x: 0.33, y: 0.46, width: 0.34, height: 0.26),
+            CGRect(x: 0.36, y: 0.70, width: 0.28, height: 0.12)
+        ]
+    }
+
+    private func everydayGarmentColorName(for pixel: RGBPixel) -> String? {
+        let red = Int(pixel.red)
+        let green = Int(pixel.green)
+        let blue = Int(pixel.blue)
+        let maxValue = max(red, green, blue)
+        let minValue = min(red, green, blue)
+        let spread = maxValue - minValue
+        let brightness = (red + green + blue) / 3
+
+        if brightness < 28 { return "black" }
+        if brightness < 62 && spread < 28 { return "charcoal" }
+        if brightness > 222 && spread < 34 { return "white" }
+        if spread < 20 {
+            if brightness < 80 { return "black" }
+            if brightness < 118 { return "charcoal" }
+            if brightness > 190 { return "white" }
+            return "gray"
+        }
+
+        if blue > red + 22 && blue > green + 12 {
+            return brightness < 88 ? "navy" : "blue"
+        }
+
+        if green > red + 12 && green > blue + 8 {
+            if red > 70 && blue < 105 && brightness < 150 { return "olive" }
+            return "green"
+        }
+
+        if red > green + 24 && red > blue + 24 {
+            if red > 165 && green > 112 && blue < 85 { return "orange" }
+            if red > 165 && green > 78 && blue > 100 { return "pink" }
+            if brightness < 95 && blue > 48 { return "maroon" }
+            if brightness < 100 { return "burgundy" }
+            return "red"
+        }
+
+        if red > green && green > blue {
+            if brightness < 92 { return "brown" }
+            if red > 184 && green > 152 && blue > 112 { return "beige" }
+            if red > 180 && green > 150 && blue < 112 { return "khaki" }
+            if red > 190 && green > 168 && blue < 105 { return "yellow" }
+            if red > 142 && green > 100 && blue < 105 { return "tan" }
+            return "brown"
+        }
+
+        if red > 120 && blue > 100 && green < 120 {
+            return "purple"
+        }
+
+        return nil
+    }
+
+    func traditionalTextileSignalScore() -> Int {
+        let samples = sampledRGB(width: 8, height: 8)
+        guard samples.count > 8 else {
+            return 0
+        }
+
+        let colorFamilies = samples.map { pixel -> String in
+            let red = Int(pixel.red)
+            let green = Int(pixel.green)
+            let blue = Int(pixel.blue)
+            let maxValue = max(red, green, blue)
+            let minValue = min(red, green, blue)
+
+            if maxValue < 45 { return "black" }
+            if minValue > 210 { return "white" }
+            if maxValue - minValue < 24 { return "neutral" }
+            if red > green + 30 && red > blue + 30 { return "red" }
+            if green > red + 25 && green > blue + 25 { return "green" }
+            if blue > red + 25 && blue > green + 25 { return "blue" }
+            if red > 155 && green > 110 && blue < 105 { return "gold" }
+            if red > 125 && blue > 100 && green < 125 { return "purple" }
+            return "mixed"
+        }
+
+        let uniqueColors = Set(colorFamilies).count
+        let brightness = samples.map { (Int($0.red) + Int($0.green) + Int($0.blue)) / 3 }
+        let contrast = (brightness.max() ?? 0) - (brightness.min() ?? 0)
+        let saturatedCount = samples.filter { pixel in
+            let red = Int(pixel.red)
+            let green = Int(pixel.green)
+            let blue = Int(pixel.blue)
+            return max(red, green, blue) - min(red, green, blue) > 55
+        }.count
+        let saturationRatio = Double(saturatedCount) / Double(samples.count)
+
+        var edgeChanges = 0
+        for index in 1..<samples.count {
+            let previous = samples[index - 1]
+            let current = samples[index]
+            let delta = abs(Int(previous.red) - Int(current.red))
+                + abs(Int(previous.green) - Int(current.green))
+                + abs(Int(previous.blue) - Int(current.blue))
+            if delta > 95 {
+                edgeChanges += 1
+            }
+        }
+
+        var score = 0
+        if uniqueColors >= 5 { score += 3 }
+        if contrast > 115 { score += 2 }
+        if saturationRatio > 0.34 { score += 2 }
+        if edgeChanges >= 14 { score += 2 }
+        if colorFamilies.contains("gold") || colorFamilies.contains("purple") || colorFamilies.contains("mixed") { score += 1 }
+
+        return score
+    }
+
+    func colorSignature() -> String {
+        let samples = sampledRGB(width: 4, height: 4)
+
+        guard !samples.isEmpty else {
+            return "no-image"
+        }
+
+        return samples.map { pixel in
+            let red = pixel.red / 32
+            let green = pixel.green / 32
+            let blue = pixel.blue / 32
+            return "\(red)\(green)\(blue)"
+        }
+        .joined(separator: "-")
+    }
+
+    func outfitIdentitySignature() -> String {
+        let samples = sampledRGB(width: 6, height: 6)
+
+        guard !samples.isEmpty else {
+            return "no-image"
+        }
+
+        let colorBuckets = samples.map { pixel in
+            let red = pixel.red / 24
+            let green = pixel.green / 24
+            let blue = pixel.blue / 24
+            let brightness = (Int(pixel.red) + Int(pixel.green) + Int(pixel.blue)) / 48
+            return "\(red)\(green)\(blue)\(brightness)"
+        }
+
+        return colorBuckets.joined(separator: ".")
+    }
+
+    func fastVisionCGImage() -> CGImage? {
+        // Callers supply a normalized, bounded visionAnalysisImage. Do not resize
+        // it a second time or discard small logo and garment-construction detail.
+        guard let source = cgImage else { return nil }
+        return visionNormalizedCGImage(from: source)
+    }
+
+    private func visionNormalizedCGImage(from source: CGImage) -> CGImage? {
+        if source.bitsPerComponent == 8,
+           source.bitsPerPixel == 32,
+           source.colorSpace?.model == .rgb {
+            return source
+        }
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: source.width,
+                  height: source.height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: 0,
+                  space: colorSpace,
+                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+              ) else {
+            return nil
+        }
+
+        context.interpolationQuality = .high
+        context.draw(source, in: CGRect(x: 0, y: 0, width: source.width, height: source.height))
+        return context.makeImage()
+    }
+
+    private func sampledRGB(in normalizedCrop: CGRect, width: Int, height: Int) -> [RGBPixel] {
+        guard let cgImage else {
+            return sampledRGB(width: width, height: height)
+        }
+
+        let boundedCrop = normalizedCrop
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !boundedCrop.isNull, boundedCrop.width > 0, boundedCrop.height > 0 else {
+            return sampledRGB(width: width, height: height)
+        }
+
+        let pixelRect = CGRect(
+            x: CGFloat(cgImage.width) * boundedCrop.origin.x,
+            y: CGFloat(cgImage.height) * boundedCrop.origin.y,
+            width: CGFloat(cgImage.width) * boundedCrop.width,
+            height: CGFloat(cgImage.height) * boundedCrop.height
+        ).integral
+
+        guard let croppedImage = cgImage.cropping(to: pixelRect) else {
+            return sampledRGB(width: width, height: height)
+        }
+
+        let cropUIImage = UIImage(cgImage: croppedImage, scale: scale, orientation: imageOrientation)
+        return cropUIImage.sampledRGB(width: width, height: height)
+    }
+
+    private func sampledRGB(width: Int, height: Int) -> [RGBPixel] {
+        let size = CGSize(width: width, height: height)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let thumbnail = renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: size))
+        }
+
+        guard let cgImage = thumbnail.cgImage else {
+            return []
+        }
+
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+
+        guard let context = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        ) else {
+            return []
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return stride(from: 0, to: pixels.count, by: 4).map { index in
+            RGBPixel(red: pixels[index], green: pixels[index + 1], blue: pixels[index + 2])
+        }
+    }
+
+    func normalizedImageSHA256Digest() -> String {
+        let pixels = sampledRGB(width: 64, height: 64)
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(pixels.count * 3)
+        for pixel in pixels {
+            bytes.append(pixel.red)
+            bytes.append(pixel.green)
+            bytes.append(pixel.blue)
+        }
+        return ScanImageIdentity.sha256Hex(bytes: bytes)
+    }
+}
+
+private struct OutfitShareCategoryScore: Identifiable {
+    let title: String
+    let value: String
+
+    var id: String { title }
+}
+
+private struct OutfitSharePreviewData: Identifiable {
+    let id = UUID()
+    let photo: UIImage?
+    let overallScore: Int
+    let scoreTitle: String
+    let categoryScores: [OutfitShareCategoryScore]
+    let outfitDescription: String
+    let suggestions: [String]
+    let scanDate: Date
+}
+
+private enum OutfitShareCardFormat: String, CaseIterable, Identifiable {
+    case square
+    case portrait
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .square:
+            return "Square Post"
+        case .portrait:
+            return "Portrait Story"
+        }
+    }
+
+    var logicalSize: CGSize {
+        switch self {
+        case .square:
+            return CGSize(width: 360, height: 360)
+        case .portrait:
+            return CGSize(width: 360, height: 640)
+        }
+    }
+
+    var renderScale: CGFloat { 3 }
+    var exportWidth: Int { Int(logicalSize.width * renderScale) }
+    var exportHeight: Int { Int(logicalSize.height * renderScale) }
+    var exportPixelCount: Int { exportWidth * exportHeight }
+    var aspectRatio: CGFloat { logicalSize.width / logicalSize.height }
+    var isPortrait: Bool { self == .portrait }
+}
+
+private enum OutfitShareCardAppearance: String, CaseIterable, Identifiable {
+    case light
+    case dark
+
+    var id: String { rawValue }
+    var displayName: String { rawValue.capitalized }
+
+    var background: LinearGradient {
+        switch self {
+        case .light:
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.99, green: 0.98, blue: 0.95),
+                    Color(red: 0.95, green: 0.91, blue: 0.82)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        case .dark:
+            return LinearGradient(
+                colors: [
+                    Color(red: 0.06, green: 0.08, blue: 0.13),
+                    Color(red: 0.12, green: 0.16, blue: 0.23)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+
+    var primaryText: Color {
+        self == .light ? Color(red: 0.10, green: 0.12, blue: 0.16) : .white
+    }
+
+    var secondaryText: Color {
+        self == .light ? Color.black.opacity(0.62) : Color.white.opacity(0.72)
+    }
+
+    var accent: Color {
+        self == .light
+            ? Color(red: 0.54, green: 0.35, blue: 0.07)
+            : Color(red: 0.96, green: 0.77, blue: 0.37)
+    }
+
+    var panel: Color {
+        self == .light ? Color.white.opacity(0.72) : Color.white.opacity(0.09)
+    }
+
+    var border: Color {
+        self == .light ? Color.black.opacity(0.10) : Color.white.opacity(0.14)
+    }
+}
+
+private struct OutfitShareCardConfiguration {
+    let includePhoto: Bool
+    let includeOverallScore: Bool
+    let includeCategoryScores: Bool
+    let includeDescription: Bool
+    let includeSuggestions: Bool
+    let includeBranding: Bool
+}
+
+private struct OutfitShareCardView: View {
+    @ScaledMetric(relativeTo: .body) private var dynamicTypeScale: CGFloat = 1
+
+    let data: OutfitSharePreviewData
+    let configuration: OutfitShareCardConfiguration
+    let format: OutfitShareCardFormat
+    let appearance: OutfitShareCardAppearance
+
+    var body: some View {
+        GeometryReader { proxy in
+            let unit = proxy.size.width / 360
+
+            VStack(alignment: .leading, spacing: (format.isPortrait ? 10 : 5) * unit) {
+                cardHeader(unit: unit)
+
+                if configuration.includePhoto, let photo = data.photo {
+                    Image(uiImage: photo)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity)
+                        .frame(height: (format.isPortrait ? 255 : 90) * unit)
+                        .clipShape(RoundedRectangle(cornerRadius: 13 * unit))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 13 * unit)
+                                .stroke(appearance.border, lineWidth: max(1, unit))
+                        )
+                        .clipped()
+                }
+
+                if configuration.includeCategoryScores, !data.categoryScores.isEmpty {
+                    categorySection(unit: unit)
+                }
+
+                if configuration.includeDescription, !data.outfitDescription.isEmpty {
+                    VStack(alignment: .leading, spacing: 2 * unit) {
+                        Text("OUTFIT NOTES")
+                            .font(.system(size: cardFontSize(portrait: 10, square: 7, unit: unit), weight: .bold))
+                            .tracking(0.8 * unit)
+                            .foregroundStyle(appearance.accent)
+
+                        Text(data.outfitDescription)
+                            .font(.system(size: cardFontSize(portrait: 13, square: 8.5, unit: unit), weight: .medium))
+                            .foregroundStyle(appearance.secondaryText)
+                            .lineLimit(format.isPortrait ? 3 : 1)
+                            .minimumScaleFactor(0.78)
+                    }
+                }
+
+                if configuration.includeSuggestions, !data.suggestions.isEmpty {
+                    suggestionSection(unit: unit)
+                }
+
+                Spacer(minLength: 0)
+                cardFooter(unit: unit)
+            }
+            .padding(.horizontal, (format.isPortrait ? 20 : 13) * unit)
+            .padding(.vertical, (format.isPortrait ? 18 : 11) * unit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(appearance.background)
+        }
+    }
+
+    @ViewBuilder
+    private func cardHeader(unit: CGFloat) -> some View {
+        if configuration.includeOverallScore || configuration.includeBranding {
+            HStack(alignment: .top, spacing: 10 * unit) {
+                if configuration.includeOverallScore {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("My KigoStylist Score")
+                            .font(.system(size: cardFontSize(portrait: 17, square: 11, unit: unit), weight: .bold))
+                            .foregroundStyle(appearance.primaryText)
+
+                        HStack(alignment: .firstTextBaseline, spacing: 2 * unit) {
+                            Text("\(data.overallScore)")
+                                .font(.system(size: cardFontSize(portrait: 52, square: 34, unit: unit), weight: .black, design: .rounded))
+                                .foregroundStyle(appearance.accent)
+
+                            Text("/100")
+                                .font(.system(size: cardFontSize(portrait: 17, square: 11, unit: unit), weight: .bold))
+                                .foregroundStyle(appearance.secondaryText)
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if configuration.includeBranding {
+                    HStack(spacing: 4 * unit) {
+                        Image(systemName: "sparkles")
+                        Text("KIGOSTYLIST")
+                    }
+                    .font(.system(size: cardFontSize(portrait: 9, square: 6.5, unit: unit), weight: .bold))
+                    .foregroundStyle(appearance.accent)
+                    .padding(.horizontal, 8 * unit)
+                    .padding(.vertical, 6 * unit)
+                    .background(appearance.panel)
+                    .clipShape(Capsule())
+                }
+            }
+        }
+    }
+
+    private func categorySection(unit: CGFloat) -> some View {
+        let categories = Array(data.categoryScores.prefix(format.isPortrait ? 5 : 4))
+        let columns = [
+            GridItem(.flexible(), spacing: 5 * unit),
+            GridItem(.flexible(), spacing: 5 * unit)
+        ]
+
+        return LazyVGrid(columns: columns, spacing: 4 * unit) {
+            ForEach(categories) { category in
+                HStack(spacing: 4 * unit) {
+                    Text(category.title)
+                        .font(.system(size: cardFontSize(portrait: 9.5, square: 6.5, unit: unit), weight: .semibold))
+                        .foregroundStyle(appearance.secondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+
+                    Spacer(minLength: 2 * unit)
+
+                    Text(category.value)
+                        .font(.system(size: cardFontSize(portrait: 12, square: 8, unit: unit), weight: .bold, design: .rounded))
+                        .foregroundStyle(appearance.primaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .padding(.horizontal, 8 * unit)
+                .padding(.vertical, (format.isPortrait ? 7 : 4) * unit)
+                .background(appearance.panel)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7 * unit)
+                        .stroke(appearance.border, lineWidth: max(0.5, unit * 0.6))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 7 * unit))
+            }
+        }
+    }
+
+    private func suggestionSection(unit: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: (format.isPortrait ? 5 : 2) * unit) {
+            Text("How I Can Improve")
+                .font(.system(size: cardFontSize(portrait: 14, square: 9, unit: unit), weight: .bold))
+                .foregroundStyle(appearance.primaryText)
+
+            ForEach(Array(data.suggestions.prefix(3).enumerated()), id: \.offset) { index, suggestion in
+                HStack(alignment: .top, spacing: 6 * unit) {
+                    Text("\(index + 1)")
+                        .font(.system(size: cardFontSize(portrait: 9, square: 6.5, unit: unit), weight: .bold))
+                        .foregroundStyle(appearance.background)
+                        .frame(width: (format.isPortrait ? 18 : 12) * unit, height: (format.isPortrait ? 18 : 12) * unit)
+                        .background(appearance.accent)
+                        .clipShape(Circle())
+
+                    Text(suggestion)
+                        .font(.system(size: cardFontSize(portrait: 11, square: 7.5, unit: unit), weight: .medium))
+                        .foregroundStyle(appearance.secondaryText)
+                        .lineLimit(format.isPortrait ? 2 : 1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+        }
+    }
+
+    private func cardFooter(unit: CGFloat) -> some View {
+        HStack(spacing: 8 * unit) {
+            if configuration.includeBranding {
+                Text("Scored with KigoStylist")
+                    .fontWeight(.bold)
+                    .foregroundStyle(appearance.primaryText)
+            }
+
+            Spacer(minLength: 0)
+
+            Text(Self.cardDateFormatter.string(from: data.scanDate))
+                .foregroundStyle(appearance.secondaryText)
+        }
+        .font(.system(size: cardFontSize(portrait: 10, square: 6.5, unit: unit), weight: .medium))
+        .lineLimit(1)
+    }
+
+    private func cardFontSize(portrait: CGFloat, square: CGFloat, unit: CGFloat) -> CGFloat {
+        let maximumScale: CGFloat = format.isPortrait ? 1.18 : 1.10
+        return (format.isPortrait ? portrait : square) * unit * min(dynamicTypeScale, maximumScale)
+    }
+
+    private static let cardDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+}
+
+private struct OutfitSharePreviewScreen: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var includePhoto = false
+    @State private var includeOverallScore = true
+    @State private var includeCategoryScores = true
+    @State private var includeDescription = true
+    @State private var includeSuggestions = true
+    @State private var includeBranding = true
+    @State private var cardFormat: OutfitShareCardFormat = .square
+    @State private var cardAppearance: OutfitShareCardAppearance = .light
+    @State private var includeCaption = true
+    @State private var captionText: String
+    @State private var includeAppStoreLink = true
+    @State private var renderedShareCard: UIImage?
+    @State private var isShowingSystemShareSheet = false
+    @State private var isCreatingShareLink = false
+    @State private var isShowingLinkCopied = false
+    @State private var isShowingShareError = false
+    @State private var shareErrorMessage = "We couldn’t prepare this outfit card. Please try again."
+
+    let data: OutfitSharePreviewData
+    let accentColor: Color
+
+    init(data: OutfitSharePreviewData, accentColor: Color) {
+        self.data = data
+        self.accentColor = accentColor
+        _captionText = State(
+            initialValue: "My outfit scored \(data.overallScore)/100 on KigoStylist. Here is how I can improve it."
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    cardControls
+                    sharePreviewCard
+                    privacyControls
+                    captionControls
+
+                    Label(
+                        "Account details, profile data, sizes, location, AI prompts, API responses, and debug information are never included.",
+                        systemImage: "lock.shield.fill"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                    Label(
+                        "Share Image opens the iPhone Share Sheet with the rendered card. Copy Share Link creates a secure KigoStylist link and copies it to your clipboard instead — it does not open the Share Sheet. Secure links expire after 30 days and can be revoked in Profile.",
+                        systemImage: "iphone"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 700, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(20)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Share Preview")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 10) {
+                    Button {
+                        renderedShareCard = nil
+                        if let image = renderShareCard() {
+                            renderedShareCard = image
+                            isShowingSystemShareSheet = true
+                        } else {
+                            showShareError("We couldn’t prepare this outfit card. Please try again.")
+                        }
+                    } label: {
+                        Label("Share Image", systemImage: "photo")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Share outfit card")
+                    .accessibilityHint("Opens the system Share Sheet with the rendered card image and selected caption.")
+
+                    Button {
+                        Task {
+                            await createAndSharePrivateLink()
+                        }
+                    } label: {
+                        Label(isCreatingShareLink ? "Creating Link" : "Copy Share Link", systemImage: "link")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, minHeight: 50)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(accentColor)
+                    .disabled(isCreatingShareLink)
+                    .accessibilityLabel("Copy secure KigoStylist share link")
+                    .accessibilityHint("Creates a secure KigoStylist link and copies it to the clipboard without opening the iPhone Share Sheet.")
+                }
+                .frame(maxWidth: 700)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .background(.ultraThinMaterial)
+            }
+        }
+        .sheet(isPresented: $isShowingSystemShareSheet, onDismiss: {
+            renderedShareCard = nil
+        }) {
+            OutfitShareActivityView(
+                activityItems: activityItems,
+                onCompletion: handleShareCompletion
+            )
+        }
+        .alert("Link Copied", isPresented: $isShowingLinkCopied) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("The secure KigoStylist link is on your clipboard. Paste it into Messages, Mail, or anywhere else you want to send it.")
+        }
+        .alert("Unable to Share", isPresented: $isShowingShareError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(shareErrorMessage)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            renderedShareCard = nil
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var cardControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Card Format", systemImage: "rectangle.on.rectangle")
+                .font(.headline)
+
+            Picker("Card format", selection: $cardFormat) {
+                ForEach(OutfitShareCardFormat.allCases) { format in
+                    Text(format.displayName).tag(format)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Share card format")
+            .accessibilityHint("Choose a square post or portrait story image.")
+
+            Picker("Card appearance", selection: $cardAppearance) {
+                ForEach(OutfitShareCardAppearance.allCases) { appearance in
+                    Text(appearance.displayName).tag(appearance)
+                }
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Share card appearance")
+            .accessibilityHint("Choose the light or dark card design.")
+
+            Text("\(cardFormat.exportWidth) × \(cardFormat.exportHeight) image")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var sharePreviewCard: some View {
+        OutfitShareCardView(
+            data: data,
+            configuration: cardConfiguration,
+            format: cardFormat,
+            appearance: cardAppearance
+        )
+        .aspectRatio(cardFormat.aspectRatio, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(cardAccessibilityLabel)
+        .accessibilityHint("Updates when you change the card format, appearance, or privacy controls.")
+    }
+
+    private var privacyControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Choose What to Share", systemImage: "checklist")
+                    .font(.headline)
+
+                Text("The preview above updates immediately. Only enabled sections go to the system share sheet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Outfit photo", isOn: $includePhoto)
+                .disabled(data.photo == nil)
+                .accessibilityLabel("Include outfit photo")
+                .accessibilityHint(data.photo == nil ? "Photo unavailable. A score-only card will be shared." : "Controls whether the outfit photo appears on the card.")
+            if data.photo == nil {
+                Label("Photo unavailable. Your score-only card is ready.", systemImage: "photo.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Overall score", isOn: $includeOverallScore)
+                .accessibilityLabel("Include overall score")
+            Toggle("Category scores", isOn: $includeCategoryScores)
+                .disabled(data.categoryScores.isEmpty)
+                .accessibilityLabel("Include category scores")
+            if data.categoryScores.isEmpty {
+                Label("Category scores are unavailable and will be omitted.", systemImage: "chart.bar.xaxis")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Outfit description", isOn: $includeDescription)
+                .accessibilityLabel("Include outfit description")
+            Toggle("Improvement suggestions", isOn: $includeSuggestions)
+                .accessibilityLabel("Include improvement suggestions")
+            Toggle("Branding on exported image", isOn: $includeBranding)
+                .accessibilityLabel("Include KigoStylist branding on exported image")
+        }
+        .tint(accentColor)
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var cardAccessibilityLabel: String {
+        var details = [
+            "Share card preview",
+            cardFormat.displayName,
+            "\(cardAppearance.displayName) appearance"
+        ]
+
+        if includePhoto, data.photo != nil {
+            details.append("Outfit photo included")
+        } else {
+            details.append("Outfit photo not included")
+        }
+
+        if includeOverallScore {
+            details.append("Overall KigoStylist score \(data.overallScore) out of 100, \(data.scoreTitle)")
+        }
+
+        if includeCategoryScores, !data.categoryScores.isEmpty {
+            let categorySummary = data.categoryScores
+                .map { "\($0.title) \($0.value.replacingOccurrences(of: "/", with: " out of "))" }
+                .joined(separator: ", ")
+            details.append("Category scores: \(categorySummary)")
+        }
+
+        if includeDescription, !data.outfitDescription.isEmpty {
+            details.append("Outfit description: \(data.outfitDescription)")
+        }
+
+        if includeSuggestions, !data.suggestions.isEmpty {
+            details.append("How I can improve: \(data.suggestions.prefix(3).joined(separator: ", "))")
+        }
+
+        if includeBranding {
+            details.append("KigoStylist branding included")
+        }
+
+        return details.joined(separator: ". ")
+    }
+
+    private var cardConfiguration: OutfitShareCardConfiguration {
+        OutfitShareCardConfiguration(
+            includePhoto: includePhoto,
+            includeOverallScore: includeOverallScore,
+            includeCategoryScores: includeCategoryScores,
+            includeDescription: includeDescription,
+            includeSuggestions: includeSuggestions,
+            includeBranding: includeBranding
+        )
+    }
+
+    private var captionControls: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Caption & Link", systemImage: "text.quote")
+                .font(.headline)
+
+            Toggle("Include caption", isOn: $includeCaption)
+                .accessibilityLabel("Include editable caption")
+
+            if includeCaption {
+                TextEditor(text: $captionText)
+                    .font(.body)
+                    .frame(minHeight: 92)
+                    .padding(8)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                    )
+                    .accessibilityLabel("Editable share caption")
+            }
+
+            if let officialAppStoreURL {
+                Toggle("Include App Store link", isOn: $includeAppStoreLink)
+                    .accessibilityLabel("Include official App Store link")
+
+                Text(officialAppStoreURL.absoluteString)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else {
+                Label("No official App Store link is configured yet.", systemImage: "link.badge.plus")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .tint(accentColor)
+        .padding(18)
+        .background(Color(uiColor: .secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var activityItems: [Any] {
+        var items: [Any] = []
+        if let renderedShareCard {
+            items.append(renderedShareCard)
+        }
+
+        let trimmedCaption = captionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if includeCaption, !trimmedCaption.isEmpty {
+            items.append(trimmedCaption)
+        }
+
+        if includeAppStoreLink, let officialAppStoreURL {
+            items.append(officialAppStoreURL)
+        }
+
+        return items
+    }
+
+    @MainActor
+    private func renderShareCard() -> UIImage? {
+        guard cardFormat.exportPixelCount <= 2_100_000 else {
+            return nil
+        }
+
+        let size = cardFormat.logicalSize
+        let card = OutfitShareCardView(
+            data: data,
+            configuration: cardConfiguration,
+            format: cardFormat,
+            appearance: cardAppearance
+        )
+        .environment(\.dynamicTypeSize, dynamicTypeSize)
+        .frame(width: size.width, height: size.height)
+
+        return autoreleasepool {
+            let renderer = ImageRenderer(content: card)
+            renderer.proposedSize = ProposedViewSize(width: size.width, height: size.height)
+            renderer.scale = cardFormat.renderScale
+            renderer.isOpaque = true
+            return renderer.uiImage
+        }
+    }
+
+    @MainActor
+    private func handleShareCompletion(_ completion: OutfitShareCompletion) {
+        isShowingSystemShareSheet = false
+        renderedShareCard = nil
+
+        if completion == .failed {
+            showShareError("We couldn’t complete sharing. Please try again.")
+        }
+    }
+
+    @MainActor
+    private func createAndSharePrivateLink() async {
+        guard !isCreatingShareLink else { return }
+
+        isCreatingShareLink = true
+        defer { isCreatingShareLink = false }
+
+        do {
+            let payload = makeShareableScoreCardPayload()
+            let response = try await ShareableScoreCardClient(configuration: .current).create(payload)
+            ShareableScoreCardLocalStore().saveCreatedCard(
+                token: response.token,
+                url: response.url,
+                expiresAt: response.expiresAt,
+                overallScore: payload.overallScore
+            )
+            UIPasteboard.general.url = response.url
+            isShowingLinkCopied = true
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription
+                ?? ShareableScoreCardError.network.localizedDescription
+            showShareError(message)
+        }
+    }
+
+    private func makeShareableScoreCardPayload() -> ShareableScoreCardCreatePayload {
+        let sections = ShareableScoreCardEnabledSections(
+            photo: includePhoto && data.photo != nil,
+            overallScore: includeOverallScore,
+            categoryScores: includeCategoryScores && !data.categoryScores.isEmpty,
+            notes: includeDescription && !data.outfitDescription.isEmpty,
+            recommendations: includeSuggestions && !data.suggestions.isEmpty,
+            scanDate: true
+        )
+
+        let photo: ShareableScoreCardPhoto?
+        if sections.photo,
+           let photoData = data.photo?.shareableScoreCardJPEGData() {
+            photo = ShareableScoreCardPhoto(mimeType: "image/jpeg", base64: photoData.base64EncodedString())
+        } else {
+            photo = nil
+        }
+
+        return ShareableScoreCardCreatePayload(
+            enabledSections: sections,
+            overallScore: data.overallScore,
+            scoreTitle: data.scoreTitle,
+            categoryScores: data.categoryScores.map {
+                ShareableScoreCardCategoryScore(title: $0.title, value: $0.value)
+            },
+            outfitDescription: data.outfitDescription,
+            recommendations: data.suggestions,
+            scanDate: data.scanDate,
+            photo: photo
+        )
+    }
+
+    @MainActor
+    private func showShareError(_ message: String?) {
+        shareErrorMessage = message ?? "We couldn’t prepare this outfit card. Please try again."
+        isShowingShareError = true
+    }
+
+    private var officialAppStoreURL: URL? {
+        OutfitShareOfficialLink.appStoreURL
+    }
+}
+
+private enum OutfitShareOfficialLink {
+    static var appStoreURL: URL? {
+        guard let configuredValue = Bundle.main.object(forInfoDictionaryKey: "STYLEMATCH_APP_STORE_URL") as? String else {
+            return nil
+        }
+
+        let trimmedValue = configuredValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedValue.isEmpty,
+              let components = URLComponents(string: trimmedValue),
+              components.scheme?.lowercased() == "https",
+              components.host?.lowercased() == "apps.apple.com",
+              components.user == nil,
+              components.password == nil,
+              components.port == nil,
+              let url = components.url else {
+            return nil
+        }
+
+        return url
+    }
+}
+
+private enum OutfitShareCompletion: Equatable {
+    case completed
+    case cancelled
+    case failed
+}
+
+private struct OutfitShareActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+    let onCompletion: (OutfitShareCompletion) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCompletion: onCompletion)
+    }
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        if let popover = controller.popoverPresentationController {
+            popover.sourceView = controller.view
+            popover.sourceRect = CGRect(
+                x: controller.view.bounds.midX,
+                y: controller.view.bounds.midY,
+                width: 1,
+                height: 1
+            )
+            popover.permittedArrowDirections = []
+        }
+
+        let coordinator = context.coordinator
+        controller.completionWithItemsHandler = { _, completed, _, error in
+            let completion: OutfitShareCompletion
+            if error != nil {
+                completion = .failed
+            } else {
+                completion = completed ? .completed : .cancelled
+            }
+
+            DispatchQueue.main.async {
+                coordinator.onCompletion(completion)
+            }
+        }
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
+
+    final class Coordinator {
+        let onCompletion: (OutfitShareCompletion) -> Void
+
+        init(onCompletion: @escaping (OutfitShareCompletion) -> Void) {
+            self.onCompletion = onCompletion
+        }
+    }
+}
+
+private extension Array where Element == ChatGPTStylistSection {
+    func removingDuplicateStylistSections() -> [ChatGPTStylistSection] {
+        var seen = Set<String>()
+        return filter { section in
+            seen.insert(section.title.lowercased()).inserted
+        }
+    }
+}
+
+private struct RGBPixel {
+    let red: UInt8
+    let green: UInt8
+    let blue: UInt8
+}
+
+private struct MaskedGarmentPaletteSamples {
+    let samples: [GarmentPalettePixel]
+    let tier: GarmentMaskTier
+    let maskingApplied: Bool
+    let source: GarmentPaletteSource
+    let cropsMerged: Int
+    var rawGarmentSampleCount: Int? = nil
+}
+
+private struct GarmentColorDetection {
+    let garmentColors: [String]
+    let confidence: Int
+    let notes: String
+    let maskingApplied: Bool
+    let maskTier: String?
+    let confidenceLevel: GarmentPaletteConfidence
+
+    static let aiPrompt = """
+    You are analyzing a photo to detect clothing colors ONLY.
+
+    STRICT RULES:
+    1. Ignore all background elements: walls, doors, cabinets, furniture, floors, appliances, and any objects not worn on the body.
+    2. Only analyze pixels that belong to clothing items actually worn by the person: shirt, jacket, pants, shoes, hat, accessories.
+    3. If a color could plausibly come from the background instead of the garment, exclude it.
+    4. Identify the PRIMARY garment colors as they would be described in everyday language, such as tan, brown, olive, navy, black, white, or gray, not photography color-theory terms.
+    5. Do not guess or hallucinate a color that is not clearly visible on the clothing itself.
+
+    Return ONLY valid JSON in this exact format:
+    {
+      "garment_colors": ["color1", "color2"],
+      "confidence": 0-100,
+      "notes": "one sentence explanation of what garments these colors came from"
+    }
+
+    Do not include any text outside the JSON object.
+    """
+}

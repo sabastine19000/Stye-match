@@ -1,0 +1,866 @@
+[
+  {
+    "id": "nike",
+    "name": "Nike",
+    "domains": [
+      "nike.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.nike.com",
+    "searchURLTemplate": "https://www.nike.com/w?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "athleticStreetwear",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Nike catalog integration or affiliate relationship."
+  },
+  {
+    "id": "macys",
+    "name": "Macy's",
+    "domains": [
+      "macys.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.macys.com",
+    "searchURLTemplate": "https://www.macys.com/shop/featured/{QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Macy's live catalog integration or affiliate relationship."
+  },
+  {
+    "id": "best-buy",
+    "name": "Best Buy",
+    "domains": [
+      "bestbuy.com"
+    ],
+    "categories": [
+      "electronics",
+      "styleTools"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.bestbuy.com",
+    "searchURLTemplate": "https://www.bestbuy.com/site/searchpage.jsp?st={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. KigoStylist only displays Best Buy products after approved catalog data is available."
+  },
+  {
+    "id": "target",
+    "name": "Target",
+    "domains": [
+      "target.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "styleTools"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.target.com",
+    "searchURLTemplate": "https://www.target.com/s?searchTerm={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Target live catalog integration or affiliate relationship."
+  },
+  {
+    "id": "walmart",
+    "name": "Walmart",
+    "domains": [
+      "walmart.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "electronics",
+      "styleTools"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.walmart.com",
+    "searchURLTemplate": "https://www.walmart.com/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "amazon",
+    "name": "Amazon",
+    "domains": [
+      "amazon.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "electronics",
+      "styleTools"
+    ],
+    "affiliateNetwork": "Amazon Associates",
+    "apiStatus": "affiliate-link-active",
+    "isEnabled": true,
+    "websiteURL": "https://www.amazon.com/?tag=stylematchpro-20",
+    "searchURLTemplate": "https://www.amazon.com/s?k={QUERY}&tag=stylematchpro-20",
+    "affiliateTrackingActive": true,
+    "linkCapability": "approvedAffiliate",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Affiliate link active. KigoStylist may earn a commission from qualifying Amazon purchases at no additional cost to you."
+  },
+  {
+    "id": "ebay",
+    "name": "eBay",
+    "domains": [
+      "ebay.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "electronics",
+      "styleTools"
+    ],
+    "affiliateNetwork": "eBay Partner Network",
+    "apiStatus": "affiliate-link-active",
+    "isEnabled": true,
+    "websiteURL": "https://www.ebay.com/?mkcid=1&mkrid=711-53200-19255-0&siteid=0&campid=5339211284&customid=stylematchpro&toolid=10001&mkevt=1",
+    "searchURLTemplate": "https://www.ebay.com/sch/i.html?_nkw={QUERY}&mkcid=1&mkrid=711-53200-19255-0&siteid=0&campid=5339211284&customid=stylematchpro&toolid=10001&mkevt=1",
+    "affiliateTrackingActive": true,
+    "tier": "everydayValue",
+    "linkCapability": "approvedAffiliate",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Affiliate link active. KigoStylist may earn a commission from qualifying eBay purchases at no additional cost to you."
+  },
+  {
+    "id": "etsy",
+    "name": "Etsy",
+    "domains": [
+      "etsy.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "styleTools"
+    ],
+    "affiliateNetwork": "Rakuten Advertising",
+    "apiStatus": "affiliate-application-pending",
+    "isEnabled": true,
+    "websiteURL": "https://www.etsy.com",
+    "searchURLTemplate": "https://www.etsy.com/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct Etsy access. The Etsy affiliate application is pending, so KigoStylist does not claim affiliate tracking yet."
+  },
+  {
+    "id": "asos",
+    "name": "ASOS",
+    "domains": [
+      "asos.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.asos.com/us/",
+    "searchURLTemplate": "https://www.asos.com/us/search/?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim an ASOS affiliate relationship."
+  },
+  {
+    "id": "uniqlo",
+    "name": "UNIQLO",
+    "domains": [
+      "uniqlo.com"
+    ],
+    "categories": [
+      "clothing",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.uniqlo.com/us/en/",
+    "searchURLTemplate": "https://www.uniqlo.com/us/en/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a UNIQLO affiliate relationship."
+  },
+  {
+    "id": "gap",
+    "name": "Gap",
+    "domains": [
+      "gap.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.gap.com",
+    "searchURLTemplate": "https://www.gap.com/browse/search.do?searchText={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Gap affiliate relationship."
+  },
+  {
+    "id": "old-navy",
+    "name": "Old Navy",
+    "domains": [
+      "oldnavy.gap.com",
+      "gap.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://oldnavy.gap.com",
+    "searchURLTemplate": "https://oldnavy.gap.com/browse/search.do?searchText={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim an Old Navy affiliate relationship."
+  },
+  {
+    "id": "abercrombie",
+    "name": "Abercrombie & Fitch",
+    "domains": [
+      "abercrombie.com"
+    ],
+    "categories": [
+      "clothing",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.abercrombie.com",
+    "searchURLTemplate": "https://www.abercrombie.com/shop/us/search?searchTerm={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "premiumMainstream",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim an Abercrombie & Fitch affiliate relationship."
+  },
+  {
+    "id": "jcrew",
+    "name": "J.Crew",
+    "domains": [
+      "jcrew.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.jcrew.com",
+    "searchURLTemplate": "https://www.jcrew.com/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "premiumMainstream",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a J.Crew affiliate relationship."
+  },
+  {
+    "id": "coach",
+    "name": "Coach",
+    "domains": [
+      "coach.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.coach.com",
+    "searchURLTemplate": "https://www.coach.com/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "premiumMainstream",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Coach affiliate relationship."
+  },
+  {
+    "id": "michael-kors",
+    "name": "Michael Kors",
+    "domains": [
+      "michaelkors.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.michaelkors.com",
+    "searchURLTemplate": "https://www.michaelkors.com/search/?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "premiumMainstream",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Michael Kors affiliate relationship."
+  },
+  {
+    "id": "kohls",
+    "name": "Kohl's",
+    "domains": [
+      "kohls.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "styleTools"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "direct-store",
+    "isEnabled": true,
+    "websiteURL": "https://www.kohls.com",
+    "searchURLTemplate": "https://www.kohls.com/search.jsp?submit-search=web-regular&search={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Kohl's affiliate relationship."
+  },
+  {
+    "id": "american-eagle",
+    "name": "American Eagle",
+    "domains": [
+      "ae.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.ae.com",
+    "searchURLTemplate": "https://www.ae.com/us/en/s/search?keyword={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim an American Eagle live catalog integration or affiliate relationship."
+  },
+  {
+    "id": "adidas",
+    "name": "Adidas",
+    "domains": [
+      "adidas.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.adidas.com",
+    "searchURLTemplate": "https://www.adidas.com/us/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "athleticStreetwear",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "hm",
+    "name": "H&M",
+    "domains": [
+      "hm.com"
+    ],
+    "categories": [
+      "clothing",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.hm.com",
+    "searchURLTemplate": "https://www.hm.com/en_us/search-results.html?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "zara",
+    "name": "Zara",
+    "domains": [
+      "zara.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.zara.com",
+    "searchURLTemplate": "https://www.zara.com/us/en/search?searchTerm={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "nordstrom",
+    "name": "Nordstrom",
+    "domains": [
+      "nordstrom.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.nordstrom.com",
+    "searchURLTemplate": "https://www.nordstrom.com/sr?keyword={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Nordstrom live catalog integration or affiliate relationship."
+  },
+  {
+    "id": "levis",
+    "name": "Levi's",
+    "domains": [
+      "levi.com"
+    ],
+    "categories": [
+      "clothing",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "affiliate-placeholder",
+    "isEnabled": true,
+    "websiteURL": "https://www.levi.com",
+    "searchURLTemplate": "https://www.levi.com/US/en_US/search/{QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "everydayValue",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Levi's live catalog integration or affiliate relationship."
+  },
+  {
+    "id": "shein",
+    "name": "SHEIN",
+    "domains": [
+      "shein.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.shein.com",
+    "searchURLTemplate": "https://www.shein.com/pdsearch/{QUERY}/",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "fashion-nova",
+    "name": "Fashion Nova",
+    "domains": [
+      "fashionnova.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.fashionnova.com",
+    "searchURLTemplate": "https://www.fashionnova.com/search?q={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "foot-locker",
+    "name": "Foot Locker",
+    "domains": [
+      "footlocker.com"
+    ],
+    "categories": [
+      "shoes",
+      "clothing",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.footlocker.com",
+    "searchURLTemplate": "https://www.footlocker.com/search?query={QUERY}",
+    "affiliateTrackingActive": false,
+    "tier": "athleticStreetwear",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "dicks",
+    "name": "DICK'S Sporting Goods",
+    "domains": [
+      "dickssportinggoods.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories",
+      "electronics"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.dickssportinggoods.com",
+    "searchURLTemplate": "https://www.dickssportinggoods.com/search/SearchDisplay?searchTerm={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "sephora",
+    "name": "Sephora",
+    "domains": [
+      "sephora.com"
+    ],
+    "categories": [
+      "styleTools",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.sephora.com",
+    "searchURLTemplate": "https://www.sephora.com/search?keyword={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "ulta",
+    "name": "Ulta",
+    "domains": [
+      "ulta.com"
+    ],
+    "categories": [
+      "styleTools",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.ulta.com",
+    "searchURLTemplate": "https://www.ulta.com/search?search={QUERY}",
+    "affiliateTrackingActive": false,
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Catalog integration coming soon. Products appear only after approved product data is available."
+  },
+  {
+    "id": "gucci",
+    "name": "Gucci",
+    "domains": [
+      "gucci.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.gucci.com/us/en/",
+    "affiliateTrackingActive": false,
+    "tier": "designerLuxury",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Gucci catalog integration or affiliate relationship."
+  },
+  {
+    "id": "prada",
+    "name": "Prada",
+    "domains": [
+      "prada.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.prada.com/ww/en.html",
+    "affiliateTrackingActive": false,
+    "tier": "designerLuxury",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Prada catalog integration or affiliate relationship."
+  },
+  {
+    "id": "burberry",
+    "name": "Burberry",
+    "domains": [
+      "burberry.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://int.burberry.com/",
+    "affiliateTrackingActive": false,
+    "tier": "designerLuxury",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Burberry catalog integration or affiliate relationship."
+  },
+  {
+    "id": "saint-laurent",
+    "name": "Saint Laurent",
+    "domains": [
+      "ysl.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.ysl.com/en-us",
+    "affiliateTrackingActive": false,
+    "tier": "designerLuxury",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Saint Laurent catalog integration or affiliate relationship."
+  },
+  {
+    "id": "louis-vuitton",
+    "name": "Louis Vuitton",
+    "domains": [
+      "louisvuitton.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://us.louisvuitton.com/eng-us/homepage",
+    "affiliateTrackingActive": false,
+    "tier": "designerLuxury",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Louis Vuitton catalog integration or affiliate relationship."
+  },
+  {
+    "id": "saks-fifth-avenue",
+    "name": "Saks Fifth Avenue",
+    "domains": [
+      "saksfifthavenue.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.saksfifthavenue.com/",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Saks Fifth Avenue catalog integration or affiliate relationship."
+  },
+  {
+    "id": "neiman-marcus",
+    "name": "Neiman Marcus",
+    "domains": [
+      "neimanmarcus.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.neimanmarcus.com/",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Neiman Marcus catalog integration or affiliate relationship."
+  },
+  {
+    "id": "bloomingdales",
+    "name": "Bloomingdale's",
+    "domains": [
+      "bloomingdales.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.bloomingdales.com/",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Bloomingdale's catalog integration or affiliate relationship."
+  },
+  {
+    "id": "bergdorf-goodman",
+    "name": "Bergdorf Goodman",
+    "domains": [
+      "bergdorfgoodman.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.bergdorfgoodman.com/",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim a Bergdorf Goodman catalog integration or affiliate relationship."
+  },
+  {
+    "id": "ssense",
+    "name": "SSENSE",
+    "domains": [
+      "ssense.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.ssense.com/en-us",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim an SSENSE catalog integration or affiliate relationship."
+  },
+  {
+    "id": "mr-porter",
+    "name": "MR PORTER",
+    "domains": [
+      "mrporter.com"
+    ],
+    "categories": [
+      "clothing",
+      "shoes",
+      "accessories"
+    ],
+    "affiliateNetwork": "TBD",
+    "apiStatus": "needs-approved-feed",
+    "isEnabled": true,
+    "websiteURL": "https://www.mrporter.com/en-us/",
+    "affiliateTrackingActive": false,
+    "tier": "luxuryMultiBrand",
+    "linkCapability": "linkOnly",
+    "commerceDataCapability": "unavailable",
+    "disclosureText": "Direct store access. KigoStylist does not currently claim an MR PORTER catalog integration or affiliate relationship."
+  }
+]

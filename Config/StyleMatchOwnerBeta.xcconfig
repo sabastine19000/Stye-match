@@ -1,0 +1,14 @@
+#include "StyleMatchShared.xcconfig"
+// Local-only owner-beta acceptance configuration. This is deliberately
+// separate from both Debug and Release and must never be used for upload.
+STYLEMATCH_API_BASE_URL = https:/$()/stylematch-friends-staging.sabastine-7000.workers.dev
+STYLEMATCH_STYLE_FRIENDS_DM_RUNTIME_AUTHORITY = stagingAuthorized
+STYLEMATCH_STYLE_FRIENDS_DM_ATTACHMENTS_RUNTIME_AUTHORITY = stagingAuthorized
+STYLEMATCH_STYLE_FRIENDS_FEED_RUNTIME_AUTHORITY = stagingAuthorized
+STYLEMATCH_SUPPORT_RUNTIME_AUTHORITY = stagingAuthorized
+STYLEMATCH_APNS_RUNTIME_AUTHORITY = developmentAuthorized
+STYLEMATCH_SOCIAL_IMAGES_RUNTIME_AUTHORITY = stagingAuthorized
+APS_ENVIRONMENT = development
+STYLEMATCH_APNS_WORKER_URL = https:/$()/stylematch-friends-staging.sabastine-7000.workers.dev
+STYLEMATCH_SOURCE_CHECKPOINT = 400cd982f9cc16df3352f61c6d9430bdbcc1b0d5
+STYLEMATCH_BACKEND_LANE = 18045 OWNER BETA PHYSICAL ACCEPTANCE ONLY

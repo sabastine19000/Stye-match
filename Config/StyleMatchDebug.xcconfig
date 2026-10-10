@@ -1,0 +1,12 @@
+#include "StyleMatchShared.xcconfig"
+// Debug is inert for staging authorities. OwnerBeta is the only configuration
+// allowed to embed the owner-beta staging endpoint and authenticated social,
+// Support, image, and APNs runtime authorities.
+STYLEMATCH_STYLE_FRIENDS_DM_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_STYLE_FRIENDS_DM_ATTACHMENTS_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_STYLE_FRIENDS_FEED_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_SUPPORT_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_APNS_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_SOCIAL_IMAGES_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_BACKEND_LANE = DEBUG FAIL CLOSED
+STYLEMATCH_APNS_WORKER_URL =

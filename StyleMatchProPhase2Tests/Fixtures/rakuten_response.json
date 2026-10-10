@@ -1,0 +1,15 @@
+{
+  "item": [
+    {
+      "sku": "rakuten-001",
+      "productname": "Structured Navy Blazer",
+      "advertisername": "Nordstrom",
+      "brand": "Nordstrom",
+      "linkurl": "https://www.nordstrom.com/s/structured-navy-blazer",
+      "imageurl": "https://n.nordstrommedia.com/id/navy-blazer.jpeg",
+      "price": 198.00,
+      "saleprice": 149.00,
+      "category": "blazer"
+    }
+  ]
+}

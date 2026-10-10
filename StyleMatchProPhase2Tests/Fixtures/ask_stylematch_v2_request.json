@@ -1,0 +1,9 @@
+{
+  "contract_version": 2,
+  "client_request_reference": "5f0c1d22-7ac2-4c91-a4f6-3b830a2f1c30",
+  "consent_version": "2026-08-13.ai-processing.v3",
+  "mode_selection": { "kind": "manual", "mode": "fashion_stylist" },
+  "granted_scopes": ["profile_preferences", "scan_summary"],
+  "messages": [{ "role": "user", "content": "How can I style this?" }],
+  "scan_facts": { "score": 84, "classification": "smart_casual", "summary": "Balanced outfit" }
+}

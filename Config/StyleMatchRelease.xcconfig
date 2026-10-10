@@ -1,0 +1,12 @@
+#include "StyleMatchShared.xcconfig"
+// Public text DM is authorized against the exact production API host. Attachments remain separately gated.
+STYLEMATCH_STYLE_FRIENDS_DM_RUNTIME_AUTHORITY = productionAuthorized
+STYLEMATCH_STYLE_FRIENDS_DM_ATTACHMENTS_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_STYLE_FRIENDS_FEED_RUNTIME_AUTHORITY = disabled
+STYLEMATCH_SUPPORT_RUNTIME_AUTHORITY = disabled
+APS_ENVIRONMENT = production
+// Public APNs is authorized only for the production provider and canonical API host.
+STYLEMATCH_APNS_RUNTIME_AUTHORITY = productionAuthorized
+STYLEMATCH_SOCIAL_IMAGES_RUNTIME_AUTHORITY = disabled
+// Release APNs registers only against the canonical production API.
+STYLEMATCH_APNS_WORKER_URL = https:/$()/api.stylematchpro.com

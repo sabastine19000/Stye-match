@@ -1,0 +1,95 @@
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": "What should I wear today?"
+    }
+  ],
+  "context": {
+    "profileSummary": "",
+    "recentOutfits": "",
+    "activeScan": "",
+    "historicalOutfits": "",
+    "weatherConstraint": "Hot-weather constraint: avoid heavy layers.",
+    "screenContext": {
+      "currentTab": "ai",
+      "activeScanState": "none",
+      "entryPoint": "ai_tab",
+      "closetState": "unavailable"
+    },
+    "stylistContextSnapshot": {
+      "schemaVersion": 1,
+      "snapshot": {
+        "scanID": "paired-fixture-scan",
+        "score": 80,
+        "breakdown": {
+          "colorHarmony": 22,
+          "patternBalance": 18,
+          "fitQuality": 20,
+          "occasionMatch": 14,
+          "accessoryUse": 6
+        },
+        "detectedStyle": "Casual",
+        "selectedOccasion": "Work",
+        "observedGarments": ["pants", "polo"],
+        "observedColors": ["khaki", "silver"],
+        "weather": {
+          "target": "current",
+          "condition": "sunny",
+          "temperatureFahrenheit": 83,
+          "observedAt": 800000000,
+          "validUntil": 800010800
+        },
+        "workplace": {
+          "environment": "factoryOrManufacturing",
+          "dressCode": "safetyWorkwear",
+          "footwearConstraints": ["safetyToe"],
+          "ppeRequirements": ["high-visibility vest"],
+          "activityLevel": "mostlyStandingOrWalking",
+          "exposure": "indoorVariableTemperature",
+          "floorAndOfficeMix": false,
+          "source": "explicitCurrentMessage",
+          "confirmation": "userConfirmed",
+          "lastConfirmedAt": 800000000
+        }
+      },
+      "weather": {
+        "availability": "available",
+        "value": {
+          "target": "current",
+          "condition": "sunny",
+          "temperatureFahrenheit": 83,
+          "observedAt": 800000000,
+          "validUntil": 800010800
+        },
+        "constraint": "Hot-weather constraint: avoid heavy layers."
+      },
+      "workplace": {
+        "availability": "available",
+        "value": {
+          "environment": "factoryOrManufacturing",
+          "dressCode": "safetyWorkwear",
+          "footwearConstraints": ["safetyToe"],
+          "ppeRequirements": ["high-visibility vest"],
+          "activityLevel": "mostlyStandingOrWalking",
+          "exposure": "indoorVariableTemperature",
+          "floorAndOfficeMix": false,
+          "source": "explicitCurrentMessage",
+          "confirmation": "userConfirmed",
+          "lastConfirmedAt": 800000000
+        }
+      },
+      "uniform": {
+        "availability": "available",
+        "dressCode": "safetyWorkwear",
+        "confirmation": "userConfirmed"
+      },
+      "safety": {
+        "availability": "available",
+        "footwearConstraints": ["safetyToe"],
+        "ppeRequirements": ["high-visibility vest"]
+      }
+    }
+  },
+  "stream": true
+}

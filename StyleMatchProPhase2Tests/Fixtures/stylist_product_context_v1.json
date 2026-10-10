@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "relationship": "considering",
+  "name": "Navy Performance Polo",
+  "category": "clothing",
+  "brand": "Example Brand",
+  "displayedColor": "Navy",
+  "displayedPrice": "64.00",
+  "currency": "USD"
+}

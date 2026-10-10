@@ -1,0 +1,3 @@
+STYLEMATCH_API_BASE_URL = https:/$()/api.stylematchpro.com
+STYLEMATCH_SHARE_DOMAIN = stylematchpro.com
+#include? "../Secrets.xcconfig"

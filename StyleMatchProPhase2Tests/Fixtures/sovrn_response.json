@@ -1,0 +1,15 @@
+{
+  "results": [
+    {
+      "id": "sovrn-001",
+      "name": "Linen Resort Shirt",
+      "merchant": "H&M",
+      "brand": "H&M",
+      "url": "https://www2.hm.com/en_us/productpage/linen-resort-shirt.html",
+      "image": "https://lp2.hm.com/hmgoepprod/linen-shirt.jpg",
+      "price": 34.99,
+      "sale_price": 24.99,
+      "category": "linen shirt"
+    }
+  ]
+}
