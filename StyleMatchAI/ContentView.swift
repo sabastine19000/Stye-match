@@ -484,6 +484,10 @@ struct ContentView: View {
             isSoftwareKeyboardVisible = false
         }
 #endif
+        .onAppear { openPendingDailyBrief() }
+        .onReceive(NotificationCenter.default.publisher(for: DailyStyleReminder.openNotification)) { _ in
+            openPendingDailyBrief()
+        }
         .onReceive(NotificationCenter.default.publisher(for: StyleMatchAccountSessionStore.profileReconnectRequestedNotification)) { _ in
             selectedTab = .profile
         }
@@ -554,6 +558,12 @@ struct ContentView: View {
     }
 
 #if canImport(UIKit)
+    private func openPendingDailyBrief() {
+        guard UserDefaults.standard.bool(forKey: "kigoOpenDailyBrief") else { return }
+        UserDefaults.standard.removeObject(forKey: "kigoOpenDailyBrief")
+        selectTab(.home)
+    }
+
     private func updateSoftwareKeyboardVisibility(from notification: Notification) {
         guard let keyboardFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
               let window = activeWindow else {

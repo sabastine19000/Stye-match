@@ -324,6 +324,7 @@ struct StylistChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
+                    responseControls
                     if service.activeConversation.scope.isScanBound {
                         selectedScanContextNote
                         scanQuickFollowUps
@@ -737,6 +738,29 @@ struct StylistChatView: View {
         }
     }
 
+    @State private var responseStyle: StylistResponseStyle = .brief
+
+    private var responseControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Advice style", selection: $responseStyle) {
+                ForEach(StylistResponseStyle.allCases) { style in Text(style.rawValue).tag(style) }
+            }.pickerStyle(.segmented)
+            Text("Advice follows your selected style. Photos cannot establish comfort or precise fit.")
+                .font(.caption).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    ForEach(["One useful improvement", "Make it more casual", "Compare shoes", "Use my saved clothes"], id: \.self) { title in
+                        Button(title) {
+                            draft = title == "Use my saved clothes"
+                                ? "Help me choose from the Closet items I explicitly attach. If I have not attached any, ask me to select them."
+                                : title + ". Explain why using only the outfit facts I have supplied."
+                        }.buttonStyle(.bordered).frame(minHeight: 44).disabled(service.isStreaming)
+                    }
+                }
+            }
+        }.padding(.horizontal, 16)
+    }
+
     private var starterPrompts: [String] {
         [
             "What goes with olive pants?",
@@ -807,6 +831,11 @@ struct StylistChatView: View {
 
     @discardableResult
     private func submitQuestion(_ question: String) -> Bool {
+        let question = responseStyle.request(question)
+        guard question.utf16.count <= StylistChatMessageLimit.maximumUTF16Length else {
+            service.inlineError = "Please shorten your question to leave room for your chosen advice style."
+            return false
+        }
         guard let authority = currentPendingSendAuthority else {
             reportUnavailableAuthority()
             return false
