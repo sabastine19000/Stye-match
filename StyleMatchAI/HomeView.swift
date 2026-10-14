@@ -86,6 +86,8 @@ struct HomeView: View {
     @AppStorage("selectedAppTheme") private var selectedAppTheme = StyleMatchAppTheme.system.rawValue
     @AppStorage("styleMatchAppearanceMode") private var appearanceMode = StyleMatchAppearanceMode.manual.rawValue
     @AppStorage("styleMatchAdaptiveTheme") private var adaptiveTheme = ""
+    @State private var styleExperienceIdentity = AccountScopedStorage.activePresentationUserID(defaults: .standard)
+    @State private var selectedDailyLook: DailyStyleRecommendation?
     @State private var navigationQuery = ""
     @FocusState private var navigationSearchFocused: Bool
     @State private var outfitHistoryQuery = ""
@@ -107,6 +109,14 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     dailyStyleBriefHero
+                    if let recommendation = dailyStyleRecommendation {
+                        DailyLookActions(recommendation: recommendation, alternatives: dailyLookAlternatives, items: closetItems) { selectedDailyLook = $0 }
+                    }
+                    StyleExperienceControls().id(styleExperienceIdentity)
+                        .onReceive(NotificationCenter.default.publisher(for: StyleMatchAccountSessionStore.didChangeNotification)) { _ in
+                            styleExperienceIdentity = AccountScopedStorage.activePresentationUserID(defaults: .standard)
+                            selectedDailyLook = nil
+                        }
 
                     smartNavigationCard
 
@@ -1612,10 +1622,25 @@ struct HomeView: View {
     }
 
     private var dailyStyleRecommendation: DailyStyleRecommendation? {
+        if let selectedDailyLook, let current = dailyAlternativesBase.first(where: { Set($0.itemIDs) == Set(selectedDailyLook.itemIDs) }) { return current }
+        return baseDailyStyleRecommendation
+    }
+    private var dailyAlternativesBase: [DailyStyleRecommendation] {
+        guard let primary = baseDailyStyleRecommendation else { return [] }
+        return [primary] + StyleExperienceAuthority.alternatives(items: closetItems, primary: primary, temperature: freshBriefWeather?.temperatureFahrenheit, condition: freshBriefWeather?.condition, occasion: plannedOccasion, dressCode: dressCode, workSetting: workSetting)
+    }
+    private var dailyLookAlternatives: [DailyStyleRecommendation] {
+        dailyAlternativesBase.filter { Set($0.itemIDs) != Set(dailyStyleRecommendation?.itemIDs ?? []) }
+    }
+    private var freshBriefWeather: WeatherSnapshot? {
+        guard let snapshot = weatherAuthority.snapshot, snapshot.isFresh() else { return nil }
+        return snapshot
+    }
+    private var baseDailyStyleRecommendation: DailyStyleRecommendation? {
         DailyStyleRecommendationEngine.recommend(
             items: closetItems,
-            temperatureFahrenheit: weatherAuthority.snapshot?.temperatureFahrenheit,
-            condition: weatherAuthority.snapshot?.condition,
+            temperatureFahrenheit: freshBriefWeather?.temperatureFahrenheit,
+            condition: freshBriefWeather?.condition,
             occasion: plannedOccasion,
             dressCode: dressCode,
             workSetting: workSetting

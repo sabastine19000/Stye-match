@@ -3471,7 +3471,7 @@ private struct ProfileSizeCategoryChangeConfirmationModifier: ViewModifier {
     }
 }
 
-private struct AIMemoryManagementView: View {
+struct AIMemoryManagementView: View {
     @ObservedObject var store: AIPersistentMemoryStore
     @Environment(\.dismiss) private var dismiss
     @State private var isShowingAddMemory = false

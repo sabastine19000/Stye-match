@@ -774,6 +774,11 @@ struct ShoppingView: View {
         let productActionTitle = product.isAmazonSourced ? "View on Amazon" : "View Product"
 
         return VStack(alignment: .leading, spacing: 10) {
+            DisclosureGroup("Do I need this?") {
+                Text(StyleExperienceAuthority.purchaseCheck(category: product.subcategory, colors: product.colors, closet: (try? JSONDecoder().decode([ClosetItem].self, from: closetItemsData)) ?? []))
+                    .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                Text("Suggestions are optional. Compare existing clothes before opening a retailer.").font(.caption)
+            }
             HStack(alignment: .top, spacing: 12) {
                 ShoppingProductImage(product: product)
                     .frame(width: 84, height: 84)

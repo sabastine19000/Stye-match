@@ -78,7 +78,7 @@ enum StylistMessageComposer {
         case .encouragingImprovement:
             body = "This outfit has a useful base at \(scoreText), especially with \(attribute). \(groundedImprovementText(groundedImprovement))"
         case .constructiveKind:
-            body = "This scan landed at \(scoreText), so keep the feedback practical and kind. Start with \(attribute). \(groundedImprovementText(groundedImprovement))"
+            body = "Your scan is \(scoreText). Start with \(attribute). \(groundedImprovementText(groundedImprovement))"
         }
 
         return PersonalStylistMessageSection(

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AE2026101400000000000001 /* StyleExperience.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE2026101400000000000002 /* StyleExperience.swift */; };
 		12A340F051D0D41BB50FFD7F /* StyleMatchAITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E84FA7FCECF5FBD3E2A99BA /* StyleMatchAITests.swift */; };
 		F18039000000000000000001 /* CurrentScanStyleFriendsShareTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18039000000000000000002 /* CurrentScanStyleFriendsShareTests.swift */; };
 		F18040T000000000000000001 /* AskStyleMatchAppHostedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F18040T000000000000000011 /* AskStyleMatchAppHostedTests.swift */; };
@@ -154,6 +155,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		AE2026101400000000000002 /* StyleExperience.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleExperience.swift; sourceTree = "<group>"; };
 		2E84FA7FCECF5FBD3E2A99BA /* StyleMatchAITests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = StyleMatchAITests.swift; path = StyleMatchAITests/StyleMatchAITests.swift; sourceTree = "<group>"; };
 		F18039000000000000000002 /* CurrentScanStyleFriendsShareTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleMatchAITests/CurrentScanStyleFriendsShareTests.swift; sourceTree = "<group>"; };
 		F18040T000000000000000011 /* AskStyleMatchAppHostedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StyleMatchAITests/AskStyleMatchAppHostedTests.swift; sourceTree = "<group>"; };
@@ -398,6 +400,7 @@
 				AA0000000000000000000041 /* Shopping */,
 				AA0000000000000000000014 /* RoadmapData.swift */,
 				AA0000000000000000000015 /* HomeView.swift */,
+				AE2026101400000000000002 /* StyleExperience.swift */,
 				AA000000000000000000001A /* ScanView.swift */,
 				AA000000000000000000001B /* ClosetView.swift */,
 				AA000000000000000000001C /* ShopView.swift */,
@@ -732,6 +735,7 @@
 				AA0000000000000000000110 /* GarmentColorPaletteEngine.swift in Sources */,
 				AA0000000000000000000004 /* RoadmapData.swift in Sources */,
 				AA0000000000000000000005 /* HomeView.swift in Sources */,
+				AE2026101400000000000001 /* StyleExperience.swift in Sources */,
 				AA0000000000000000000006 /* RoadmapView.swift in Sources */,
 				AA0000000000000000000007 /* PromptDetailView.swift in Sources */,
 				AA0000000000000000000008 /* ChecklistView.swift in Sources */,

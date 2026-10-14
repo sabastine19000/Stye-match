@@ -50,6 +50,7 @@ enum StyleMatchDataKey: String, CaseIterable {
     case clothingPreferences
     case closetInventory
     case closetItemsData
+    case closetWearHistoryData
     case favoriteClosetItemIDs
     case wishlistProductNamesData
     case preferredAIAssistant

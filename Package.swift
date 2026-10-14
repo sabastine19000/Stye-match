@@ -57,6 +57,7 @@ let package = Package(
                 "StyleFriendsNotifications.swift",
                 "StyleMatchSupportCenter.swift",
                 "Models.swift",
+                "StyleExperience.swift",
                 "LegacyProviderCredentialRetirement.swift",
                 "RecommendationGrounding.swift",
                 "ContextEngine/OutfitContextContracts.swift",

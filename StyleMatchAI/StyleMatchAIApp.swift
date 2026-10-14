@@ -371,7 +371,12 @@ final class StyleMatchAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifi
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         await MainActor.run {
-            StyleFriendsNotificationCoordinator.shared.didReceiveNotification(userInfo: response.notification.request.content.userInfo)
+            if response.notification.request.identifier == DailyStyleReminder.identifier {
+                UserDefaults.standard.set(true, forKey: "kigoOpenDailyBrief")
+                NotificationCenter.default.post(name: DailyStyleReminder.openNotification, object: nil)
+            } else {
+                StyleFriendsNotificationCoordinator.shared.didReceiveNotification(userInfo: response.notification.request.content.userInfo)
+            }
         }
     }
 
