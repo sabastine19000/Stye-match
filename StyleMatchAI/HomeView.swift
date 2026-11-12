@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 private struct StyleMatchNavigationTarget: Identifiable {
     let id: String
@@ -74,6 +75,15 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     premiumHeader
 
+                    NavigationLink {
+                        SuitColorMatchView()
+                    } label: {
+                        Label("Suit & Color Match", systemImage: "person.crop.rectangle")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    }
                     topStyleScoreCard
 
                     homeSnapshotChipRow
@@ -1731,3 +1741,130 @@ private struct HomeOutfitFeedbackCard: View {
 }
 
 extension HomeStoredScan: Identifiable {}
+
+
+// Kept in this existing target source so older Xcode project source lists include it.
+private struct SuitColorMatchView: View {
+    @State private var suit: SuitColor = .navy
+    @State private var occasion: SuitOccasion = .work
+    @State private var photo: PhotosPickerItem?
+    @State private var referenceImage: UIImage?
+    @State private var photoError = ""
+    @State private var colorConfirmed = true
+    @AppStorage("suitMatchSavedLooksData") private var savedData = Data()
+    @AppStorage("closetItemsData") private var closetData = Data()
+
+    private var saved: [SuitMatchLook] {
+        (try? JSONDecoder().decode([SuitMatchLook].self, from: savedData)) ?? []
+    }
+    private var closet: [ClosetItem] {
+        (try? JSONDecoder().decode([ClosetItem].self, from: closetData)) ?? []
+    }
+
+    var body: some View {
+        Form {
+            Section("Start with your suit") {
+                PhotosPicker(selection: $photo, matching: .images) {
+                    Label("Choose a suit photo", systemImage: "photo")
+                }
+                if let referenceImage {
+                    Image(uiImage: referenceImage).resizable().scaledToFit().frame(maxHeight: 180)
+                        .accessibilityLabel("Your suit reference photo")
+                    Text("Photo stays on this device. Select its color below; automatic color detection is not used here.")
+                        .font(.caption)
+                    Toggle("I confirmed the suit color", isOn: $colorConfirmed)
+                }
+                if !photoError.isEmpty { Text(photoError).foregroundStyle(.red) }
+                Picker("Suit color", selection: $suit) {
+                    ForEach(SuitColor.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Picker("Occasion", selection: $occasion) {
+                    ForEach(SuitOccasion.allCases) { Text($0.rawValue).tag($0) }
+                }
+                Text("Lighting can change colors. Check the garment in daylight. These are curated styling ideas, not an assessment of fit or fabric.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if colorConfirmed {
+                ForEach(SuitMatchEngine.looks(suit: suit, occasion: occasion)) { look in
+                    Section(look.style) { lookCard(look, isSavedSection: false) }
+                }
+            } else {
+                Section { Text("Confirm your suit color to see matching outfits.") }
+            }
+            Section("Finish the look") {
+                Text("Check shoulder and trouser fit, pair similar fabric weights, and use different pattern scales. Match the belt to the shoes. Follow the event's dress code; a standard suit is not a black-tie outfit.")
+            }
+            if !saved.isEmpty {
+                Section("Saved combinations") {
+                    ForEach(saved) { look in lookCard(look, isSavedSection: true) }
+                }
+            }
+        }
+        .navigationTitle("Suit & Color Match")
+        .task(id: photo) {
+            guard let selected = photo else { return }
+            photoError = ""
+            referenceImage = nil
+            colorConfirmed = false
+            do {
+                guard let data = try await selected.loadTransferable(type: Data.self),
+                      data.count <= 15_000_000,
+                      let image = UIImage(data: data) else {
+                    photoError = "Choose a readable photo smaller than 15 MB."
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                referenceImage = image
+            } catch {
+                guard !Task.isCancelled else { return }
+                photoError = "Could not load this photo. Try another image."
+            }
+        }
+    }
+
+    private func lookCard(_ look: SuitMatchLook, isSavedSection: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if isSavedSection {
+                Text("\(look.suit.rawValue) · \(look.occasion.rawValue) · \(look.style)").font(.headline)
+            }
+            Text("Color preview: suit · shirt · tie · shoes").font(.caption)
+            HStack(spacing: 0) {
+                swatch(look.suit.rawValue, hex: look.suit.hex)
+                swatch(look.shirt, hex: look.shirt == "White" ? 0xF5F4EF : look.shirt == "Light blue" ? 0xBAD5EB : 0xEAC4D0)
+                swatch(look.tie, hex: tieHex(look.tie))
+                swatch(look.shoes, hex: look.shoes == "Black" ? 0x202124 : 0x543B2E)
+            }
+            Text("Shirt: \(look.shirt)\nTie: \(look.tie)\nShoes: \(look.shoes)\nBelt: \(look.belt)")
+            Text(look.explanation).font(.callout).foregroundStyle(.secondary)
+            let matches = SuitMatchEngine.closetMatches(for: look, items: closet)
+            if matches.isEmpty {
+                Text("No exact closet matches recorded. Add clothing colors and categories in Closet.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("From your closet: " + matches.map { ClosetItemDisplay.displayName(for: $0) }.joined(separator: ", "))
+                    .font(.caption)
+            }
+            Button(saved.contains(where: { $0.id == look.id }) ? "Remove saved combination" : "Save combination") {
+                var updated = saved
+                if updated.contains(where: { $0.id == look.id }) { updated.removeAll { $0.id == look.id } }
+                else { updated.append(look) }
+                if let data = try? JSONEncoder().encode(updated) { savedData = data }
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func swatch(_ label: String, hex: UInt32) -> some View {
+        Color(red: Double((hex >> 16) & 255) / 255,
+              green: Double((hex >> 8) & 255) / 255,
+              blue: Double(hex & 255) / 255)
+            .frame(height: 66).accessibilityLabel(label)
+    }
+    private func tieHex(_ tie: String) -> UInt32 {
+        if tie.contains("Burgundy") { return 0x702E43 }
+        if tie.contains("Silver") { return 0xB8BBC0 }
+        if tie.contains("Rust") { return 0xA85D39 }
+        return 0x243653
+    }
+}

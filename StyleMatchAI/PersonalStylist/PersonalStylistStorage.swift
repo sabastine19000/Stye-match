@@ -215,6 +215,7 @@ enum AccountScopedStorage {
         "clothingPreferences",
         "closetInventory",
         "closetItemsData",
+        "suitMatchSavedLooksData",
         "favoriteClosetItemIDs",
         "wishlistProductNamesData",
         "outfitScanHistoryData",

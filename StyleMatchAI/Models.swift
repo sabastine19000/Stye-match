@@ -939,3 +939,85 @@ private extension String {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+// MARK: - Suit & Color Match (offline, curated coordination)
+enum SuitColor: String, CaseIterable, Codable, Identifiable {
+    case navy = "Navy", charcoal = "Charcoal", gray = "Gray", black = "Black"
+    case beige = "Beige", brown = "Brown", olive = "Olive", burgundy = "Burgundy"
+    var id: String { rawValue }
+    var hex: UInt32 {
+        switch self {
+        case .navy: return 0x243653
+        case .charcoal: return 0x41444A
+        case .gray: return 0x8A8D91
+        case .black: return 0x202124
+        case .beige: return 0xCDBB9A
+        case .brown: return 0x72513F
+        case .olive: return 0x646B43
+        case .burgundy: return 0x702E43
+        }
+    }
+}
+
+enum SuitOccasion: String, CaseIterable, Codable, Identifiable {
+    case work = "Work", wedding = "Wedding", church = "Church"
+    case date = "Date", interview = "Interview"
+    var id: String { rawValue }
+}
+
+struct SuitMatchLook: Identifiable, Codable, Equatable {
+    let suit: SuitColor
+    let occasion: SuitOccasion
+    let style: String
+    let shirt: String
+    let tie: String
+    let shoes: String
+    let belt: String
+    let explanation: String
+    var id: String { "\(suit.rawValue)-\(occasion.rawValue)-\(style)" }
+}
+
+enum SuitMatchEngine {
+    static func looks(suit: SuitColor, occasion: SuitOccasion) -> [SuitMatchLook] {
+        let darkShoes = suit == .black || suit == .charcoal
+        let shoes = darkShoes ? "Black" : "Dark brown"
+        let accent: String
+        switch suit {
+        case .navy, .gray: accent = "Burgundy"
+        case .charcoal, .black: accent = "Silver"
+        case .beige, .brown: accent = "Navy"
+        case .olive: accent = "Rust"
+        case .burgundy: accent = "Navy"
+        }
+        return ["Classic", "Modern", "Bold"].enumerated().map { index, style in
+            let interview = occasion == .interview
+            let shirt = index == 0 || interview ? "White" : (index == 1 ? "Light blue" : "Pale pink")
+            let tie = occasion == .date && index > 0 ? "Optional: \(accent)" : accent
+            return SuitMatchLook(suit: suit, occasion: occasion, style: style,
+                shirt: shirt, tie: tie, shoes: shoes, belt: shoes,
+                explanation: interview
+                    ? "Keep interview colors restrained; choose a plain shirt and a subtle tie. Modern and Bold vary texture rather than adding loud color."
+                    : (index == 0 ? "A crisp white shirt creates clean contrast; the tie adds a controlled accent."
+                        : index == 1 ? "A soft blue shirt brings a cooler contrast. Try a textured tie with a plain suit."
+                        : "A pale pink shirt adds personality. Keep patterns restrained so the accent stays intentional."))
+        }
+    }
+
+    static func closetMatches(for look: SuitMatchLook, items: [ClosetItem]) -> [ClosetItem] {
+        items.filter { item in
+            let category = item.category.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let color = item.color.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !color.isEmpty else { return false }
+            let expected: String?
+            switch category {
+            case "shirt", "shirts", "dress shirt", "top", "tops": expected = look.shirt
+            case "tie", "ties": expected = look.tie.replacingOccurrences(of: "Optional: ", with: "")
+            case "shoes", "shoe", "footwear": expected = look.shoes
+            case "belt", "belts": expected = look.belt
+            case "suit", "suits": expected = look.suit.rawValue
+            default: expected = nil
+            }
+            return expected?.lowercased() == color
+        }
+    }
+}
